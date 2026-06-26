@@ -1,4 +1,4 @@
-"""Text / object edit tool tests (E2-02, ADR-004 / ADR-005).
+"""Text / object edit tool tests (ADR-004 / ADR-005).
 
 Hermetic: `render_preview` is monkeypatched in the pipeline module so no test invokes Inkscape.
 The fake writes a tiny PNG-ish file into the deterministic preview path and returns a
@@ -79,7 +79,7 @@ def _install_fake_render(monkeypatch: pytest.MonkeyPatch) -> None:
         preview_dir.mkdir(parents=True, exist_ok=True)
         out = preview_dir / "preview-auto.png"
         out.write_bytes(PNG_BYTES)
-        # E11-01 one-location contract: artifact_path is workspace-ROOT-relative (matches engine).
+        # one-location contract: artifact_path is workspace-ROOT-relative (matches engine).
         rel = out.relative_to(root).as_posix()
         return RenderResult(
             doc_id=doc_id,
@@ -213,7 +213,7 @@ def test_set_font_requires_targets(
         set_font(doc_id, [], family="Arial")
 
 
-# 2b. set_font glyph coverage (E16-04) ---------------------------------------
+# 2b. set_font glyph coverage ---------------------------------------
 
 # JP text in a Latin-only family is the run's only correctness gap: it "renders" via fontconfig
 # substitution while the saved SVG names a non-covering family. These tests assert the apply-time
@@ -243,10 +243,14 @@ def test_set_font_flags_non_covering_family(
     doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Setting a Latin-only family on JP text returns coverage_ok=False + the uncovered chars."""
+    from inkscape_mcp.fonts.coverage import suggest_covering_family
+
     _, ws, _ = doc
     _install_fake_render(monkeypatch)
     if not _font_installed("Liberation Sans"):
         pytest.skip("Liberation Sans not installed on host")
+    if suggest_covering_family("こんにちは") is None:
+        pytest.skip("no CJK-covering font installed on host to suggest")
 
     doc_id = _jp_doc(ws)
     result = set_font(doc_id, ["jp"], family="Liberation Sans")
