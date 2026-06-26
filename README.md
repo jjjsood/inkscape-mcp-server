@@ -767,34 +767,6 @@ uv run ruff check --fix . && uv run ruff format .
 uv run mypy src
 ```
 
-## Roadmap
-
-Shipped phases (most recent surface — full per-tool detail in the tool reference above and
-[`llms-full.txt`](llms-full.txt)):
-
-- **E0** — bootstrap, runtime probe, sandbox. ✅
-- **E1** — read / inspect / validate / render / export / snapshots (low risk). ✅
-- **E2** — safe edits: style, text/object, transform, save-as, export profiles (medium risk). ✅
-- **E3** — **live read** (read a running Inkscape): cross-platform via a `LiveTransport`
-  abstraction — an extension-socket bridge primary on all OSes, with DBus (`org.gtk.Actions`) as
-  an optional Linux fast-path. Detect / connect / read-selection / inspect / render / sync, gated
-  by `INKSCAPE_MCP_LIVE_ENABLED` (on by default; set falsy to opt out). ✅ **No-freeze (E3-07):** the
-  extension-socket bridge is a *modal* `inkex` effect extension and freezes the Inkscape GUI while it
-  serves; the Linux DBus path runs in Inkscape's own main loop and is no-freeze — `live_connect(
-  prefer="no_freeze")` serves viewport, style/transform writes, and a structured export-to-file read
-  (live SVG/PNG/active-doc) without freezing. Selection-id reads stay socket-only; Windows/macOS live
-  stays modal (best-effort). `inkscape --actions=…` does not drive a running instance. See
-  architecture doc §4.4 "Concurrency model — the no-freeze reality".
-- **E4** — **live write** (semantic mutations on a running instance): apply style/transform to the
-  selection, insert an SVG fragment, change selected text, export the selection — all semantic-only
-  (fixed command schema, no raw-Action/code), HIGH-risk + approval-gated, each producing a Live
-  Operation Record with before/after renders, syncable to workspace snapshots. ✅
-- **E5** — advanced workflows / asset pipelines: `svg_web_optimize` (reversible web optimization),
-  `quality_report` (machine-readable metrics + opportunities), `export_batch` (bounded, dry-run-default
-  typed batch export), and the export/recolor prompt library. ✅ (rescoped 2026-06-16 — convenience/
-  polish over the shipped surface; MVP unaffected.)
-
-**MVP = E0–E2** (shipped); **E3 live read** + **E4 live write** landed.
 
 ## License
 
