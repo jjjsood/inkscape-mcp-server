@@ -1,4 +1,4 @@
-"""Validation tests (E1-08): engine + tool over fixture SVGs.
+"""Validation tests: engine + tool over fixture SVGs.
 
 Covers each finding code (missing_font, external_asset, large_raster, duplicate_id,
 missing_id, viewbox_missing, viewbox_invalid), the clean-document happy path, the unknown-id
@@ -210,7 +210,7 @@ def test_tool_registered_on_mcp(root: Path) -> None:
     assert "validate_document" in names
 
 
-# --- E10-06 V2: validate-vs-quality split (cruft is a quality opportunity, not a defect) ------
+# --- V2: validate-vs-quality split (cruft is a quality opportunity, not a defect) ------
 
 # A document carrying optimization "cruft": editor-only metadata, an unreferenced id, and an empty
 # group. These are clean-up opportunities, NOT correctness defects.
@@ -257,7 +257,7 @@ def test_quality_report_surfaces_cruft_that_validate_omits(root: Path) -> None:
     assert val_codes.isdisjoint(_CRUFT_CODES)
 
 
-# --- E13-02: a hostile DOCTYPE / external entity is SURFACED (observable) but never expanded -----
+# ---: a hostile DOCTYPE / external entity is SURFACED (observable) but never expanded -----
 
 XXE_DOCTYPE_SVG = b"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE svg [<!ENTITY xxe SYSTEM "file:///etc/hostname">]>
@@ -275,7 +275,7 @@ INTERNAL_DOCTYPE_SVG = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 
 def test_external_entity_surfaced_but_inert(root: Path) -> None:
-    """E13-02: a SYSTEM external entity is reported as a warning, but never expanded/leaked."""
+    """a SYSTEM external entity is reported as a warning, but never expanded/leaked."""
     doc_id = _open(root, "xxe.svg", XXE_DOCTYPE_SVG)
     report = validate_document(doc_id)
     ext = [f for f in report.findings if f.code == "external_entity"]
@@ -310,7 +310,7 @@ def test_clean_document_has_no_doctype_finding(root: Path) -> None:
     assert "external_entity" not in codes
 
 
-# --- E16-04: glyph-coverage / missing-glyph diagnosis -----------------------
+# ---: glyph-coverage / missing-glyph diagnosis -----------------------
 
 # JP (Hiragana こんにちは) text declaring a Latin-only family. The render only "looks right" via
 # fontconfig substitution; the saved SVG still names the non-covering family — tofu on a stricter
@@ -342,8 +342,12 @@ def _font_installed(family: str) -> bool:
 
 def test_missing_glyphs_finding_for_cjk_in_latin_font(root: Path) -> None:
     """JP text in a Latin-only font emits a `missing_glyphs` warning + a covering family."""
+    from inkscape_mcp.fonts.coverage import suggest_covering_family
+
     if not _font_installed("Liberation Sans"):
         pytest.skip("Liberation Sans not installed on host")
+    if suggest_covering_family("こんにちは") is None:
+        pytest.skip("no CJK-covering font installed on host to suggest")
     doc_id = _open(root, "jp.svg", JP_IN_LATIN_FONT_SVG)
     report = validate_document(doc_id)
 

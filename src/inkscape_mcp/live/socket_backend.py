@@ -1,4 +1,4 @@
-"""Extension-socket backend — the primary, cross-platform live transport (E3-02).
+"""Extension-socket backend — the primary, cross-platform live transport.
 
 A server-shipped, fixed-purpose `inkex` helper (``helper_extension/inkscape_mcp_live.py``) runs
 inside the live Inkscape process, binds a LOOPBACK-ONLY socket, and advertises it by writing a
@@ -122,7 +122,7 @@ def install_helper(extensions_dir: str | Path) -> list[str]:
 
 #: GApplication / extension id of the shipped helper effect (must match `inkscape_mcp_live.inx`).
 #: This is the action token a programmatic launch invokes via ``--actions`` so the helper arms the
-#: socket without a human Extensions-menu click (E16-10f). It is a FIXED server-owned constant,
+#: socket without a human Extensions-menu click. It is a FIXED server-owned constant,
 #: never client input — the only value spliced into the launch argv besides server-controlled paths.
 HELPER_ACTION_ID = "org.inkscape_mcp.live.noprefs"
 
@@ -139,9 +139,9 @@ def _display_available() -> bool:
 
     The extension-socket helper must run inside a LIVE (headful) Inkscape to serve the socket for
     the full perceive/compose surface; a headless host (no ``DISPLAY`` / ``WAYLAND_DISPLAY`` on
-    Linux/BSD, including CI — E10-09 Tier-B) cannot bring one up. macOS/Windows always have a window
+    Linux/BSD, including CI — Tier-B) cannot bring one up. macOS/Windows always have a window
     server, so this returns True there. This gates the GUI-only launch so a headless call fails with
-    a clear, documented message rather than spawning a doomed process (E16-10f).
+    a clear, documented message rather than spawning a doomed process.
     """
     system = platform.system().lower()
     if system in ("darwin", "windows"):
@@ -174,17 +174,26 @@ def arm_socket_helper(settings: Settings | None = None) -> Rendezvous:
     Inkscape; a programmatic DBus launch only yields the reduced action set, and arming the socket
     otherwise required a human Extensions-menu click. This launches a GUI Inkscape with the helper
     effect auto-invoked (:func:`_arm_launch_argv`) so the socket binds and the rendezvous lands with
-    no menu click (E16-10f).
+    no menu click.
 
     Cross-platform by construction (the socket bridge is the primary transport on every OS — never
     bound to one OS). On a HEADLESS host (no display — CI / a remote box) the GUI cannot start, so
     this raises :class:`SocketArmError` with a clear message rather than spawning a doomed process
-    (the GUI-only leg is documented as deferred there, mirroring the E10-09 Tier-B skip). Returns
+    (the GUI-only leg is documented as deferred there, mirroring the Tier-B skip). Returns
     the discovered :class:`Rendezvous` once the helper advertises its socket within the configured
     timeout. Security (sec.12): arg-list launch only; the launched doc is a server-minted temp file;
     no client value reaches the argv.
     """
     s = settings if settings is not None else get_settings()
+
+    # Already armed? Reuse an advertising session rather than launching a second window. This is
+    # checked FIRST, before the binary/display gates: reusing an existing socket needs neither an
+    # inkscape binary nor a GUI display, so a headless host (CI) can still reuse a session armed
+    # elsewhere.
+    existing = discover_rendezvous(s)
+    if existing is not None:
+        return existing
+
     binary = shutil.which("inkscape")
     if binary is None:
         raise SocketArmError("inkscape binary not found; cannot arm the live socket helper")
@@ -194,11 +203,6 @@ def arm_socket_helper(settings: Settings | None = None) -> Rendezvous:
             "headful instance); arm it from a desktop session, or run live_install_helper and "
             "invoke the helper from Inkscape's Extensions menu"
         )
-
-    # Already armed? Reuse an advertising session rather than launching a second window.
-    existing = discover_rendezvous(s)
-    if existing is not None:
-        return existing
 
     # Server-minted temp doc to open (never client input). A blank valid SVG is enough for the
     # helper to bind; it is left on disk for the GUI session and cleaned up by the OS temp policy.
@@ -458,7 +462,7 @@ class ExtensionSocketTransport(LiveTransport):
         result = self._request(LiveCommand.RENDER_VIEW, params or None)
         return self._decode_png(result, "live render is not available")
 
-    # --- View-only surface (E8) ----------------------------------------------
+    # --- View-only surface ----------------------------------------------
 
     def set_viewport(
         self,
@@ -505,7 +509,7 @@ class ExtensionSocketTransport(LiveTransport):
         result = self._request(LiveCommand.GET_STATE_TOKEN)
         return token_from_result(result)
 
-    # --- Semantic WRITE surface (E4) -----------------------------------------
+    # --- Semantic WRITE surface -----------------------------------------
 
     def apply_to_selection(
         self, *, style: dict[str, str], transform: str | None
