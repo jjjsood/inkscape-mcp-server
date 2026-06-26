@@ -1,0 +1,2633 @@
+# GENERATED FILE — do not edit by hand.
+# Regenerate with: uv run python scripts/gen_llms_txt.py
+# Source of truth: the live MCP registry (register_tools() -> mcp.list_tools()/...).
+# Unlike a hand-maintained llms.txt, this is regenerated from the registry so it can never
+# drift from the actual tool/prompt/resource surface.
+
+
+# inkscape-mcp — full manifest (llms-full.txt)
+
+inkscape-mcp — an MCP server that makes Inkscape/SVG documents agent-ready: inspect, edit safely (reversible), validate, render, and export.
+
+Surface: 99 tools, 7 prompts, 16 resources.
+
+## Run & transport
+Transport: STDIO only (local). No HTTP.
+Run: uv run inkscape-mcp
+Console script: inkscape-mcp = inkscape_mcp.server:main
+
+## Environment / configuration
+Workspace roots (required): INKSCAPE_MCP_WORKSPACE_ROOTS (OS-path-separator-delimited list of allowed dirs; the sandbox boundary).
+Operator-tunable limits / gates (all optional, env-overridable):
+  - INKSCAPE_MCP_ACTION_ALLOWLIST
+  - INKSCAPE_MCP_ARTIFACT_KEEP_DAYS
+  - INKSCAPE_MCP_ARTIFACT_MAX_BYTES
+  - INKSCAPE_MCP_ARTIFACT_MAX_BYTES_PER_DOC
+  - INKSCAPE_MCP_ENGINE_IDLE_TIMEOUT_S
+  - INKSCAPE_MCP_ENGINE_MAX_PROCESSES
+  - INKSCAPE_MCP_ENGINE_MODE
+  - INKSCAPE_MCP_EXTENSION_ALLOWLIST
+  - INKSCAPE_MCP_LIVE_CACHE_MAX_BYTES
+  - INKSCAPE_MCP_LIVE_CACHE_MAX_ENTRIES
+  - INKSCAPE_MCP_LIVE_COALESCE_BUDGET_MS
+  - INKSCAPE_MCP_LIVE_ENABLED
+  - INKSCAPE_MCP_LIVE_FRAME_KEEP_DAYS
+  - INKSCAPE_MCP_LIVE_FRAME_MAX_BYTES
+  - INKSCAPE_MCP_MAX_EXPORT_PX
+  - INKSCAPE_MCP_MAX_INPUT_BYTES
+  - INKSCAPE_MCP_MAX_OUTPUT_BYTES
+  - INKSCAPE_MCP_MAX_PROCS
+  - INKSCAPE_MCP_PROCESS_TIMEOUT_S
+  - INKSCAPE_MCP_RAW_ACTION_ENABLED
+  - INKSCAPE_MCP_SNAPSHOT_HARD_MAX_BYTES
+  - INKSCAPE_MCP_SNAPSHOT_HARD_MAX_N
+  - INKSCAPE_MCP_SNAPSHOT_KEEP_DAYS
+  - INKSCAPE_MCP_SNAPSHOT_KEEP_N
+  - INKSCAPE_MCP_TOOL_DESC
+  - INKSCAPE_MCP_TOOL_PROFILE
+
+## Tools
+
+### Create
+
+#### add_linear_gradient
+Risk class: medium
+Key params: doc_id: string, stops: array, x1: string, y1: string, x2: string, y2: string, object_id: string | null
+Description:
+    Add a `<linearGradient>` to the document `<defs>` (created if absent).
+
+    When to use: defining a directional colour fade to paint with. For a centred/radial fade use
+    `add_radial_gradient`; after defining, apply it via `set_fill(doc_id, ids, "url(#grad-id)")`.
+
+    Key params: `stops` is a list of `{offset, color, opacity?}` (≥ 1): `offset` a 0..1 number or
+    0%..100% percentage, `color` a validated colour, optional `opacity` in [0, 1]. The vector runs
+    `(x1, y1) -> (x2, y2)` (numbers or percentages; default a left-to-right sweep).
+
+    Return shape: `CreateResult` — `object_id` is the gradient id (use as `url(#id)` paint),
+    `bbox=None` (a def, not a drawn shape), plus the pipeline fields.
+
+    Example: `add_linear_gradient(doc_id, [{"offset": 0, "color": "#fff"}, {"offset": 1,
+    "color": "#3366cc"}])`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### add_radial_gradient
+Risk class: medium
+Key params: doc_id: string, stops: array, cx: string, cy: string, r: string, fx: string | null, fy: string | null, object_id: string | null
+Description:
+    Add a `<radialGradient>` to the document `<defs>` (created if absent).
+
+    When to use: defining a centred/radial colour fade to paint with. For a directional fade use
+    `add_linear_gradient`; after defining, apply via `set_fill(doc_id, ids, "url(#gradient-id)")`.
+
+    Key params: `stops` is a list of `{offset, color, opacity?}` (≥ 1), as for the linear gradient.
+    Centred at `(cx, cy)` with radius `r` (numbers or percentages; default a centred 50% circle);
+    `fx` / `fy` optionally set the focal point.
+
+    Return shape: `CreateResult` — `object_id` is the gradient id (use as `url(#id)` paint),
+    `bbox=None`, plus the pipeline fields.
+
+    Example: `add_radial_gradient(doc_id, [{"offset": 0, "color": "#fff"}, {"offset": 1,
+    "color": "#000"}])`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### compose_grid
+Risk class: medium
+Key params: rows: integer, cols: integer, cell: number, doc_ids: array | null, object_ids: array | null, source_doc_id: string | null, target_doc_id: string | null, gap: number, padding: number, scale_to_fit: boolean
+Description:
+    Lay out N DIFFERENT assets in a grid (contact / spec sheet) in ONE reversible call.
+
+    When to use: building a multi-asset sheet — one cell per DIFFERENT document or object — in a
+    single call (no per-asset loop, no lxml subtree extract). To repeat ONE object into a grid use
+    `tile`; to graft a single composed subtree use `insert_svg_fragment`.
+
+    Key params: supply EXACTLY ONE source mode — `doc_ids` (one whole document per cell) OR
+    `object_ids` together with `source_doc_id` (objects from one document per cell). The grid fills
+    ROW-MAJOR over `rows` x `cols` cells of size `cell` (user units); fewer assets than cells leaves
+    trailing cells empty. Each asset is deep-copied (every id re-minted, intra-clone refs rewritten,
+    no id clashes), wrapped in a `<g>` translated to its cell origin and, with `scale_to_fit`
+    (default True), uniformly DOWN-scaled to fit `cell - 2*padding` (never upscaled).
+    `gap`/`padding` (default 0) space the cells. `target_doc_id` composes INTO an existing document;
+    omit it to create a new blank document sized to the whole grid. Bounded: `rows*cols` ≤ the
+    engine cell cap; the asset count must not exceed the cell count.
+
+    Return shape: `ComposeGridResult` — an `EditResult` (one `operation_id` + one pre-mutation
+    snapshot for the whole sheet, reversible via `restore_snapshot`) plus `target_doc_id` (the new
+    id when a blank doc was created), `rows`/`cols`, and `cells` (the ordered placement plan: per
+    asset its grid coords, new cell-group id, and a short source label).
+
+    Example: `compose_grid(3, 4, 64, doc_ids=["d1","d2",...,"d12"])` lays a 12-icon system into a
+    3x4 sheet in one call.
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (creates a new tracked document or composes into one; sources never mutated).
+
+#### create_circle
+Risk class: medium
+Key params: doc_id: string, cx: number, cy: number, r: number, parent_id: string | null, object_id: string | null, fill: string | null, stroke: string | null, stroke_width: string | null
+Description:
+    Create a `<circle>` centred at `(cx, cy)` with radius `r` (> 0).
+
+    When to use: drawing a circle / disc. For an oval use `create_ellipse`; for a box use
+    `create_rect`.
+
+    Key params: `r` > 0; inserted into `parent_id` (must exist) or the document default parent;
+    `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` (E16-10b) paint it in
+    this call (validated like `set_fill` / `set_stroke`; default None = unpainted).
+
+    Return shape: `CreateResult` — `object_id` (new id), analytic `bbox`, plus the pipeline fields
+    (`operation_id`, `snapshot_id`, `changed`, before/after preview).
+
+    Example: `create_circle(doc_id, 50, 50, 25, fill="red")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### create_document
+Risk class: medium
+Key params: width: number, height: number, viewBox: string | null, background: string | null
+Description:
+    Create a blank, tracked working-copy document from scratch — NO source file required.
+
+    When to use: starting fresh authoring with the `create_*` / compose tools when there is no SVG
+    to open. To open an EXISTING file use `open_document`; to set the whole SVG body afterwards use
+    `set_document_svg`.
+
+    Key params: `width` / `height` are the page size in user units (both > 0). `viewBox` is an
+    optional explicit `"minx miny w h"` box (a `0 0 width height` box is synthesized when omitted,
+    so the document is never viewBox-less). `background` is an optional validated colour (hex /
+    `rgb()` / `hsl()` / named keyword — never CSS-injectable) painted as a full-page rect; omit for
+    a transparent page. The generated document is `validate_document`-clean.
+
+    Return shape: `OpenDocumentResult` (same as `open_document`) — `doc_id` (addresses a fully
+    tracked working copy: snapshots, reversibility, reload) and `summary`.
+
+    Example: `create_document(800, 600, background="#ffffff")`
+
+    Risk class: medium (creates a new tracked document; no existing state mutated).
+
+#### create_ellipse
+Risk class: medium
+Key params: doc_id: string, cx: number, cy: number, rx: number, ry: number, parent_id: string | null, object_id: string | null, fill: string | null, stroke: string | null, stroke_width: string | null
+Description:
+    Create an `<ellipse>` centred at `(cx, cy)` with radii `rx` / `ry` (> 0).
+
+    When to use: drawing an oval / ellipse. For a perfect circle use `create_circle`; for a box use
+    `create_rect`.
+
+    Key params: `rx` / `ry` > 0; inserted into `parent_id` (must exist) or the document default
+    parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` (E16-10b) paint
+    it in this call (validated like `set_fill` / `set_stroke`; default None = unpainted).
+
+    Return shape: `CreateResult` — `object_id` (new id), analytic `bbox`, plus the pipeline fields
+    (`operation_id`, `snapshot_id`, `changed`, before/after preview).
+
+    Example: `create_ellipse(doc_id, 50, 50, 30, 18, fill="#0a0")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### create_group
+Risk class: medium
+Key params: doc_id: string, parent_id: string | null, object_id: string | null
+Description:
+    Create an empty `<g>` group inside `parent_id` (must exist) or the document default parent.
+
+    When to use: making an EMPTY group to populate later. To wrap EXISTING objects in a new group
+    use `group_objects`; to move one object into an existing group use `reparent_object`.
+
+    Key params: `parent_id` (must exist) or the document default parent; `object_id` to pin the id.
+
+    Return shape: `CreateResult` — `object_id` is the new group id, `bbox=None` (empty), plus the
+    pipeline fields (`operation_id`, `snapshot_id`, `changed`, preview).
+
+    Example: `create_group(doc_id)`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### create_line
+Risk class: medium
+Key params: doc_id: string, x1: number, y1: number, x2: number, y2: number, parent_id: string | null, object_id: string | null, stroke: string | null, stroke_width: string | null
+Description:
+    Create a `<line>` from `(x1, y1)` to `(x2, y2)`.
+
+    When to use: a single straight segment. For a multi-segment open run use `create_polyline`; for
+    a closed shape use `create_polygon`.
+
+    Key params: endpoints `(x1, y1)` / `(x2, y2)`; inserted into `parent_id` (must exist) or the
+    document default parent; `object_id` to pin the id. Optional `stroke` / `stroke_width` (E16-10b)
+    paint the segment in this call (a line is unfilled by nature, so no `fill`; validated like
+    `set_stroke`; default None = unpainted).
+
+    Return shape: `CreateResult` — `object_id` (new id), analytic `bbox` (the segment's axis-aligned
+    extent), plus the pipeline fields (`operation_id`, `snapshot_id`, `changed`, preview).
+
+    Example: `create_line(doc_id, 0, 0, 100, 100, stroke="black", stroke_width="2")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### create_path
+Risk class: medium
+Key params: doc_id: string, d: string, parent_id: string | null, object_id: string | null, fill: string | null, stroke: string | null, stroke_width: string | null
+Description:
+    Create a `<path>` with the validated `d` data string.
+
+    When to use: freeform / bezier / curve geometry from a `d` string. For simple primitives prefer
+    `create_rect` / `create_circle` / `create_polygon`; to edit an existing path's geometry use the
+    `paths` tools (`simplify_path`, `combine_paths`, ...).
+
+    Key params: `d` validated against a strict charset (digits, whitespace, `,`, `.`, sign,
+    exponent, SVG path command letters only) and length-bounded; geometry is NOT fully parsed; into
+    `parent_id` (must exist) or the document default parent. Optional `fill` / `stroke` /
+    `stroke_width` (E16-10b) paint it in this call (validated like `set_fill` / `set_stroke`;
+    default None = unpainted).
+
+    Return shape: `CreateResult` — `object_id` (new id), `bbox=None` (paths are not analytically
+    measured), plus the pipeline fields (`operation_id`, `snapshot_id`, `changed`, preview).
+
+    Example: `create_path(doc_id, "M0 0 L100 0 L50 80 Z", fill="#222")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### create_polygon
+Risk class: medium
+Key params: doc_id: string, points: array, parent_id: string | null, object_id: string | null, fill: string | null, stroke: string | null, stroke_width: string | null
+Description:
+    Create a closed `<polygon>` from `points` (≥ 1 `(x, y)` pairs).
+
+    When to use: a closed many-sided shape (triangle, hexagon, ...). For an OPEN run use
+    `create_polyline`; for curves use `create_path`.
+
+    Key params: `points` ≥ 1 `(x, y)` pairs; inserted into `parent_id` (must exist) or the document
+    default parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` (E16-10b)
+    paint it in this call (validated like `set_fill` / `set_stroke`; default None = unpainted).
+
+    Return shape: `CreateResult` — `object_id` (new id), analytic `bbox` (extent of the points),
+    plus the pipeline fields (`operation_id`, `snapshot_id`, `changed`, preview).
+
+    Example: `create_polygon(doc_id, [(0, 0), (50, 0), (25, 40)], fill="#fc0")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### create_polyline
+Risk class: medium
+Key params: doc_id: string, points: array, parent_id: string | null, object_id: string | null, fill: string | null, stroke: string | null, stroke_width: string | null
+Description:
+    Create an open `<polyline>` from `points` (≥ 1 `(x, y)` pairs).
+
+    When to use: a connected open run of segments. For a CLOSED shape use `create_polygon`; for a
+    single segment use `create_line`; for curves use `create_path`.
+
+    Key params: `points` ≥ 1 `(x, y)` pairs; inserted into `parent_id` (must exist) or the document
+    default parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` (E16-10b)
+    paint it in this call (validated like `set_fill` / `set_stroke`; default None = unpainted).
+
+    Return shape: `CreateResult` — `object_id` (new id), analytic `bbox` (extent of the points),
+    plus the pipeline fields (`operation_id`, `snapshot_id`, `changed`, preview).
+
+    Example: `create_polyline(doc_id, [(0, 0), (50, 20), (100, 0)], stroke="blue")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### create_rect
+Risk class: medium
+Key params: doc_id: string, x: number, y: number, width: number, height: number, parent_id: string | null, object_id: string | null, rx: number | null, ry: number | null, fill: string | null, stroke: string | null, stroke_width: string | null
+Description:
+    Create a `<rect>` at `(x, y)` sized `width` / `height` (> 0), with optional corner radii.
+
+    When to use: drawing a rectangle / square / box. For an ellipse use `create_circle` /
+    `create_ellipse`; for a freeform shape use `create_path`.
+
+    Key params: `width` / `height` > 0; `rx` / `ry` optional corner radii; inserted into `parent_id`
+    (must exist) or the document default parent (first layer, else root); `object_id` to pin the id.
+    Optional `fill` / `stroke` / `stroke_width` (E16-10b) paint the shape IN THIS CALL — validated
+    exactly like `set_fill` / `set_stroke` (colour or `url(#id)`; CSS length) — so no mandatory
+    second styling call (default None = unpainted, prior behaviour).
+
+    Return shape: `CreateResult` — `object_id` (new id), analytic `bbox`, plus the pipeline fields
+    (`operation_id`, `snapshot_id`, `changed`, before/after preview).
+
+    Example: `create_rect(doc_id, 10, 10, 100, 60, rx=8, fill="#3366cc")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### create_text
+Risk class: medium
+Key params: doc_id: string, x: number, y: number, text: string, parent_id: string | null, object_id: string | null, fill: string | null, stroke: string | null, stroke_width: string | null
+Description:
+    Create a `<text>` element anchored at `(x, y)` holding `text`.
+
+    When to use: adding a new label / caption. To change EXISTING text content use `replace_text`;
+    to restyle its font use `set_font`.
+
+    Key params: `text` is length-bounded and rejects control characters other than tab / newline /
+    carriage return (stored as a text node, no markup injection); inserted into `parent_id` (must
+    exist) or the document default parent. Optional `fill` / `stroke` / `stroke_width` (E16-10b)
+    paint the glyphs in this call (validated like `set_fill` / `set_stroke`; default None =
+    unpainted). For font family/size/weight use `set_font`.
+
+    Return shape: `CreateResult` — `object_id` (new id), `bbox=None` (text is not analytically
+    measured), plus the pipeline fields (`operation_id`, `snapshot_id`, `changed`, preview).
+
+    Example: `create_text(doc_id, 20, 40, "Hello", fill="#111")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### create_use
+Risk class: medium
+Key params: doc_id: string, href_id: string, parent_id: string | null, object_id: string | null, x: number | null, y: number | null, transform: string | null
+Description:
+    Create a `<use href="#href_id">` referencing an existing same-document object.
+
+    When to use: instancing / cloning an existing element so edits to the original propagate. To
+    deep-COPY (independent) use `duplicate_object`; to grid-repeat use `tile`.
+
+    Key params: `href_id` MUST name an existing element (safe-id charset, required to exist);
+    external / `javascript:` / `url(...)` references are rejected — only a same-document `#id`. Into
+    `parent_id` (must exist) or the document default parent. Placement (translate-scaling trap):
+    `<use>` applies `x` / `y` as a translation BEFORE its `transform`, so `scale(2)` + `x="10"`
+    shifts by 20 — prefer EITHER `x` / `y` alone OR fold the translation into `transform`
+    (e.g. `translate(10,0) scale(2)`); do not mix `x` / `y` with a scaling `transform`.
+
+    Return shape: `CreateResult` — `object_id` is the new `<use>` id, `bbox=None`, plus the pipeline
+    fields (`operation_id`, `snapshot_id`, `changed`, preview).
+
+    Example: `create_use(doc_id, "logo", x=200, y=0)`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### group_objects
+Risk class: medium
+Key params: doc_id: string, object_ids: array, object_id: string | null
+Description:
+    Wrap existing objects (`object_ids`, ≥ 1, all must exist) in a NEW `<g>`.
+
+    When to use: collecting several existing objects under one group. For an EMPTY group use
+    `create_group`; to move a single object into an existing group use `reparent_object`.
+
+    Key params: `object_ids` ≥ 1, all must exist; `object_id` to pin the new group id. The objects
+    keep their own transforms / styles; only their parent changes.
+
+    Return shape: `CreateResult` — `object_id` is the new group id (inserted at the position of the
+    first target), `bbox=None`, plus the pipeline fields.
+
+    Example: `group_objects(doc_id, ["icon", "label"])`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### insert_svg_fragment
+Risk class: high
+Key params: doc_id: string, svg: string, parent_id: string | null, unwrap: boolean, approval_token: string | null
+Description:
+    Insert an agent-composed SVG fragment under a parent (`parent_id`) or the document root.
+
+    When to use: grafting one composed subtree into an existing document (no file round-trip). To
+    REPLACE the whole document use `set_document_svg`; for a single typed shape use the `create_*`
+    tools.
+
+    Key params: `svg` is ONE element subtree (wrap several siblings in a `<g>`). `parent_id` (must
+    exist) sets where it lands, else the document root. `unwrap` (default `True`) controls a `<svg>`
+    root: when `True` the wrapper `<svg>` is unwrapped and its children grafted (an empty wrapper is
+    rejected); pass `unwrap=False` to KEEP an explicit nested `<svg>` container, inserted as-is
+    (still allowlist-scrubbed; an empty nested `<svg>` is then allowed). `unwrap` has no effect on a
+    non-`<svg>` root, which is always inserted intact. Same hardening as `set_document_svg`
+    (safe-parse + strict allowlist; `<script>`, `on*` handlers, `javascript:` hrefs, external refs
+    rejected; only same-document `#id` allowed). A real run REQUIRES a non-empty `approval_token`.
+    The original/source file is never touched.
+
+    Return shape: `ComposeResult` — an `EditResult` (operation + pre-mutation snapshot links,
+    reversible via `restore_snapshot`) extended with the post-adopt `validate_document` findings
+    (`validation`).
+
+    Example: `insert_svg_fragment(doc_id, "<g>...</g>", parent_id="layer1", approval_token="ok")`;
+    to keep a nested container: `insert_svg_fragment(doc_id, "<svg>...</svg>", unwrap=False,
+    approval_token="ok")`.
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: HIGH — requires a non-empty `approval_token`; without it the op is refused and
+    nothing is written.
+
+#### inspect_document
+Risk class: low
+Key params: doc_id: string
+Description:
+    Inspect a loaded document: tree, layers, styles, fonts, external assets.
+
+    When to use: the go-to overview to understand a document's structure AND discover targetable
+    object ids before editing. To search for SPECIFIC objects by filter use `find_objects`; for
+    quality metrics use `quality_report`; for well-formedness use `validate_document`.
+
+    Key params: `doc_id` only (read-only).
+
+    Return shape: `InspectDocumentResult` — `summary`, `tree`, `layers`, `styles`, `fonts`,
+    `assets`, and `objects` (flat list of every id-bearing object with tag / bbox / paint / text,
+    the same `ObjectRef` shape `find_objects` returns).
+
+    Example: `inspect_document(doc_id)`
+
+    Risk class: low (read-only, direct DOM per ADR-005).
+
+#### open_document
+Risk class: low
+Key params: path: string
+Description:
+    Open an SVG into a tracked workspace document and return its id + summary.
+
+    When to use: the entry point for working on an EXISTING file — you need the `doc_id` before any
+    other tool. To start from nothing use `create_document`; to adopt agent-composed SVG use
+    `set_document_svg` / `insert_svg_fragment`; to resync external edits use `reload_document`.
+
+    Key params: `path` may be workspace-RELATIVE (anchored to the first workspace root, NOT the
+    server CWD — matching `save_document_as` / `live_sync_to_workspace`) or absolute; either is
+    sandbox-validated and a `../`-escape, an absolute path outside the workspace, or a symlink whose
+    target leaves the sandbox is rejected with `path rejected: outside workspace`.
+    WORKING-COPY MODEL: opening copies your source SVG byte-for-byte into a per-document workspace
+    as an immutable `original.svg` and seeds a single live WORKING COPY. The returned `doc_id`
+    addresses that copy; EVERY subsequent tool operates on it, and your ORIGINAL is NEVER mutated.
+    Edits are reversible (pre-edit snapshot + Operation Record); `restore_snapshot` rolls back.
+
+    Return shape: `OpenDocumentResult` — `doc_id` (opaque, pass to every other tool) and `summary`
+    (size, viewBox, units, counts).
+
+    Example: `open_document("logo.svg")`
+
+    Risk class: low (opens via working copy; original never mutated).
+
+#### place_document
+Risk class: medium
+Key params: target_doc_id: string, x: number, y: number, source_doc_id: string | null, object_id: string | null, scale: number
+Description:
+    Place an existing document or object INTO another document at `(x, y)` with `scale`.
+
+    When to use: re-composing existing geometry cross-document without re-authoring or extracting
+    SVG by hand — the single-asset companion of `compose_grid`. To lay out MANY assets in a grid use
+    `compose_grid`; to graft agent-COMPOSED markup use `insert_svg_fragment`; to instance a
+    same-document object use `create_use`.
+
+    Key params: supply EXACTLY ONE source — `source_doc_id` (place that whole document's root) OR
+    `object_id` together with `source_doc_id` (place that one object from the source document). The
+    source subtree is deep-copied (every id re-minted, intra-clone refs rewritten, no id clashes —
+    the source is NEVER mutated) and wrapped in a `<g>` translated to `(x, y)` and uniformly scaled
+    by `scale` (> 0) about that origin. The whole place lands under ONE snapshot + Operation Record.
+
+    Return shape: `PlaceResult` — an `EditResult` (reversible via `restore_snapshot`) plus
+    `target_doc_id`, `placed_id` (the new wrapper-group id), and `source` (a short label).
+
+    Example: `place_document("sheet", 100, 0, source_doc_id="logo")` drops the whole `logo` document
+    into `sheet` at (100, 0); `place_document("sheet", 0, 0, source_doc_id="kit", object_id="star")`
+    places just the `star` object from `kit`.
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (write-new on the target working copy, reversible; sources never mutated).
+
+#### reload_document
+Risk class: low
+Key params: doc_id: string
+Description:
+    Refresh a working copy FROM ITS SOURCE under the SAME `doc_id`, discarding working edits.
+
+    When to use: external edits changed the source file and you want to resync in place (keep the
+    same `doc_id`). To undo a single edit instead use `restore_snapshot`; to open a different file
+    use `open_document`.
+
+    Key params: `doc_id` must be open. Flow (reversible): take a PRE-reload snapshot of the current
+    working copy (undo via `restore_snapshot`), re-resolve the source through the sandbox and
+    re-validate it is STILL inside the workspace (a moved/vanished source is rejected with a stable
+    "path rejected" message), then re-copy the source over the working copy. A `create_document`
+    document has no external source, so its reload restores from its blank seed.
+
+    Return shape: `ReloadDocumentResult` — refreshed `summary` plus `pre_reload_snapshot_id` (the
+    pre-reload checkpoint).
+
+    Example: `reload_document(doc_id)`
+
+    Risk class: low (only the working copy is rewritten, reversibly; the original is never written).
+
+#### reparent_object
+Risk class: medium
+Key params: doc_id: string, object_id: string, new_parent_id: string
+Description:
+    Move an object (`object_id`) under a new parent (`new_parent_id`); both must exist.
+
+    When to use: re-nesting one existing object into another group. To wrap SEVERAL objects in a new
+    group use `group_objects`; to reposition without re-nesting use `move_object`.
+
+    Key params: `object_id` and `new_parent_id` both must exist; rejected if the new parent is the
+    object itself or one of its descendants. NOTE: re-parenting changes the inherited coordinate
+    space — the object's visual position can shift if old/new parents carry different transforms.
+
+    Return shape: `CreateResult` — `object_id` echoes the moved object, `bbox=None`, plus the
+    pipeline fields (`operation_id`, `snapshot_id`, `changed`, preview).
+
+    Example: `reparent_object(doc_id, "star", "layer2")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible edit on the working copy; original untouched).
+
+#### set_document_svg
+Risk class: high
+Key params: doc_id: string, svg: string, approval_token: string | null
+Description:
+    REPLACE the whole working copy with an agent-composed SVG string (root must be `<svg>`).
+
+    When to use: adopting a full SVG composed in memory, replacing the working copy wholesale (no
+    file round-trip). To ADD to (not replace) a document use `insert_svg_fragment`; for a blank
+    start use `create_document`.
+
+    Key params: `svg` root must be `<svg>`; it is byte-size-checked, safe-parsed, and
+    allowlist-scrubbed — `<script>`, any `on*` handler, `javascript:` hrefs, and external refs
+    (`http(s)://` / `//` / `file:` / `data:`) are REJECTED; only a same-document `#id` reference is
+    allowed. A real run REQUIRES a non-empty `approval_token`. The original/source file is never
+    touched.
+
+    Return shape: `ComposeResult` — an `EditResult` (operation + pre-mutation snapshot links,
+    reversible via `restore_snapshot`) extended with the post-adopt `validate_document` findings
+    (`validation`).
+
+    Example: `set_document_svg(doc_id, "<svg ...>...</svg>", approval_token="ok")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: HIGH — requires a non-empty `approval_token`; without it the op is refused and
+    nothing is written.
+
+### Inspect
+
+#### find_objects
+Risk class: low
+Key params: doc_id: string, tag: string | null, fill: string | null, stroke: string | null, text: string | null, id_prefix: string | null, bbox: object | null, accurate_bbox: boolean
+Description:
+    Find addressable object ids in a tracked document by tag / paint / text / id-prefix / bbox.
+
+    When to use: before an id-taking edit (`set_fill`, `move_object`, `replace_text`,
+    `rotate_object`, …) on a document the agent did not author, or to enumerate "every blue rect",
+    "every text mentioning 'Total'", etc. For the full structural picture (tree / layers / styles /
+    fonts / assets) plus the same list use `inspect_document`; to map a goal to a tool, `how_do_i`.
+
+    Key params (all filters optional; supplied filters AND together; none → every addressable
+    object): `tag` exact local name (`"rect"`/`"text"`/`"path"`); `fill`/`stroke` a paint matched
+    casing- and hex-shorthand-insensitive (`"#FFF"` matches `"#ffffff"`) — matching resolves the
+    FULL CSS cascade so an object painted via a `<style>` rule / class / id selector or INHERITED
+    from an ancestor `<g>` is matched too (the reported `fill`/`stroke` stay the per-element
+    authored token); `text` a case-insensitive substring of text content; `id_prefix` an `id`
+    prefix; `bbox` an `{x, y, width, height}` box kept on INTERSECTION. By default `bbox` uses the
+    attribute-derived box and objects with no derivable box (path/text/group/transformed) are
+    EXCLUDED; set `accurate_bbox=true` to compute geometry-accurate, transform-/outline-aware boxes
+    via one batched Inkscape `--query-all` call (so those objects can match) — it degrades to the
+    attribute box when the Inkscape engine is unavailable.
+
+    Return shape: `FindResult` — `{doc_id, count, objects: [{object_id, tag, bbox?, fill?, stroke?,
+    text?}]}`. Objects without an `id` are never returned (they cannot be targeted). With
+    `accurate_bbox=true`, `bbox` carries the engine box where one was reported.
+
+    Example: `find_objects("d_ab12", tag="rect", fill="#3366cc")`
+
+    Risk class: low for the default direct-DOM path (read-only, ADR-005; no snapshot / Operation
+    Record); `accurate_bbox=true` adds a read-only Inkscape `--query-all` invocation (medium, still
+    no mutation).
+
+#### quality_report
+Risk class: low
+Key params: doc_id: string
+Description:
+    Build a machine-readable quality report for a document: validation findings plus metrics.
+
+    When to use: assessing a document's health and what optimizing would save. For pass/fail
+    correctness only use `validate_document`; to actually strip the opportunities use
+    `svg_web_optimize`.
+
+    Key params: none beyond `doc_id`.
+
+    Return shape: `QualityReport` — `ok`, the `validate_document` findings (missing fonts, external
+    assets, large rasters, id problems, viewBox sanity), quantitative metrics (object/node/layer
+    counts, embedded-raster weight in bytes, font coverage, viewBox health), and `opportunities`
+    (keyed identically to `svg_web_optimize.removed`: editor metadata, unused defs, unreferenced
+    ids, empty groups, reducible coordinate precision). Every field is structured (not prose).
+
+    Example: `quality_report(doc_id)`
+
+    Risk class: low (read-only; document unchanged).
+
+#### quality_report_set
+Risk class: low
+Key params: doc_ids: array
+Description:
+    Quality-report a SET of documents in one call: per-doc reports + aggregate + verdict.
+
+    When to use: auditing a whole multi-document system (e.g. a 12-icon set) for health AND
+    cross-doc consistency in one read-only call. For a SINGLE document use `quality_report`; to
+    actually strip the opportunities across the set use `optimize_set`.
+
+    Key params: `doc_ids` is a non-empty, duplicate-free set. Read-only — composes the single-doc
+    `quality_report` engine over the set, so NO snapshot / Operation Record is written for any
+    document. The whole set is rejected if ANY id is unknown or unparseable (no partial result).
+
+    Return shape: `QualityReportSetResult` — `per_doc` (the standard `QualityReport` per document),
+    `all_ok`, `worst_score` / `mean_score` and `total_opportunities` aggregated across the set, and
+    `consistency` — the structured cross-doc verdict over the set's viewBox / stroke-width /
+    id-naming conventions (the cross-doc audit a 12-icon system used to need a Bash/lxml loop for).
+
+    Example: `quality_report_set(["d1","d2","d3"])`
+
+    Risk class: low (read-only; no document mutated, no Operation Record / snapshot).
+
+#### validate_document
+Risk class: low
+Key params: doc_id: string
+Description:
+    Validate a loaded document and return structured, machine-readable findings.
+
+    When to use: a pass/fail correctness check on a document. For quantitative metrics + optimize
+    opportunities use `quality_report`; to fix size opportunities use `svg_web_optimize`.
+
+    Key params: none beyond `doc_id`.
+
+    Return shape: `ValidationReport` — `ok` (True iff no `error`-severity findings), `error_count`,
+    `warning_count`, and `findings` (each a stable machine `code`, a `severity`
+    `error`|`warning`|`info`, a human-readable `message`, and an optional `locator`). Covers missing
+    fonts, glyph coverage (a `missing_glyphs` warning naming the characters a text element's
+    declared font cannot render — read from the font's own cmap, not fontconfig substitution — plus
+    a covering family to try), external asset refs, large embedded rasters, id problems (duplicate
+    ids / dangling `#id` refs), and viewBox presence/sanity.
+
+    Example: `validate_document(doc_id)`
+
+    Risk class: low (read-only validation; document unchanged).
+
+### Edit
+
+#### apply_edits
+Risk class: medium
+Key params: doc_id: string, edits: array, approval_token: string | null
+Description:
+    Apply an ordered list of typed DOM edits to a document as ONE atomic, reversible operation.
+
+    When to use: making SEVERAL edits to one document in a single call (draw + style + arrange,
+    re-theme + rename, …) instead of N separate tool round-trips. Each member is the SAME typed
+    edit the dedicated tool exposes — `apply_edits` adds atomicity + one snapshot, not new
+    authority. For a single edit, call the dedicated tool (`set_fill`, `move_object`, …); for path
+    geometry or cross-document composition use those tools directly (they are NOT batchable).
+
+    Key params: `edits` is a non-empty, ordered list (max 64) of typed edits, each tagged by an `op`
+    field that selects its schema — e.g. `{"op": "create_rect", "x": 0, "y": 0, "width": 100,
+    "height": 60, "fill": "#3366cc"}`, `{"op": "set_fill", "object_ids": ["logo"], "color": "red"}`,
+    `{"op": "move_object", "object_id": "logo", "dx": 10, "dy": 0}`. Supported ops mirror the typed
+    DOM tools: `set_fill` / `set_stroke` / `set_opacity` / `replace_color` / `apply_palette` /
+    `replace_text` / `set_font` / `duplicate_object` / `rename_object` / `delete_object` (high) /
+    `move_object` / `scale_object` / `rotate_object` / `resize_canvas` / `normalize_viewbox` /
+    `tile` / `create_rect` / `create_circle` / `create_ellipse` / `create_line` / `create_polygon` /
+    `create_polyline` / `create_path` / `create_text` / `create_group` / `group_objects` /
+    `reparent_object` / `create_use` / `add_linear_gradient` / `add_radial_gradient`. Validation is
+    two-phase: ALL members are validated before any mutation (one bad edit leaves the document
+    byte-identical), then applied in order with all-or-nothing rollback on any failure. If ANY
+    member is high-risk (a `delete_object` edit) the WHOLE batch is HIGH and requires a non-empty
+    `approval_token`; otherwise it is medium.
+
+    Render and look before you trust the edit: a batch changes several things at once, so call
+    `render_preview` (or `live_render_view` in live mode) afterwards and inspect the result before
+    relying on it — and `restore_snapshot(doc_id, snapshot_id)` reverts the whole batch in one step.
+
+    Return shape: `BatchEditResult` — the pipeline fields for the single batch operation
+    (`operation_id`, `snapshot_id`, `changed`, before/after preview; reversible) PLUS `edit_count`
+    and the effective `risk_class`.
+
+    Example: `apply_edits(doc_id, [{"op": "create_rect", "x": 0, "y": 0, "width": 100, "height": 60,
+    "fill": "#eee", "object_id": "bg"}, {"op": "create_text", "x": 10, "y": 30, "text": "Hi"}])`
+
+    Risk class: medium (effective risk is the MAX over members; a `delete_object` member escalates
+    the batch to high and requires `approval_token`). Reversible via the single pre-batch snapshot.
+
+#### apply_palette
+Risk class: medium
+Key params: doc_id: string, mapping: object, scope_ids: array | null
+Description:
+    Apply many `from -> to` colour replacements in a single reversible operation.
+
+    When to use: re-theming / rebranding a document's colours in one shot. For a single colour swap
+    use `replace_color`; to recolour specific objects use `set_fill` / `set_stroke`.
+
+    Key params: `mapping` maps each source colour to its replacement; every key AND value is
+    strictly colour-validated UP FRONT — a typo'd or non-colour entry (e.g. `notacolor`) is rejected
+    with a `ToolError` BEFORE any mutation, op record, or snapshot is created (E10-02). Each reuses
+    the `replace_color` matching logic. `scope_ids`, if given, confines all replacements to those
+    elements' subtrees.
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed` (a real before/after
+    content diff), before/after preview; the whole palette is applied under one snapshot
+    (reversible).
+
+    Example: `apply_palette(doc_id, {"#ff0000": "#3366cc", "#00ff00": "#66cc33"})`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+#### delete_object
+Risk class: high
+Key params: doc_id: string, object_ids: array, approval_token: string | null
+Description:
+    Delete objects by id from a document in ONE reversible, snapshot-backed operation.
+
+    When to use: dropping one or more existing elements (e.g. stray seed paths) without a `Read` +
+    `set_document_svg` full-document rebuild. Get ids from `find_objects` / `inspect_document`. To
+    MOVE an object into another group use `reparent_object`; to rename rather than remove use
+    `rename_object`.
+
+    Key params: `object_ids` is a non-empty list of ids to remove; an id that is not present is
+    silently skipped (deleting an already-absent object is a successful no-op, not an error). The
+    document root cannot be deleted. Because deletion is HIGH risk, a real removal requires a
+    non-empty `approval_token` (minted out of band, bound to this one operation); without it the
+    policy gate refuses the op and nothing is written.
+
+    Return shape: `DeleteResult` — all `EditResult` fields (`operation_id`, `snapshot_id`,
+    `changed`, before/after preview; the edit lands on the working copy only, reversible via
+    `restore_snapshot`) PLUS `affected_ids`, the ids that were actually removed. When NONE of the
+    ids existed the call is a genuine no-op: `changed=False`, empty `operation_id`/`snapshot_id`,
+    and `affected_ids=[]` (no snapshot or Operation Record written).
+
+    Example: `delete_object(doc_id, ["seed1", "seed2"], approval_token="…")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: high (delete; approval-gated, reversible via pre-op snapshot — original untouched).
+
+#### duplicate_object
+Risk class: medium
+Key params: doc_id: string, object_id: string, new_id: string | null
+Description:
+    Duplicate an object or group in place, inserting the clone right after the original.
+
+    When to use: copying one object once. To copy into a grid use `tile`; to instance via `<use>`
+    use `create_use`; to change an id without copying use `rename_object`.
+
+    Key params: the clone re-ids every contained id uniquely and rewrites its internal references so
+    it is self-consistent. An optional `new_id` (validated safe and unused) names the clone's top
+    element; otherwise a suffixed id is generated.
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed`, before/after preview; the
+    new top id is reported in the `summary`. Lands on the working copy only (reversible).
+
+    Example: `duplicate_object(doc_id, "icon", new_id="icon_copy")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible write-new on the working copy; original untouched).
+
+#### fit_to_content
+Risk class: medium
+Key params: doc_id: string
+Description:
+    Fit the document's root ``viewBox`` to its CONTENT bounding box.
+
+    When to use: cropping the page so it frames the drawing exactly. To set an explicit page size
+    use `resize_canvas`, to merely repair the viewBox use `normalize_viewbox`.
+
+    Key params: none beyond `doc_id`. The content bbox is computed by the Inkscape engine
+    (`--query-all`, ADR-005 — real geometry, not naive XML) in the document's intrinsic
+    user-coordinate space (probed against a px-identity copy so the value is STABLE across calls);
+    only the root `viewBox` changes. IDEMPOTENT: a second call on an already-fitted document reports
+    `changed=False`. Fails with a stable error if the engine is unavailable, the document has no
+    drawable content, or the bbox is degenerate.
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed` (real before/after content
+    diff), before/after preview; the edit lands on the working copy only (reversible).
+
+    Example: `fit_to_content(doc_id)`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+#### move_object
+Risk class: medium
+Key params: doc_id: string, object_id: string, dx: number, dy: number
+Description:
+    Translate an object/group by ``(dx, dy)`` in its parent coordinate space.
+
+    When to use: repositioning one object; get its id from `find_objects`. To resize use
+    `scale_object`, to spin use `rotate_object`, to lay out copies use `tile`.
+
+    Key params: `dx`/`dy` are a delta in the parent coordinate space; a `translate(dx,dy)` is
+    prepended to the target's transform (child geometry untouched).
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed` (real before/after content
+    diff), before/after preview; the edit lands on the working copy only (reversible).
+
+    Example: `move_object(doc_id, "logo", 10, 0)`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+#### normalize_viewbox
+Risk class: medium
+Key params: doc_id: string
+Description:
+    Normalize or repair the document's root ``viewBox``.
+
+    When to use: tidying/repairing a missing or malformed root `viewBox`. To frame the page to the
+    art use `fit_to_content`, to set the page size use `resize_canvas`.
+
+    Key params: none beyond `doc_id`. A valid 4-number `viewBox` is left unchanged (idempotent →
+    `changed=False`); an absent one is synthesized from numeric `width`/`height`; a malformed one is
+    repaired from width/height when possible.
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed` (real before/after content
+    diff), before/after preview; the edit lands on the working copy only (reversible).
+
+    Example: `normalize_viewbox(doc_id)`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+#### rename_object
+Risk class: medium
+Key params: doc_id: string, object_id: string, new_id: string | null, label: string | null
+Description:
+    Change an object's `id` and/or its `inkscape:label`.
+
+    When to use: giving an object a stable/human id or label. To copy it use `duplicate_object`; to
+    keep an id surviving `svg_web_optimize` add it to that tool's `keep_ids`.
+
+    Key params: provide `new_id` and/or `label` (at least one required). Changing the id validates
+    the new id (safe charset, not already used) and rewrites all in-document references to the old
+    id so nothing dangles. `label` is set on `inkscape:label`.
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed`, before/after preview; the
+    edit lands on the working copy only (reversible).
+
+    Example: `rename_object(doc_id, "rect12", new_id="header", label="Header bar")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible edit on the working copy; original untouched).
+
+#### replace_color
+Risk class: medium
+Key params: doc_id: string, from_color: string, to_color: string, scope_ids: array | null
+Description:
+    Replace one colour with another across the document (or within `scope_ids` subtrees).
+
+    When to use: swapping every occurrence of one colour for another. For a multi-colour theme swap
+    use `apply_palette`; to recolour specific objects only use `set_fill` / `set_stroke`.
+
+    Key params: both colours are validated; matching is case- and hex-shorthand-insensitive and
+    covers inline-style colour properties (`fill`, `stroke`, `stop-color`, ...) and the same-named
+    presentation attributes. `scope_ids`, if given, confines the replacement to those elements'
+    subtrees (each id must exist).
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed` (false if the colour was
+    not found anywhere in scope), before/after preview; lands on the working copy only (reversible).
+
+    Example: `replace_color(doc_id, "#ff0000", "#3366cc")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+#### replace_text
+Risk class: medium
+Key params: doc_id: string, object_id: string, text: string
+Description:
+    Replace the text content of a text element (`<text>` / `<tspan>` / flow text).
+
+    When to use: changing what a text object says (get its id from `find_objects`). To change the
+    font/size use `set_font`; to rename the element's id use `rename_object`.
+
+    Key params: `object_id` must be a text-bearing element; `text` is length-bounded and may not
+    contain control characters other than tab / newline / carriage return. If the `<text>` has
+    `<tspan>` children they are dropped and the content collapses to a single run.
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed`, before/after preview; the
+    edit lands on the working copy only (reversible).
+
+    Example: `replace_text(doc_id, "title", "Hello")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible text edit on the working copy; original untouched).
+
+#### resize_canvas
+Risk class: medium
+Key params: doc_id: string, width: string, height: string, adjust_viewbox: boolean, bleed: number | null, bleed_color: string
+Description:
+    Set the document canvas ``width`` / ``height`` to validated CSS lengths.
+
+    When to use: changing the PAGE size. To crop the page to the art use `fit_to_content`, to repair
+    the viewBox use `normalize_viewbox`, to resize one OBJECT use `scale_object`.
+
+    Key params: `width`/`height` are validated CSS lengths; child geometry is not altered. By
+    default an existing `viewBox` is preserved (synthesized only when absent). `adjust_viewbox=True`
+    RETARGETS the `viewBox` to `"0 0 W H"` so it tracks the new canvas (opt-in; changes the
+    coordinate system). BLEED (opt-in, E16-10d): `bleed` > 0 ALSO grows the viewBox outward by that
+    many user units on every side and paints the new border strip with `bleed_color` (validated
+    colour, default white) via one background `<rect>` behind all content — a print-bleed resize in
+    ONE call instead of a second `scale_object`/background step. `bleed` needs a valid existing or
+    derivable viewBox and is mutually exclusive with `adjust_viewbox`.
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed` (real before/after content
+    diff), before/after preview; the edit lands on the working copy only (reversible).
+
+    Example: `resize_canvas(doc_id, "800", "600")`; with bleed:
+    `resize_canvas(doc_id, "800", "600", bleed=8, bleed_color="#fff")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+#### rotate_object
+Risk class: medium
+Key params: doc_id: string, object_id: string, degrees: number, cx: number | null, cy: number | null
+Description:
+    Rotate an object/group by ``degrees`` about a point.
+
+    When to use: spinning one object; get its id from `find_objects`. To move use `move_object`, to
+    resize use `scale_object`.
+
+    Key params: `degrees` is the rotation angle; it rotates about `(cx, cy)` when BOTH are given,
+    otherwise about the parent coordinate-space origin.
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed` (real before/after content
+    diff), before/after preview; the edit lands on the working copy only (reversible).
+
+    Example: `rotate_object(doc_id, "arrow", 90, cx=50, cy=50)`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+#### scale_object
+Risk class: medium
+Key params: doc_id: string, object_id: string, sx: number, sy: number | null
+Description:
+    Scale an object/group by factor ``sx`` (and ``sy``, defaulting to ``sx`` for uniform).
+
+    When to use: resizing one object; get its id from `find_objects`. To reposition use
+    `move_object`, to rotate use `rotate_object`, to resize the whole page use `resize_canvas`.
+
+    Key params: `sx` (and optional `sy`, defaulting to `sx` for uniform) scale about the parent
+    coordinate-space ORIGIN; non-finite or non-positive factors are rejected.
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed` (real before/after content
+    diff), before/after preview; the edit lands on the working copy only (reversible).
+
+    Example: `scale_object(doc_id, "logo", 2)`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+#### set_fill
+Risk class: medium
+Key params: doc_id: string, object_ids: array, color: string, opacity: number | null
+Description:
+    Set the fill colour (and optional fill opacity) of one or more objects.
+
+    When to use: recolouring specific objects' fill (get the ids from `find_objects`). To change
+    every instance of a colour document-wide use `replace_color`; for a whole theme use
+    `apply_palette`; for the outline use `set_stroke`.
+
+    Key params: `color` accepts hex, `rgb()/rgba()/hsl()/hsla()`, a named colour, or a `url(#id)`
+    paint-server reference — a gradient/pattern in `<defs>`, e.g. an id from `add_linear_gradient` /
+    `add_radial_gradient` (optionally with a fallback colour: `url(#id) red`). External urls,
+    `javascript:`, and CSS-injection punctuation are rejected. `opacity`, if given, in [0, 1].
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed` (false if the colour was
+    already present), before/after preview; the edit lands on the working copy only (reversible).
+
+    Example: `set_fill(doc_id, ["logo"], "#3366cc")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+#### set_font
+Risk class: medium
+Key params: doc_id: string, object_ids: array, family: string | null, size: string | null, weight: string | null
+Description:
+    Set font-family / font-size / font-weight on one or more text objects.
+
+    When to use: restyling text typography. To change the words use `replace_text`; for non-font
+    fill/stroke use `set_fill` / `set_stroke`.
+
+    Key params: provide any of `family`, `size`, `weight` (at least one required); each is validated
+    and written to every target's inline style.
+
+    Return shape: `SetFontResult` — all `EditResult` fields (`operation_id`, `snapshot_id`,
+    `changed`, before/after preview; the edit lands on the working copy only, reversible) PLUS glyph
+    coverage (E16-04): `coverage_ok` is False when a target now names a family that cannot render
+    its text, and `font_coverage` lists per object the `uncovered_chars` (read from the font's OWN
+    cmap, never fontconfig substitution) and a `suggested_family` that covers them — so a
+    non-covering font choice is checkable at apply time instead of silently shipping tofu.
+
+    Example: `set_font(doc_id, ["title"], family="Inter", size="24px")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (reversible style edit on the working copy; original untouched).
+
+#### set_opacity
+Risk class: medium
+Key params: doc_id: string, object_ids: array, opacity: number
+Description:
+    Set the element-level opacity of one or more objects.
+
+    When to use: making whole objects more/less transparent. For fill-only or stroke-only opacity
+    use `set_fill` / `set_stroke` with their `opacity` argument instead.
+
+    Key params: `opacity` must be in [0, 1] (this is the element `opacity`, affecting fill AND
+    stroke together).
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed`, before/after preview; the
+    edit lands on the working copy only (reversible).
+
+    Example: `set_opacity(doc_id, ["overlay"], 0.5)`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+#### set_stroke
+Risk class: medium
+Key params: doc_id: string, object_ids: array, color: string | null, width: string | null, opacity: number | null
+Description:
+    Set the stroke colour, width, and/or opacity of one or more objects.
+
+    When to use: styling an object's outline/border. For the interior use `set_fill`; to turn a
+    stroke into a filled outline path use `stroke_to_path`.
+
+    Key params: at least one of `color`, `width`, `opacity` must be supplied. `color` accepts a
+    colour OR a `url(#id)` paint-server reference (gradient/pattern in `<defs>`, optionally with a
+    fallback colour); `width` is a CSS length (number + optional unit); `opacity` must be in [0, 1].
+    External urls, `javascript:`, and CSS-injection punctuation are rejected.
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed`, before/after preview; the
+    edit lands on the working copy only (reversible).
+
+    Example: `set_stroke(doc_id, ["border"], color="#000", width="2")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+#### tile
+Risk class: medium
+Key params: doc_id: string, object_id: string, rows: integer, cols: integer, dx: number, dy: number
+Description:
+    Lay out a ``rows`` x ``cols`` grid of an object in ONE reversible operation.
+
+    When to use: repeating one object into a grid in a single call. To move/scale/rotate one object
+    use `move_object` / `scale_object` / `rotate_object`; to copy once use `duplicate_object`.
+
+    Key params: the target stays as the `(0,0)` cell; `rows*cols - 1` deep copies (each re-id'd
+    uniquely, intra-clone refs rewritten) are inserted, the copy at `(r, c)` translated by
+    `(c*dx, r*dy)`. `rows`/`cols` must each be `>= 1` and their product must not exceed the engine's
+    tile cap; `dx`/`dy` must be finite. A 4x4 grid is one call (not 30).
+
+    Return shape: `EditResult` — `operation_id`, `snapshot_id`, `changed` (a 1x1 tile reports
+    `changed=False`), before/after preview; the whole grid lands under one snapshot (reversible).
+
+    Example: `tile(doc_id, "dot", 4, 4, 20, 20)`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+### Paths
+
+#### boolean_difference
+Risk class: high
+Key params: doc_id: string, object_ids: array, dry_run: boolean, approval_token: string | null
+Description:
+    Subtract the top path(s) from the bottom one via the Inkscape engine (``path-difference``).
+
+    When to use: cutting one shape out of another. To MERGE shapes use `boolean_union`; to combine
+    keeping subpaths use `combine_paths`.
+
+    Key params: `object_ids` must be at least two distinct paths; Inkscape subtracts the upper
+    path(s) from the lowest one (z-order). `dry_run=True` (DEFAULT) reports which ids would be
+    differenced (and the `result_id`) WITHOUT invoking the engine; a real run needs a non-empty
+    `approval_token`. ID SURVIVAL: the result keeps the BOTTOM-most target's id (the path subtracted
+    FROM).
+
+    Return shape: `PathOpResult` — `dry_run`, `changed`, `affected_ids`, `result_id` (surviving id);
+    on a real run also `operation_id`, `snapshot_id`, before/after preview (reversible).
+
+    Example: `boolean_difference(doc_id, ["base", "hole"], dry_run=False, approval_token="ok")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: high (destructive geometry; approval-gated).
+
+#### boolean_union
+Risk class: high
+Key params: doc_id: string, object_ids: array, dry_run: boolean, approval_token: string | null
+Description:
+    Union two or more paths into one via the Inkscape engine (``path-union``).
+
+    When to use: fusing overlapping shapes into one outline. To SUBTRACT use `boolean_difference`;
+    to merge keeping subpaths (not fused) use `combine_paths`.
+
+    Key params: `object_ids` must be at least two distinct paths. `dry_run=True` (DEFAULT) reports
+    which ids would be unioned (and the `result_id` it would produce) WITHOUT invoking the engine; a
+    real run needs a non-empty `approval_token`. ID SURVIVAL: the merged result keeps ONE id — the
+    BOTTOM-most target (first in document order) — so a chained boolean needs no re-inspect.
+
+    Return shape: `PathOpResult` — `dry_run`, `changed`, `affected_ids`, `result_id` (surviving id);
+    on a real run also `operation_id`, `snapshot_id`, before/after preview (reversible).
+
+    Example: `boolean_union(doc_id, ["a", "b"], dry_run=False, approval_token="ok")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: high (destructive geometry; approval-gated).
+
+#### break_apart
+Risk class: high
+Key params: doc_id: string, object_ids: array, dry_run: boolean, approval_token: string | null
+Description:
+    Break a compound path into its subpaths via the Inkscape engine (``path-break-apart``).
+
+    When to use: splitting one compound path into separate paths. The inverse is `combine_paths`.
+
+    Key params: `object_ids` are the compound paths to split. `dry_run=True` (DEFAULT) reports which
+    ids would be broken apart WITHOUT invoking the engine; a real run needs a non-empty
+    `approval_token`. Runs `select-by-id` + `path-break-apart`, writing back over the working copy.
+
+    Return shape: `PathOpResult` — `dry_run`, `changed`, `affected_ids`; on a real run also
+    `operation_id`, `snapshot_id`, before/after preview (reversible via the pre-op snapshot).
+
+    Example: `break_apart(doc_id, ["glyph"], dry_run=False, approval_token="ok")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: high (destructive geometry; approval-gated).
+
+#### cleanup_paths
+Risk class: high
+Key params: doc_id: string, object_ids: array, dry_run: boolean, approval_token: string | null
+Description:
+    Reduce path nodes via the Inkscape engine (``path-simplify``) — an explicit alias of
+    `simplify_path`.
+
+    When to use: same effect as `simplify_path`. For LOSSLESS cleanup (strip editor cruft, drop dead
+    structure, round coordinates with references preserved) use `svg_web_optimize` — direct-DOM and
+    non-destructive.
+
+    Key params: `object_ids` are the targets. `dry_run=True` (DEFAULT) reports which ids would be
+    simplified WITHOUT invoking the engine; a real run needs a non-empty `approval_token`. OVERLAP,
+    DELIBERATE (E10-07 P10): runs the SAME LOSSY `path-simplify` as `simplify_path` (removes nodes
+    within a tolerance, can rewrite straight segments as curves). Inkscape 1.4.3 exposes no
+    distinct, dependable non-destructive path-cleanup Action over `--actions`
+    (`org.inkscape.path.to-absolute`
+    is a no-op headless; `org.cutlings.clean-up-path` is a third-party extension we do not exec —
+    sec.12), so this is kept as a named alias, not a different behavior.
+
+    Return shape: `PathOpResult` — `dry_run`, `changed`, `affected_ids`; on a real run also
+    `operation_id`, `snapshot_id`, before/after preview (reversible via the pre-op snapshot).
+
+    Example: `cleanup_paths(doc_id, ["curve"], dry_run=False, approval_token="ok")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: high (destructive geometry, same as `simplify_path`; approval-gated).
+
+#### combine_paths
+Risk class: high
+Key params: doc_id: string, object_ids: array, dry_run: boolean, approval_token: string | null
+Description:
+    Combine paths into a single multi-subpath path via the Inkscape engine (``path-combine``).
+
+    When to use: merging paths while PRESERVING subpaths (fill-rule driven) rather than fusing
+    outlines. To fuse outlines use `boolean_union`; to subtract use `boolean_difference`.
+
+    Key params: `object_ids` must be at least two distinct paths. `dry_run=True` (DEFAULT) reports
+    which ids would be combined (and the `result_id`) WITHOUT invoking the engine; a real run needs
+    a non-empty `approval_token`. ID SURVIVAL: standardized to MATCH the boolean ops — the result
+    keeps the BOTTOM-most target's id. Inkscape natively keeps the TOP id; this tool normalizes it
+    back to the bottom one so combine and the booleans behave identically for a chained op.
+
+    Return shape: `PathOpResult` — `dry_run`, `changed`, `affected_ids`, `result_id` (surviving id);
+    on a real run also `operation_id`, `snapshot_id`, before/after preview (reversible).
+
+    Example: `combine_paths(doc_id, ["a", "b"], dry_run=False, approval_token="ok")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: high (destructive geometry; approval-gated).
+
+#### simplify_path
+Risk class: high
+Key params: doc_id: string, object_ids: array, dry_run: boolean, approval_token: string | null
+Description:
+    Simplify the given path(s) via the Inkscape engine (``path-simplify``).
+
+    When to use: reducing redundant nodes on path(s). `cleanup_paths` is an explicit alias of this;
+    for LOSSLESS, non-destructive cleanup use `svg_web_optimize` instead.
+
+    Key params: `object_ids` are the target paths. `dry_run=True` (DEFAULT) validates targets and
+    reports which ids would be simplified WITHOUT invoking the engine; a real run needs a non-empty
+    `approval_token`. Runs `select-by-id` + `path-simplify` and writes back over the working copy.
+
+    Return shape: `PathOpResult` — `dry_run`, `changed`, `affected_ids`; on a real run also
+    `operation_id`, `snapshot_id`, before/after preview (reversible via the pre-op snapshot).
+
+    Example: `simplify_path(doc_id, ["curve"], dry_run=False, approval_token="ok")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: high (destructive geometry; approval-gated).
+
+#### stroke_to_path
+Risk class: high
+Key params: doc_id: string, object_ids: array, dry_run: boolean, approval_token: string | null
+Description:
+    Convert each object's stroke into a filled path via the Inkscape engine.
+
+    When to use: outlining a stroke into a fill so the visual stroke survives later scaling/export.
+    To merely change stroke colour/width use `set_stroke` (non-destructive).
+
+    Key params: `object_ids` are the targets. `dry_run=True` (DEFAULT) reports which ids would be
+    outlined WITHOUT invoking the engine; a real run needs a non-empty `approval_token`. Runs
+    `object-stroke-to-path` and writes back over the working copy.
+
+    Return shape: `PathOpResult` — `dry_run`, `changed`, `affected_ids`; on a real run also
+    `operation_id`, `snapshot_id`, before/after preview (reversible via the pre-op snapshot).
+
+    Example: `stroke_to_path(doc_id, ["line"], dry_run=False, approval_token="ok")`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: high (destructive geometry; approval-gated).
+
+### Export
+
+#### capture_frame
+Risk class: low
+Key params: doc_id: string, series: string | null, width_px: integer | null, label: string | null, inline: boolean, max_output_bytes: integer | null
+Description:
+    Capture the next numbered PNG screenshot in a per-run frame series.
+
+    When to use: documenting a scripted edit sequence step-by-step. For a one-off check use
+    `render_preview`; to gather a finished series use `list_frames`.
+
+    Key params: `series` (sanitized; defaults to `run`) groups frames into a folder under
+    `artifacts/frames/<series>/`; the index is derived from the filesystem (highest existing
+    `frame-NNN` + 1) — monotonic, survives a restart, never clobbers. `label` is folded into the
+    frame name. Renders the whole canvas exactly like `render_preview` (no UI chrome). INLINE RASTER
+    (E14-05): the PNG is returned inline by default (gated by `max_output_bytes`); `inline=False`
+    returns only the structured result.
+
+    Return shape: `FrameResult` — `artifact_path` / `workspace_relative_path` (same value, E11-01),
+    `format`, `width_px`/`height_px`, `series`, `frame_index` (1-based), `stale`. With an inline
+    image, a `ToolResult` carrying the same fields plus the image block.
+
+    Example: `capture_frame(doc_id, series="cleanup", label="after-simplify")`
+
+    Risk class: low (render to the managed artifacts dir; no original overwrite, no Operation
+    Record).
+
+#### create_icon_set
+Risk class: low
+Key params: doc_id: string, sizes: array | null, out_dir: string | null, name_prefix: string | null
+Description:
+    Export a multi-size square PNG icon set from the source document.
+
+    When to use: producing a standard square icon set in one call. For a responsive web bundle use
+    `export_web_profile`; for arbitrary batch specs use `export_batch`.
+
+    Key params: `sizes` is the list of square px sizes (defaults to 16, 32, 48, 64, 128, 256). Each
+    must be a positive integer no greater than the configured pixel cap; an out-of-range or
+    non-positive size is rejected before Inkscape runs and no partial set is written. `out_dir`
+    (E11-05/E16-03) writes the set into a caller-chosen dir — a relative `out_dir` anchors to the
+    workspace ROOT and is sandbox-checked (out-of-workspace rejected "path rejected: outside
+    workspace"); `name_prefix` tags each file.
+
+    Return shape: `ProfileExportResult` — `profile`, `applied_settings`, and `artifacts` (each
+    carries its `requested_size_px`, a `workspace_relative_path`, and content-truth
+    `opaque_px`/`all_blank`; E16-07).
+
+    Example: `create_icon_set(doc_id, sizes=[16, 32, 64], out_dir="dist/icons")`
+
+    Risk class: low (export to a sandbox-checked dir; no original overwrite).
+
+#### export_batch
+Risk class: low
+Key params: doc_id: string, specs: array, dry_run: boolean, byte_budget: integer | null, out_dir: string | null, name_prefix: string | null
+Description:
+    Run a bounded batch of typed export specs in one call (dry-run by default).
+
+    When to use: exporting many sizes/formats/objects in one call. For a single export use
+    `export_document` / `export_object`; for a standard icon set use `create_icon_set`.
+
+    Key params: `specs` is a typed list (each: `format` png/pdf/svg, optional `width_px`, optional
+    `object_id` for a single object). Bounded: at most a fixed number of specs per call and a
+    total-output byte budget (`byte_budget`, default: the per-document artifact budget).
+    `dry_run=True` (DEFAULT) validates and returns the plan + projected sizes + `within_budget`,
+    writing nothing; `dry_run=False` refuses cleanly if the projection exceeds the budget. `out_dir`
+    (E11-05) writes into a caller-chosen dir — relative anchors to the workspace ROOT,
+    sandbox-checked (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix`
+    tags each file.
+
+    Return shape: `BatchResult` — `item_count`, per-item entries (each with a
+    `workspace_relative_path` on a real run), projected/actual total size, and `within_budget`.
+
+    Example: `export_batch(doc_id, [{"format": "png", "width_px": 256}], dry_run=False)`
+
+    Risk class: low (artifact-only export to a sandbox-checked dir; composes the E1-06 engine).
+
+#### export_document
+Risk class: low
+Key params: doc_id: string, format: string, width_px: integer | null, out_dir: string | null, name_prefix: string | null, inline: boolean, max_output_bytes: integer | null
+Description:
+    Export the whole document to PNG, PDF, or SVG.
+
+    When to use: producing a final file of the whole document. For one object use `export_object`;
+    for many sizes/formats at once use `export_batch`; for a web/print bundle use the profile tools.
+
+    Key params: `format` is one of "png"/"pdf"/"svg" (others rejected). PNG honors `width_px`
+    (pixel-capped before Inkscape runs); PDF/SVG are vector and ignore it. `out_dir` (E11-05) writes
+    into a caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is
+    sandbox-checked (out-of-workspace is rejected with "path rejected: outside workspace");
+    `name_prefix` tags the filename. INLINE RASTER (E14-05): a PNG is returned inline by default
+    (gated by `max_output_bytes`); PDF/SVG are never embedded; `inline=False` opts out.
+
+    Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value, E11-01),
+    `format`, `width_px`/`height_px` (TRUE size for PNG, None for vector), `stale`. With an inline
+    image, a `ToolResult` carrying the same fields plus the image block.
+
+    Example: `export_document(doc_id, "png", width_px=1024)`
+
+    Risk class: low (render/export to a sandbox-checked dir; no original overwrite).
+
+#### export_object
+Risk class: low
+Key params: doc_id: string, object_id: string, format: string, width_px: integer | null, out_dir: string | null, name_prefix: string | null, inline: boolean, max_output_bytes: integer | null
+Description:
+    Export a single object (by id) to PNG, PDF, or SVG.
+
+    When to use: exporting one object, clipped to its own bbox (get the id from `find_objects`). For
+    the whole document use `export_document`; for many at once use `export_batch`.
+
+    Key params: `object_id` must exist and match the safe SVG-id charset (else rejected before it
+    reaches Inkscape). `format` is one of "png"/"pdf"/"svg". `out_dir` (E11-05) writes into a
+    caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
+    (out-of-workspace is rejected with "path rejected: outside workspace"); `name_prefix` tags the
+    filename. INLINE RASTER (E14-05): a PNG is returned inline by default (gated by
+    `max_output_bytes`); PDF/SVG never embedded; `inline=False` opts out.
+
+    Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value, E11-01),
+    `format`, `width_px`/`height_px` (TRUE size for PNG, None for vector), `stale`. With an inline
+    image, a `ToolResult` carrying the same fields plus the image block.
+
+    Example: `export_object(doc_id, "logo", "svg")`
+
+    Risk class: low (render/export to a sandbox-checked dir; no original overwrite).
+
+#### export_print_profile
+Risk class: low
+Key params: doc_id: string, out_dir: string | null, name_prefix: string | null
+Description:
+    Export a print-oriented PDF (vector, page area) of the whole document.
+
+    When to use: producing a press-safe PDF. For web assets use `export_web_profile`; for a plain
+    (non-print) PDF/PNG/SVG use `export_document`.
+
+    Key params: applies real print-specific Inkscape settings (PDF version pinned to 1.4 + text
+    outlined to paths) so output is press-safe and ALWAYS differs from a plain PDF export — even for
+    text-free docs, since the plain export defaults to PDF 1.5 while this pins 1.4 (header
+    `%PDF-1.4`, a deterministic byte difference). `out_dir` (E11-05/E16-03) writes into a
+    caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
+    (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix` tags the file.
+
+    Return shape: `ProfileExportResult` — `profile`, the auditable `applied_settings` (E11-11), and
+    one PDF in `artifacts` with a `workspace_relative_path` plus content-truth `is_vector` /
+    `fonts_outlined` (true vector when both hold; E16-07).
+
+    Example: `export_print_profile(doc_id, out_dir="dist/print")`
+
+    Risk class: low (export to a sandbox-checked dir; no original overwrite).
+
+#### export_set
+Risk class: low
+Key params: doc_ids: array, specs: array, dry_run: boolean, byte_budget: integer | null, out_dir: string | null, name_prefix: string | null
+Description:
+    Batch-export a SET of documents in one call: per-doc results + aggregate + verdict.
+
+    When to use: exporting a whole multi-document system (e.g. a 12-icon set) at the same sizes /
+    formats in one call, with the set's total byte footprint and a cross-doc consistency check. For
+    a SINGLE document use `export_batch`; for an icon set from one doc use `create_icon_set`.
+
+    Key params: `doc_ids` is a non-empty, duplicate-free set; `specs` is the SAME typed `ExportSpec`
+    list `export_batch` takes (applied to EVERY document). `dry_run` / `byte_budget` / `out_dir` /
+    `name_prefix` behave exactly as on `export_batch` (composed, not reimplemented), per document; a
+    `name_prefix` is recommended with `out_dir` so the per-doc files do not collide. The whole set
+    is rejected if ANY document's `export_batch` fails (no partial result).
+
+    Return shape: `ExportSetResult` — `per_doc` (each `{doc_id, result}` with the standard
+    `BatchResult`), `total_items` and `total_bytes` aggregated across the set (projected on a dry
+    run, actual on a real run), and `consistency` — the structured cross-doc verdict over the set's
+    viewBox / stroke-width / id-naming conventions (per property: agree/disagree + the differing
+    values + which doc_ids differ).
+
+    Example: `export_set(["d1","d2","d3"], [{"format": "png", "width_px": 64}], dry_run=False,
+    out_dir="dist", name_prefix="icon")`
+
+    Risk class: low (artifact-only export to a sandbox-checked dir; composes the per-doc engine).
+
+#### export_web_profile
+Risk class: low
+Key params: doc_id: string, width_px: integer, widths: array | null, scales: array | null, out_dir: string | null, name_prefix: string | null
+Description:
+    Export a web-oriented asset set: a responsive PNG set plus one plain SVG (E11-11).
+
+    When to use: producing a web-ready asset bundle. For a print PDF use `export_print_profile`; for
+    a square icon set use `create_icon_set`; for a single export use `export_document`.
+
+    Key params: PNG widths resolve as — explicit `widths` (each a PNG); else density `scales`
+    applied to `width_px` (e.g. [1,2,3] -> 1x/2x/3x); else `width_px`. Every PNG is pixel-capped
+    before Inkscape runs and distinct on disk; responsive entries report their `scale`. `out_dir`
+    (E11-05/E16-03) writes the set into a caller-chosen dir so a `dist/` tree assembles with no
+    `Bash cp` — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
+    (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix` tags each file.
+
+    Return shape: `ProfileExportResult` — `profile`, `applied_settings`, and ordered `artifacts`
+    (ascending width, then one plain SVG last); each carries a `workspace_relative_path` plus
+    content-truth fields (PNG: `opaque_px`/`all_blank`; E16-07).
+
+    Example: `export_web_profile(doc_id, scales=[1, 2, 3], out_dir="dist/web")`
+
+    Risk class: low (export to a sandbox-checked dir; no original overwrite).
+
+#### list_frames
+Risk class: low
+Key params: doc_id: string, series: string | null
+Description:
+    List the frames of a `capture_frame` series, ordered by index.
+
+    When to use: gathering a whole run's PNGs at the end without re-deriving paths. To produce
+    frames use `capture_frame`.
+
+    Key params: `series` is sanitized identically to `capture_frame` (defaults to `run`).
+
+    Return shape: `FrameListResult` — `doc_id`, `series`, and `frames` (each a `FrameInfo` with
+    `frame_index` + a resolvable `workspace_relative_path`), ordered by index; empty when the series
+    has no frames yet.
+
+    Example: `list_frames(doc_id, series="cleanup")`
+
+    Risk class: low (read-only listing of the managed artifacts dir).
+
+#### render_preview
+Risk class: low
+Key params: doc_id: string, width_px: integer | null, name: string | null, inline: boolean, max_output_bytes: integer | null
+Description:
+    Render a PNG preview of the whole document into the artifacts dir.
+
+    When to use: a quick visual check of the whole document. For a final file use `export_document`;
+    for one object use `export_object`; for an ordered run series use `capture_frame`.
+
+    Key params: `width_px` scales the raster (height follows the document aspect ratio); omit for
+    intrinsic size. Oversized requests are rejected before Inkscape runs. `name` tags the file
+    (successive calls do NOT clobber, E11-12 — each render gets a unique frame name). INLINE RASTER
+    (E14-05): by default the PNG is also returned as an MCP image block so the agent SEES it without
+    a second `Read`; gated by `max_output_bytes` (~5 MiB default) and skipped for an oversized
+    render; `inline=False` returns only the structured result.
+
+    Return shape: `PreviewResult` — `artifact_path` / `workspace_relative_path` (same root-relative
+    value, E11-01), `format`, `width_px`/`height_px` (TRUE on-disk size), `stale`. With an inline
+    image, a `ToolResult` carrying the same structured fields plus the image block.
+
+    Example: `render_preview(doc_id, width_px=512)`
+
+    Risk class: low (render/export to artifact dir; no original overwrite).
+
+### Optimize
+
+#### optimize_set
+Risk class: medium
+Key params: doc_ids: array, precision: integer, keep_ids: array | null
+Description:
+    Web-optimize a SET of documents in one call: per-doc results + aggregate + verdict.
+
+    When to use: losslessly shrinking a whole multi-document system (e.g. a 12-icon set) in one
+    call, reading the set's total byte saving and a cross-doc consistency check. For a SINGLE
+    document use `svg_web_optimize`; to inspect the opportunities use `quality_report_set`.
+
+    Key params: `doc_ids` is a non-empty, duplicate-free set; `precision` / `keep_ids` are the SAME
+    arguments `svg_web_optimize` takes (applied to EVERY document). Each document is optimized
+    through the reversible pipeline, so a CHANGED document gets ONE pre-mutation snapshot +
+    Operation Record (ADR-004) and a no-op writes none. The whole set is rejected if ANY document
+    fails (no partial apply on the remainder is suppressed — earlier successful docs stay optimized
+    and reversible via their snapshots).
+
+    Return shape: `OptimizeSetResult` — `per_doc` (each `{doc_id, result}` with the standard
+    `WebOptimizeResult`), `total_bytes_before` / `total_bytes_after` / `total_bytes_saved`
+    aggregated across the set, `changed_count`, and `consistency` — the structured cross-doc verdict
+    computed on the PRE-optimize state (per property: agree/disagree + the differing values + which
+    doc_ids differ).
+
+    Example: `optimize_set(["d1","d2","d3"], precision=2)`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium (each document optimized reversibly; one snapshot per changed doc).
+
+#### svg_web_optimize
+Risk class: medium
+Key params: doc_id: string, precision: integer, keep_ids: array | null
+Description:
+    Web-optimize an SVG: strip editor metadata, drop dead structure, reduce coordinate precision.
+
+    When to use: losslessly shrinking an SVG for the web (direct-DOM, non-destructive). To inspect
+    what WOULD be stripped first use `quality_report`; for lossy node reduction use `simplify_path`.
+
+    Key params: three reversible cleanups — (1) remove Inkscape/sodipodi editor-only elements,
+    namespaced attributes, and XML comments; (2) drop unreferenced `<defs>`, every unreferenced
+    `id`, and empty groups (referenced ids preserved so no `#frag` / `url(#frag)` / `href` breaks);
+    (3) round geometry numbers (path `d`, transforms, `x`/`y`/`width`/…) to `precision` decimals
+    (0-8, default 2; root `viewBox` untouched). `keep_ids` is an allowlist of ids that must NEVER be
+    stripped as "unreferenced" — pass a deliberate human/a11y id (e.g. one from `rename_object`) to
+    keep "one clean file with a stable id" (E10-07 / E11-04); unknown ids are ignored. Re-running on
+    optimized output removes/rounds nothing further.
+
+    Return shape: `WebOptimizeResult` — the reversible-edit fields (`operation_id`, `snapshot_id`,
+    before/after preview) plus machine-diffable deltas `bytes_before`, `bytes_after`, and `removed`
+    (a ``{code: count}`` map keyed IDENTICALLY to `quality_report.opportunities`), so an agent on a
+    byte budget can compute the saving without parsing prose or stat-ing the file (E11-08).
+
+    Example: `svg_web_optimize(doc_id, precision=2, keep_ids=["header"])`
+
+    Render and look before you trust this edit: render with `render_preview` (or `live_render_view`)
+    and inspect the result before relying on it; `restore_snapshot` reverts it if it is wrong.
+
+    Risk class: medium.
+
+### Live
+
+#### check_live_support
+Risk class: low
+Key params: (none)
+Description:
+    Report which live transports are available on this host (read-only; no connection).
+
+    When to use: checking live readiness before `live_connect`. To install the socket helper use
+    `live_install_helper`; for the full runtime matrix use `list_capabilities`.
+
+    Key params: none. Probes the extension-socket bridge (any OS) and the DBus fast-path
+    (Linux/BSD) independently — never assuming one by OS. Safe regardless of whether live mode is
+    enabled or a session is running.
+
+    Return shape: `LiveSupport` — `live_enabled`, `any_available`, `best_transport`,
+    `helper_installed`, per-transport `transports` probes (best-first), and `notes`.
+
+    Example: `check_live_support()`
+
+    Risk class: low (read-only probe).
+
+#### live_apply_to_selection
+Risk class: high
+Key params: approval_token: string | null, fill: string | null, stroke: string | null, stroke_width: string | null, opacity: number | null, dx: number | null, dy: number | null, scale: number | null, rotate: number | null
+Description:
+    Apply a validated style and/or simple transform to the current live selection.
+
+    When to use: editing the GUI selection's style/transform live. To insert markup use
+    `live_insert_svg`; to edit text use `live_set_selected_text`; for headless edits use `set_fill`
+    / `move_object` / etc.
+
+    Key params: reuses the headless E2 safe-edit semantics — `fill`/`stroke` colour-validated,
+    `stroke_width` a CSS length, `opacity` in [0, 1], transform composed from `dx`/`dy` (both
+    required together), `scale` (positive), `rotate` (degrees); at least one input required.
+    Semantic-only — no arbitrary code, no raw Action (ADR-003). Mutating a running user session is
+    HIGH risk: REQUIRES an explicit `approval_token` (refused without one).
+
+    Return shape: `LiveEditResult` — a Live Operation Record with before/after canvas renders,
+    syncable to a snapshot via `live_sync_to_workspace`.
+
+    Example: `live_apply_to_selection(approval_token="ok", fill="#3366cc")`
+
+    Risk class: high (approval-gated).
+
+#### live_arm_socket
+Risk class: restricted
+Key params: (none)
+Description:
+    Auto-arm the extension-socket helper so a programmatic launch gets the FULL live surface.
+
+    When to use: bringing up the FULL perceive/compose live command set without a human
+    Extensions-menu click (E16-10f) — a programmatic launch otherwise yields only DBus's reduced
+    action set. After this returns `armed`, call `live_connect` (the socket bridge is then the best
+    transport). To install the helper files first use `live_install_helper`; to probe readiness use
+    `check_live_support`.
+
+    Key params: none. Installs the helper if absent, then LAUNCHES a headful Inkscape with the
+    helper effect auto-invoked so it binds its loopback socket and advertises a rendezvous — no menu
+    click. The socket bridge is the cross-platform primary (NOT bound to one OS). Requires the
+    master live gate. GUI-ONLY: the headful launch needs a display; on a HEADLESS host (CI / box,
+    no `DISPLAY`/`WAYLAND_DISPLAY`) it fails with a clear, stable message (this leg is documented as
+    deferred there) rather than spawning a doomed process. An already-armed session is reused.
+
+    Return shape: `SocketArmResult` — `armed`, `launched` (whether THIS call started Inkscape),
+    `helper_installed`, `transport`, and `notes`. No host path is carried (sec.12).
+
+    Example: `live_arm_socket()` then `live_connect()`
+
+    Risk class: restricted (launches a headful Inkscape process and writes a server-bundled helper).
+
+#### live_connect
+Risk class: medium
+Key params: prefer: string
+Description:
+    Connect to a running Inkscape over the best-ranked available transport (enables live).
+
+    When to use: starting a live session before any other `live_*` tool. To probe first use
+    `check_live_support`; to tear down use `live_disconnect`.
+
+    Key params: `prefer` selects the profile. `read` (default) is the best READ-capable transport
+    (extension-socket primary; full selection/inspect surface) but is MODAL on the socket bridge —
+    the GUI freezes for the session. `no_freeze` drives the GUI WITHOUT freezing (Linux DBus path,
+    E3-07): the export-based active-doc read, `live_render_view`, `live_set_viewport`, and
+    `live_apply_to_selection` are no-freeze; selection-id reads (`live_get_selection` /
+    `live_inspect_selection`) and `live_insert_svg` / `live_set_selected_text` are NOT available
+    over DBus and stay modal. Requires the master gate (`INKSCAPE_MCP_LIVE_ENABLED`). With no
+    transport available it fails cleanly without affecting headless tools.
+
+    Return shape: `LiveSession` — the chosen `transport`, active document, and connection state.
+
+    Example: `live_connect(prefer="no_freeze")`
+
+    Risk class: medium (establishes a transport; read-only thereafter).
+
+#### live_diff_view
+Risk class: low
+Key params: operation_id: string
+Description:
+    Produce a FOCUSED, annotated before/after visual diff of a live operation (E8-04).
+
+    When to use: visualizing what one live mutation changed. To produce a mutation to diff use
+    `live_apply_to_selection` / `live_insert_svg` / `live_set_selected_text` (or
+    `live_session_step`, which calls this internally).
+
+    Key params: `operation_id` names the Live Operation Record. The tool REUSES the before/after
+    frames the mutation already captured (`run_live_mutation` persists `preview_before` /
+    `preview_after`), pixel-diffs them to a CHANGED-REGION bbox, and emits ONE annotated overlay
+    highlighting it plus the current selection outline (best-effort when a session is connected).
+    Frames are resolved VIA the `operation_id` (never a raw client path) and sandbox-validated under
+    the live artifacts dir before any bytes are read. Identical-dimension frames required; a size
+    mismatch is a stable error. ARTIFACT-ONLY — no mutation, no Operation Record routing, no
+    approval, no network.
+
+    Return shape: `LiveDiffResult` — a workspace-relative overlay PNG path, the `operation_id`, the
+    pixel-space `changed_bbox` (null when the frames are identical), and `highlighted_ids`; the diff
+    path is linked back onto the record's `diff_artifacts`.
+
+    Example: `live_diff_view(operation_id)`
+
+    Risk class: low (artifact-only; reads + annotates two existing frames, no mutation, no record).
+
+#### live_disconnect
+Risk class: low
+Key params: (none)
+Description:
+    Disconnect the current live session (the X1 disable switch). Idempotent.
+
+    When to use: ending a live session (or as a hard kill switch). To start one use `live_connect`;
+    to check state use `live_status`.
+
+    Key params: none. Idempotent — safe to call with no session.
+
+    Return shape: `LiveSession` — the now-disconnected session state.
+
+    Example: `live_disconnect()`
+
+    Risk class: low (tears down the transport; no document mutation).
+
+#### live_export_selection
+Risk class: low
+Key params: (none)
+Description:
+    Export just the current live selection to a PNG under the live artifacts dir.
+
+    When to use: a PNG of only the GUI selection. For the whole canvas use `live_render_view`; for
+    pixels plus structure use `live_get_scene`.
+
+    Key params: none. Read-only feedback (no mutation, no approval, no Operation Record), mirroring
+    `live_render_view`. Requires an established session.
+
+    Return shape: `LiveExportResult` — a workspace-relative PNG path under the live artifacts dir.
+
+    Example: `live_export_selection()`
+
+    Risk class: low (render to artifact dir).
+
+#### live_get_active_document
+Risk class: low
+Key params: (none)
+Description:
+    Identify the document open in the connected live instance (read-only).
+
+    When to use: confirming WHICH document the live GUI has open. For its full scene use
+    `live_get_scene`; for the current selection use `live_get_selection`.
+
+    Key params: none. Requires an established session (`live_connect`).
+
+    Return shape: `LiveDocumentRef` — the active live document's identity.
+
+    Example: `live_get_active_document()`
+
+    Risk class: low (read-only over an established live session).
+
+#### live_get_scene
+Risk class: low
+Key params: region_x: number | null, region_y: number | null, region_width: number | null, region_height: number | null, scale: number | null, fast: boolean
+Description:
+    Capture one live frame as a PNG PLUS a structured, machine-readable `LiveScene` (E8-02).
+
+    When to use: the core perception step — the agent reasons over STRUCTURE, not pixels. For
+    pixels-only use `live_render_view`; for one loop iteration use `live_session_step`.
+
+    Key params: region/scale/fast work exactly as `live_render_view` (all four region parts at once,
+    user units, w/h > 0; optional `scale` > 0; `fast=True` for the downscaled loop preview, explicit
+    `scale` wins). Frame rendered through the transport (E8-01), never an OS screenshot
+    (deterministic, cross-platform — ADR-006); served from the per-session cache keyed on
+    `(doc_revision, viewport, scale)` (E8-06). Scene pulled over the fixed `get_scene` command — no
+    code or raw Action path (ADR-003). Requires an established session. READ-ONLY (no Operation
+    Record, no approval).
+
+    Return shape: `LiveSceneFrame` — `render` (the PNG) plus `scene`: a `LiveScene` carrying the
+    active-document identity, selection (ids + bboxes), viewport (zoom/center/visible region), the
+    canvas size, and a visible-object summary.
+
+    Example: `live_get_scene(fast=True)`
+
+    Risk class: low (read-only perception; no document mutation, no Operation Record).
+
+#### live_get_selection
+Risk class: low
+Key params: (none)
+Description:
+    Read the current selection in the live instance as object ids (read-only).
+
+    When to use: getting the ids the user selected in the GUI. For their semantic detail use
+    `live_inspect_selection`; for the whole scene use `live_get_scene`. Not available over DBus
+    (`no_freeze`) — stays on the modal socket transport.
+
+    Key params: none. Requires an established session (`live_connect`).
+
+    Return shape: `LiveSelection` — `count` plus the selected object ids.
+
+    Example: `live_get_selection()`
+
+    Risk class: low (read-only).
+
+#### live_insert_svg
+Risk class: high
+Key params: svg_fragment: string, approval_token: string | null
+Description:
+    Insert an SVG fragment into the running document.
+
+    When to use: grafting composed markup into the live document. To style the selection use
+    `live_apply_to_selection`; for the headless equivalent use `insert_svg_fragment`.
+
+    Key params: `svg_fragment` is parsed through the normative safe parser (no entities, no external
+    DTD, no network) and size-bounded before it crosses the transport — only well-formed, safe
+    markup is inserted; no code path (ADR-003). Inserting into a running user session is HIGH risk:
+    REQUIRES an explicit `approval_token` (refused without one).
+
+    Return shape: `LiveEditResult` — a Live Operation Record with before/after canvas renders,
+    syncable to a snapshot.
+
+    Example: `live_insert_svg("<rect .../>", approval_token="ok")`
+
+    Risk class: high (approval-gated).
+
+#### live_inspect_selection
+Risk class: low
+Key params: (none)
+Description:
+    Inspect the selected objects in the live instance (semantic, by id; read-only).
+
+    When to use: getting structured detail (not just ids) of the GUI selection. For ids only use
+    `live_get_selection`; for the whole scene use `live_get_scene`. Not available over DBus
+    (`no_freeze`) — stays on the modal socket transport.
+
+    Key params: none. Requires an established session (`live_connect`).
+
+    Return shape: `LiveSelectionInspection` — `count` plus per-object inspection (the headless
+    object-inspection shape).
+
+    Example: `live_inspect_selection()`
+
+    Risk class: low (read-only).
+
+#### live_install_helper
+Risk class: restricted
+Key params: (none)
+Description:
+    Install the shipped extension-socket helper into the Inkscape user extensions dir.
+
+    When to use: one-time setup so a running Inkscape can expose the socket bridge. After install,
+    probe with `check_live_support` then `live_connect`.
+
+    Key params: none. Copies the fixed-purpose helper (`inkscape_mcp_live.py` + `.inx`). Requires
+    the master gate (live is opt-in). Touches no workspace document.
+
+    Return shape: `HelperInstallResult` — `installed_files` and `extensions_dir` (presented
+    `~`-relative, never an absolute host path; E10-10/L5).
+
+    Example: `live_install_helper()`
+
+    Risk class: restricted (writes a server-bundled file under the Inkscape extensions dir).
+
+#### live_render_view
+Risk class: low
+Key params: region_x: number | null, region_y: number | null, region_width: number | null, region_height: number | null, scale: number | null, fast: boolean
+Description:
+    Rasterize the live canvas to a PNG in the live artifacts dir (visual feedback).
+
+    When to use: a pixels-only view of the live canvas. For pixels PLUS structured scene use
+    `live_get_scene`; for just the selection use `live_export_selection`.
+
+    Key params: with no region the whole canvas renders. Supply ALL four of
+    `region_x`/`region_y`/`region_width`/`region_height` (user units; w/h > 0) for a targeted bbox,
+    and optional `scale` (>0) to up/downscale. `fast=True` gives a cheap downscaled loop-preview; an
+    explicit `scale` always wins. Every numeric is finite-checked and bounded server-side before it
+    crosses the transport; the frame comes from the transport renderer, never an OS screenshot
+    (deterministic, cross-platform — ADR-006). Served from a per-session cache keyed on
+    `(doc_revision, viewport, scale)` (E8-06) so a stale frame is never returned after a change.
+
+    Return shape: `LiveRenderResult` — a workspace-relative PNG path plus render metadata.
+
+    Example: `live_render_view(fast=True)`
+
+    Risk class: low (render to artifact dir; view-only, no Operation Record).
+
+#### live_session_step
+Risk class: high
+Key params: action: string | null, approval_token: string | null, fill: string | null, stroke: string | null, stroke_width: string | null, opacity: number | null, dx: number | null, dy: number | null, scale: number | null, rotate: number | null, svg_fragment: string | null, text: string | null
+Description:
+    Run ONE perceive→decide→act→observe iteration of the live-view loop (E8-05).
+
+    When to use: the flagship loop step — call it repeatedly to drive a live edit loop (use
+    `live_wait_for_change` between steps to react to the user's edits). It COMPOSES the existing
+    live tools (ADR-006); for a single standalone edit call `live_apply_to_selection` /
+    `live_insert_svg` / `live_set_selected_text` directly. Each call is one bounded iteration — no
+    server-side autonomous run.
+
+    Key params: `action` is the AGENT's decision (this tool embeds no LLM), one of the FIXED set
+    `apply` | `insert_svg` | `set_text` (no raw-Action/code path — ADR-002/003; an out-of-enum
+    action is rejected). OMIT `action` for a PERCEIVE-ONLY step (mutates nothing, no Operation
+    Record). When acting: `apply` takes `fill`/`stroke`/`stroke_width`/`opacity` and/or
+    `dx`/`dy`/`scale`/`rotate`; `insert_svg` takes a safe-parsed `svg_fragment`; `set_text` takes a
+    control-char-checked `text`. The act runs through `run_live_mutation` (the SAME path as the
+    standalone tools); mutating a running session is HIGH risk and REQUIRES an explicit
+    `approval_token`. Requires a session.
+
+    Return shape: `LiveSessionStepResult` — always the PERCEIVE scene + frame; after an act also the
+    `operation_id`, a focused `live_diff_view` artifact (E8-04), and the after scene/frame.
+
+    Example: `live_session_step(action="apply", approval_token="ok", fill="#3366cc")`
+
+    Risk class: high when it acts (routes through `run_live_mutation` — HIGH + approval); low when
+    perceive-only (read-only; no mutation, no Operation Record).
+
+#### live_set_selected_text
+Risk class: high
+Key params: text: string, approval_token: string | null
+Description:
+    Replace the selected text object's content in the running document.
+
+    When to use: changing the selected text object's words live. To restyle the selection use
+    `live_apply_to_selection`; for the headless equivalent use `replace_text`.
+
+    Key params: `text` is length-bounded and control-character-rejected (the same guard as the
+    headless `replace_text`); it is stored as a text node, so no markup injection is possible.
+    Editing a running user session is HIGH risk: REQUIRES an explicit `approval_token` (refused
+    without one).
+
+    Return shape: `LiveEditResult` — a Live Operation Record with before/after canvas renders,
+    syncable to a snapshot.
+
+    Example: `live_set_selected_text("Hello", approval_token="ok")`
+
+    Risk class: high (approval-gated).
+
+#### live_set_viewport
+Risk class: low
+Key params: mode: string, zoom: number | null, center_x: number | null, center_y: number | null, dx: number | null, dy: number | null
+Description:
+    Control the live canvas viewport: zoom / pan / fit-to-selection / fit-to-page.
+
+    When to use: framing the canvas before a render/capture. To then render use `live_render_view`;
+    to edit (not just view) use `live_apply_to_selection`.
+
+    Key params: `mode` is one of the fixed verbs `zoom` | `pan` | `fit_selection` | `fit_page` (no
+    raw Action or code path — ADR-003). `zoom` takes a positive `zoom` and optional
+    `center_x`/`center_y` to recentre; `pan` takes both `dx` and `dy` (a delta in user units);
+    `fit_selection`/`fit_page` take no numerics. Every numeric is finite-checked and bounded
+    server-side before it crosses the transport (sec.12). Requires a session. VIEW-ONLY (no
+    Operation Record, no approval).
+
+    Return shape: `LiveViewportResult` — the applied viewport state.
+
+    Example: `live_set_viewport("zoom", zoom=2.0)`
+
+    Risk class: low (view-only; no document mutation, no Operation Record).
+
+#### live_status
+Risk class: low
+Key params: (none)
+Description:
+    Report live-session state: enabled, connected, active transport, available transports.
+
+    When to use: checking whether a session is live before issuing live tools. For per-host
+    transport detail use `check_live_support`.
+
+    Key params: none. Never raises — reports "not connected" / "none available" cleanly.
+
+    Return shape: `LiveSession` — `enabled`, `connected`, active transport, available transports.
+
+    Example: `live_status()`
+
+    Risk class: low (read-only).
+
+#### live_sync_to_workspace
+Risk class: medium
+Key params: dest_path: string
+Description:
+    Save the live document's current state into the workspace as a NEW tracked document.
+
+    When to use: capturing live work into the headless workspace so the typed tools can act on it.
+    For pixels-only feedback use `live_render_view`; to save a HEADLESS doc to disk use
+    `save_document_as`.
+
+    Key params: `dest_path` is the new workspace file; RELATIVE anchors to the first workspace root
+    (NOT the server CWD) and a not-yet-existing SUBFOLDER is created in-sandbox first (matching
+    `save_document_as`; a `..`-escaping / out-of-sandbox dest creates nothing and is rejected with
+    `path rejected: outside workspace`). Reads the live SVG and writes it through the policy layer
+    (sandbox + symlink guard), registers it (working copy), and records an Operation Record +
+    snapshot (ADR-004). An existing destination is REFUSED — sync never overwrites, so a live fault
+    cannot damage a workspace file. Requires an established session.
+
+    Return shape: `LiveSyncResult` — the new `doc_id`, `operation_id`, and snapshot links.
+
+    Example: `live_sync_to_workspace("from-live.svg")`
+
+    Risk class: medium (writes a new workspace document, reversible + recorded).
+
+#### live_wait_for_change
+Risk class: low
+Key params: timeout_s: number, poll_interval_s: number
+Description:
+    Block until the live state changes, or the bounded timeout elapses (E8-03; read-only).
+
+    When to use: between `live_session_step` iterations so the loop reacts to the user's own GUI
+    edits instead of busy-rendering. To then re-perceive use `live_get_scene`.
+
+    Key params: `timeout_s` is clamped to at most 60s and `poll_interval_s` is floored, so the wait
+    never spins tightly nor blocks forever (it sleeps between cheap polls). Each poll pulls a CHEAP
+    state token (small revision marker + selection ids + coarse viewport — never the full doc or a
+    PNG; protocol v5), hashed + diffed against the last token. Requires a session; no
+    code/raw-Action path (ADR-003). NOTE: the socket helper runs on a snapshot, so within one call
+    it cannot observe later GUI edits; the token mechanism is transport-agnostic and detects user
+    edits on any transport that recomputes per poll.
+
+    Return shape: `LiveChange` — `changed`, `timed_out`, and the delta flags `selection_changed` /
+    `document_changed` / `viewport_changed` (more than one may fire).
+
+    Example: `live_wait_for_change(timeout_s=10)`
+
+    Risk class: low (read-only polling; no document mutation, no Operation Record).
+
+### Snapshots
+
+#### create_snapshot
+Risk class: low
+Key params: doc_id: string, label: string | null
+Description:
+    Snapshot the current working copy of a document and index it.
+
+    When to use: checkpointing before a risky edit so you can roll back. To browse checkpoints use
+    `list_snapshots`; to roll back use `restore_snapshot`. (Mutating tools auto-snapshot; this is an
+    explicit, manual checkpoint.)
+
+    Key params: optional `label` tags the snapshot (length-bounded; over the cap is rejected).
+
+    Return shape: `SnapshotInfo` — the new `snapshot_id` plus its metadata.
+
+    Example: `create_snapshot(doc_id, label="before cleanup")`
+
+    Risk class: low (write-new snapshot; original untouched).
+
+#### list_snapshots
+Risk class: low
+Key params: doc_id: string
+Description:
+    List a document's snapshots in order, with metadata.
+
+    When to use: choosing which checkpoint to roll back to. To make one use `create_snapshot`; to
+    roll back use `restore_snapshot`.
+
+    Key params: none beyond `doc_id`.
+
+    Return shape: `SnapshotList` — `doc_id` plus `snapshots` (each a `SnapshotInfo` with its id +
+    metadata), in order.
+
+    Example: `list_snapshots(doc_id)`
+
+    Risk class: low (read-only manifest).
+
+#### prune_snapshots
+Risk class: low
+Key params: doc_id: string
+Description:
+    Apply the snapshot + live-frame retention policy, pruning superseded server state.
+
+    When to use: reclaiming disk from old snapshots/frames. To roll back instead use
+    `restore_snapshot`; to list checkpoints use `list_snapshots`. No mutating tool triggers this
+    implicitly — it is an explicit maintenance sweep.
+
+    Key params: none beyond `doc_id`. Retains the last N snapshots and all within the keep-days
+    window (configurable), bounded by absolute hard caps on count and bytes; deletes the rest plus
+    orphaned Operation Records. In the SAME pass it prunes the doc root's loop/live render frames
+    (E8-06) by age + byte budget, never deleting a frame still referenced by a Live Operation
+    Record. The current working copy and original are never touched, so the restore chain stays
+    intact.
+
+    Return shape: `PruneResult` — `pruned_snapshot_ids`, `pruned_operation_ids`, and `live_frames`
+    (the frame pruning stats).
+
+    Example: `prune_snapshots(doc_id)`
+
+    Risk class: low (deletes only disposable, superseded server state under a deterministic policy;
+    authoritative current state is never affected).
+
+#### restore_snapshot
+Risk class: medium
+Key params: doc_id: string, snapshot_id: string
+Description:
+    Revert a document's working copy to a chosen snapshot.
+
+    When to use: undoing/rolling back to an earlier checkpoint. To find a `snapshot_id` use
+    `list_snapshots`; to make a new checkpoint use `create_snapshot`.
+
+    Key params: `snapshot_id` names the target checkpoint (must exist for this document).
+
+    Return shape: `RestoreResult` — the reversibility-chain links plus `restored_sha256` (SHA-256
+    hex digest) and `restored_size_bytes` of the restored working copy, so a caller can assert
+    recovery succeeded without reading the document off disk.
+
+    Example: `restore_snapshot(doc_id, snapshot_id)`
+
+    Risk class: medium (reverts working copy via Operation Record; never touches the original).
+
+### Discover
+
+#### how_do_i
+Risk class: low
+Key params: goal: string
+Description:
+    Map a natural-language goal to the concrete inkscape-mcp tool(s) that achieve it.
+
+    When to use: when you know what you want in words but not which typed tool does it. To browse
+    the whole map at once read the `intents` section of `list_capabilities`; to then resolve an
+    object id for an id-taking edit use `find_objects`. Guidance only — not a portmanteau or raw
+    tool (ADR-002/003); it executes nothing.
+
+    Key params: `goal` is a natural-language description, e.g. "draw a rectangle", "make my svg
+    smaller for web", "find the red shapes", "export a png".
+
+    Return shape: `HowDoIResult` — exactly one of: an in-scope hit (`out_of_scope=False`, `matches`
+    best-first, each `{goal_pattern, tools, how_to, group}`); an out-of-scope goal (edit a
+    JPEG/photo's pixels, run an arbitrary Action/extension/script, fetch from a URL, execute code) →
+    `out_of_scope=True`, empty `matches`, `note` naming WHY (vector-only / ADR-003 / no-network /
+    no-exec); or no match → `out_of_scope=False`, empty `matches`, `note` suggesting
+    `list_capabilities` / `inspect_document`.
+
+    Example: `how_do_i("make my svg smaller for web")`
+
+    Risk class: low (read-only guidance; no snapshot / Operation Record).
+
+### System
+
+#### diagnose_runtime
+Risk class: low
+Key params: (none)
+Description:
+    Probe the local Inkscape + Python runtime fresh and return the capability matrix.
+
+    When to use: to FORCE a fresh probe (e.g. after installing Inkscape/fonts). For a cheap cached
+    read use `list_capabilities`; for live-transport detail use `check_live_support`.
+
+    Key params: none. Re-runs the probe every call and refreshes the cache that `list_capabilities`
+    and `inkscape://runtime/capabilities` serve.
+
+    Return shape: `Capabilities` — Inkscape version, available actions, export formats, data dirs,
+    inkex, DBus/live transport availability, fonts, the curated `intents` map, and the authoritative
+    MCP tool surface (`tool_count` + `tools`: name + one-line purpose + risk class, from the live
+    registry). Missing backends are reported in `notes`, never crashed.
+
+    Example: `diagnose_runtime()`
+
+    Risk class: low (read-only probe).
+
+#### discover_extensions
+Risk class: low
+Key params: (none)
+Description:
+    List the server-side allowlisted Inkscape extensions + probe notes (read-only, diagnostic).
+
+    When to use: to see which extensions (if any) an operator has opted in. For the Action surface
+    use `list_actions`; for the full runtime matrix use `list_capabilities`.
+
+    Key params: none.
+
+    Return shape: `ExtensionDiscovery` — `allowlisted` (the opted-in set; empty by default in the
+    MVP) plus probe `notes`. No extension runs from this call.
+
+    Example: `discover_extensions()`
+
+    Risk class: low (read-only).
+
+#### list_actions
+Risk class: low
+Key params: include_all_actions: boolean
+Description:
+    Discover the host's actual Inkscape Action surface (probe-driven, version-aware).
+
+    When to use: to see which Actions a chain step may use before `validate_action_chain` /
+    `run_action_chain`. For allowlisted extensions use `discover_extensions`; for the full runtime
+    matrix use `list_capabilities`.
+
+    Key params: `include_all_actions` (default True for back-compat) controls the large `actions`
+    array — the host reports ~1000 ids but only `allowlisted`/`available` can ever execute, so pass
+    `False` to OMIT `actions` while keeping the accurate `action_count` (a much smaller payload,
+    E13-05).
+
+    Return shape: `ActionDiscovery` — `actions` (all host ids unless omitted), `action_count`,
+    `allowlisted` (may ever execute), `available` (allowlisted AND present), `notes`. Side effect:
+    persists the version-keyed Action capability map for later chain validation. A missing Inkscape
+    degrades to empty lists plus `notes`.
+
+    Example: `list_actions(include_all_actions=False)`
+
+    Risk class: low (read-only discovery).
+
+#### list_capabilities
+Risk class: low
+Key params: (none)
+Description:
+    Return the cached runtime capability matrix (probed once, then reused).
+
+    When to use: the cheap default for "what can this host/server do". To FORCE a re-probe use
+    `diagnose_runtime`; to map a single goal to a tool use `how_do_i`.
+
+    Key params: none.
+
+    Return shape: `Capabilities` — same shape as `diagnose_runtime`, served from cache. Includes an
+    `intents` section: the curated natural-language goal → tool(s) map (the same map `how_do_i`
+    matches against) so an agent can browse "which tool does X" without one call per goal. Also
+    carries the authoritative MCP tool surface: `tool_count` (the one true count of registered
+    `@mcp.tool`s) and `tools` (name + one-line purpose + risk class), sourced from the live
+    registry — so agents read one number instead of deriving it.
+
+    Example: `list_capabilities()`
+
+    Risk class: low (read-only).
+
+#### run_action_chain
+Risk class: high
+Key params: doc_id: string, steps: array, approval_token: string | null
+Description:
+    Execute a validated Action chain over a document's working copy (HIGH risk, approval-gated).
+
+    When to use: when a semantic typed tool cannot express the edit. Run `validate_action_chain`
+    first to preview the resolved argv. For a single Action use `run_raw_action` (advanced mode).
+
+    Key params: `steps` is the ordered typed chain, RE-validated against the allowlist + capability
+    map + charset before any invocation (anything not allowlisted-and-present is refused). A real
+    run REQUIRES a non-empty `approval_token`. To select MULTIPLE ids with `select-by-id`, pass
+    each id as its OWN token (e.g. `args=["p_a", "p_b"]`), NOT one comma-joined string (comma is a
+    reserved argv delimiter; the engine joins with commas itself).
+
+    Return shape: `ActionChainResult` — `changed`, `plan` (the validated chain that ran),
+    `operation_id`, `snapshot_id`, before/after preview. Execution runs the assembled `--actions`
+    argv (arg-lists only, `shell=False`) through the pipeline (reversible).
+
+    Example: `run_action_chain(doc_id, steps, approval_token="ok")`
+
+    Risk class: high — controlled Action execution. Requires `approval_token`.
+
+#### run_raw_action
+Risk class: high
+Key params: doc_id: string, action: string, args: array | null, dry_run: boolean, approval_token: string | null
+Description:
+    Run ONE raw, allowlisted Inkscape Action over a document (advanced mode; OFF by default).
+
+    When to use: the explicit ADR-003 escape hatch for a SINGLE Action no semantic tool covers. For
+    several Actions use `run_action_chain`; prefer the typed semantic tools (ADR-002) when possible.
+
+    Key params: pass a typed `action` id plus typed `args` (never a free-form `--actions` string).
+    It is composed into a one-step chain and runs through the SAME validation + engine as
+    `run_action_chain` (allowlist-, version-map-, charset-gated; arg-lists only, `shell=False`). The
+    tool is refused entirely unless `INKSCAPE_MCP_RAW_ACTION_ENABLED` is set (enabling it does not
+    widen the allowlist). `dry_run=True` (DEFAULT) returns the resolved plan WITHOUT invoking
+    Inkscape; a real run REQUIRES a non-empty `approval_token`.
+
+    Return shape: `RawActionResult` — `dry_run`, `changed`, `plan` (resolved one-step chain); on a
+    real run also `operation_id`, `snapshot_id`, before/after preview (reversible).
+
+    Example: `run_raw_action(doc_id, "path-union", dry_run=False, approval_token="ok")`
+
+    Risk class: high — controlled raw Action execution (advanced mode). Requires `approval_token`
+    for a non-dry run.
+
+#### save_document_as
+Risk class: medium
+Key params: doc_id: string, dest_path: string, overwrite: boolean, approval_token: string | null
+Description:
+    Save a document's current working-copy state to a NEW file in the workspace.
+
+    When to use: persisting the working copy to disk. To export a raster/PDF instead use
+    `export_document`; to snapshot in-server state (not a file) use `create_snapshot`. The original
+    and source files are never touched.
+
+    Key params: `dest_path` may be RELATIVE or absolute — relative anchors to the FIRST configured
+    workspace root (NOT the server CWD); absolute must resolve inside a configured root. A dest into
+    a not-yet-existing SUBFOLDER (e.g. `"output/final.svg"`) is supported: missing parents are
+    created only after proving they resolve INSIDE the workspace (a `..`-escaping / out-of-sandbox
+    dest creates nothing and is rejected with `path rejected: outside workspace`). The dest is
+    sandbox- and symlink-checked (incl. a pre-existing symlink at the final name) and the copy never
+    follows a symlinked dest (sec.12). Overwriting an existing file requires `overwrite=True` PLUS a
+    non-empty `approval_token`.
+
+    Return shape: `SaveResult` — `saved_path` (workspace-relative POSIX), `operation_id`,
+    `overwritten`, and `pre_validation` / `post_validation` (the `validate_document` reports from
+    before and after the write).
+
+    Example: `save_document_as(doc_id, "output/final.svg")`
+
+    Risk class: medium for a new-file save; high (approval-gated) when overwriting an existing file.
+
+#### stat_artifact
+Risk class: low
+Key params: path: string
+Description:
+    Return the on-disk byte size + sha256 digest of one sandboxed artifact.
+
+    When to use: to VERIFY what you wrote (an export, a render, a saved SVG) — its exact byte size
+    and content digest — without a `wc -c` / `sha256sum` Bash fallback. For a whole SET (and an
+    aggregate byte total) use `stat_artifacts`; for image pixel dimensions read the producing
+    tool's result fields instead.
+
+    Key params: `path` may be workspace-RELATIVE (anchored to the first workspace root, matching
+    `open_document` / `save_document_as`) or absolute; either is sandbox-validated and a
+    `../`-escape, an absolute path outside the workspace, or a symlink whose target leaves the
+    sandbox is rejected with `path rejected: outside workspace`. The file must exist and be within
+    the configured size limit; the sha256 is computed streaming so a large file is bounded in
+    memory.
+
+    Return shape: `ArtifactStat` — `{path, bytes, sha256}` where `path` is the WORKSPACE-RELATIVE
+    POSIX path (never a host path) and `sha256` is the lowercase hex digest.
+
+    Example: `stat_artifact("dist/logo.png")`
+
+    Risk class: low (read-only stat; nothing is mutated, no Operation Record / snapshot).
+
+#### stat_artifacts
+Risk class: low
+Key params: paths: array
+Description:
+    Stat a SET of sandboxed artifacts: per-file size + sha256 plus an aggregate byte total.
+
+    When to use: to verify a whole produced collection (an icon set, a `dist/` tree) and read its
+    TOTAL byte budget in one call — the readback half of a batch export, without a `du -cb`. For a
+    single file use `stat_artifact`.
+
+    Key params: `paths` is a non-empty list; each entry is resolved EXACTLY as `stat_artifact`
+    resolves its `path` (workspace-relative or absolute, sandbox + symlink validated, size-capped).
+    The first entry that escapes the sandbox or exceeds the size limit fails the whole call with a
+    stable message — nothing partial is returned.
+
+    Return shape: `ArtifactStatSet` — `{artifacts: [{path, bytes, sha256}], total_bytes, count}`
+    where `total_bytes` is the sum of the per-file sizes and every `path` is workspace-relative
+    (never a host path).
+
+    Example: `stat_artifacts(["dist/16.png", "dist/32.png", "dist/64.png"])`
+
+    Risk class: low (read-only stat; nothing is mutated, no Operation Record / snapshot).
+
+#### transform_objects
+Risk class: medium
+Key params: doc_id: string, selector: object, operation: any, dry_run: boolean, max_matches: integer, approval_token: string | null
+Description:
+    Apply ONE typed op to EVERY object a selector matches — one atomic, reversible operation.
+
+    When to use: bulk editing keyed by a predicate rather than by hand-listing ids — "recolour every
+    blue rect", "nudge every text down 4px", "delete every object whose id starts with tmp-". It is
+    `find_objects` (the SELECTOR) wired to ONE typed op fanned across the matches, run through the
+    SAME atomic batch kernel as `apply_edits`. For a known id list call the dedicated tool
+    (`set_fill`, `move_object`, …) or `apply_edits` directly; this adds NO authority — only the
+    select-then-apply fan-out (ADR-002/003: no free text, no raw Action, no loops/expressions).
+
+    Key params: `selector` is the SAME predicate `find_objects` takes (`tag` / `fill` / `stroke` /
+    `text` / `id_prefix` / `bbox`, full CSS-cascade paint match); `operation` is exactly ONE op
+    tagged by an `op` field — the accepted set is `set_fill` / `set_stroke` / `set_opacity` /
+    `set_font` / `move_object` / `scale_object` / `rotate_object` / `delete_object` (high), each
+    with the SAME params as its dedicated tool MINUS the target ids (those from the selector), e.g.
+    `{"op": "set_fill", "color": "#3366cc"}`, `{"op": "move_object", "dx": 0, "dy": 4}`. Document-
+    wide ops (`replace_color`, `apply_palette`, `resize_canvas`, `normalize_viewbox`), element
+    CREATION ops, and identity-conflicting per-id ops (`rename_object`, `replace_text`,
+    `duplicate_object`) are NOT accepted — they are not meaningful applied identically per match.
+    `dry_run=True` (DEFAULT) resolves + validates and returns the matched ids + the projected plan,
+    writing NOTHING; `dry_run=False` performs it. `max_matches` (default 64) REJECTS an over-broad
+    selector before any mutation. A `delete_object` op makes the operation HIGH and requires a
+    non-empty `approval_token`.
+
+    Render and look before you trust it: a transform changes many objects at once — call
+    `render_preview` (or `live_render_view` in live mode) afterwards and inspect the result, and
+    `restore_snapshot(doc_id, snapshot_id)` reverts the WHOLE transform in one step.
+
+    Return shape: `TransformObjectsResult` — `matched_ids` + `match_count`, the effective
+    `risk_class`, the `dry_run` flag, the projected `plan` (per-edit op + target id(s)); on a real
+    run also `applied` / `changed` / `summary` and the single `operation_id` / `snapshot_id` (the
+    revert target).
+
+    Example: `transform_objects(doc_id, {"tag": "rect", "fill": "#3366cc"}, {"op": "set_fill",
+    "color": "#ff0000"}, dry_run=False)`
+
+    Risk class: medium (the effective risk is the op's class; a `delete_object` op escalates the
+    operation to high and requires `approval_token`). Reversible via the pre-transform snapshot.
+
+#### validate_action_chain
+Risk class: low
+Key params: steps: array
+Description:
+    Dry-run-validate an ordered Action chain and return its resolved plan (NO mutation).
+
+    When to use: to preview the resolved argv of a chain before `run_action_chain` executes it. For
+    a semantic edit prefer the dedicated typed tool (`find_objects` → set/transform/path tools).
+
+    Key params: `steps` is the ordered list of typed Action steps. To select MULTIPLE ids with
+    `select-by-id`, pass each id as its OWN token (e.g. `args=["p_a", "p_b"]`), NOT one comma-joined
+    string — a comma-joined token is rejected with `malformed_arg` (the engine joins with commas
+    itself).
+
+    Return shape: `ActionChainPlan` — the validated `steps` plus the EXACT `--actions` argument and
+    argv preview a real run WOULD assemble. An invalid chain raises a `ToolError` whose code names
+    the cause (not_allowlisted, action_absent, malformed_action, malformed_arg, empty_chain,
+    chain_too_long, too_many_args).
+
+    Example: `validate_action_chain([{"action": "select-by-id", "args": ["p1"]}])`
+
+    Risk class: low (validation only — no engine invocation, no write).
+
+## Prompts
+
+#### compose_artwork
+Args: goal
+Description: On-ramp the E14 generative loop: create → draw → render(inline) → validate → export.
+
+Orients the agent to build new artwork toward `goal` from a blank canvas using the typed
+authoring tools, preview the inline raster, validate, then export. Guidance only — it executes
+nothing and adds no authority; the work flows through the gated tools it names.
+
+#### live_canvas_assist
+Args: goal
+Description: Entry point for the live-view co-pilot loop: perceive→decide→act→observe (approval-gated).
+
+Orients the agent to drive a running Inkscape via the live tools toward `goal`, one bounded,
+cancelable iteration at a time. Acts are semantic-only and approval-gated; the loop adds no new
+authority.
+
+#### prepare_icon_set
+Args: (none)
+Description: Orient the agent on producing a multi-size square PNG icon set.
+
+#### prepare_print_export
+Args: (none)
+Description: Orient the agent on exporting a print-ready vector PDF.
+
+#### prepare_web_export
+Args: (none)
+Description: Orient the agent on exporting a document as web-ready assets (PNG + plain SVG).
+
+#### restyle_artwork
+Args: goal
+Description: On-ramp the OBJECT-TARGETED restyle loop: find → set_fill/set_stroke → render → export.
+
+Orients the agent to restyle SPECIFIC objects toward `goal` — address them with `find_objects`,
+change each one's fill/stroke/opacity, preview, then export. This is the per-object companion to
+the document-wide `theme_recoloring` prompt (which swaps colors across the WHOLE document via
+`replace_color` / `apply_palette`). Guidance only; adds no authority.
+
+#### theme_recoloring
+Args: (none)
+Description: Orient the agent on recoloring a document to a brand/theme palette.
+
+## Resources
+
+#### inkscape://documents
+Description: Index of open documents and their per-document resource URIs (E11-10c discoverability).
+
+The seven per-document resources above are registered as URI TEMPLATES (they carry a `{doc_id}`
+placeholder), so they appear under `resources/templates/list` but NOT under the plain
+`resources/list` that `ListMcpResourcesTool` reads — an agent could not otherwise discover the
+concrete URIs for an opened document. This static (no-placeholder) resource closes that gap: it
+lists every currently-open document id with the seven concrete `inkscape://document/<id>/<leaf>`
+URIs for it, so the per-doc read surface is discoverable through `ListMcpResourcesTool`.
+
+Host-path-free: only opaque document ids and their resource URIs are emitted — never a working
+path. Risk class: low (read-only resource).
+
+#### inkscape://live/events
+Description: Latest live change state (E8-03): the current cheap state token + classified deltas.
+
+Polls the cheap state token once (a small revision marker + selection ids + coarse viewport —
+never the full document or a PNG; protocol v5), hashes + diffs it against the session's last
+seen token, and returns the classified `LiveChange` (`selection_changed` / `document_changed` /
+`viewport_changed`, plus the new token). Surfaces the change stream so a host can poll the
+canvas for deltas cheaply without busy-rendering. Returns an empty `LiveChange` when no live
+session is connected or the transport cannot report a token (clean, not an error path).
+READ-ONLY — no document mutation, no Operation Record.
+
+Risk class: low (read-only perception).
+
+#### inkscape://live/operations
+Description: Recent Live Operation Records (E4-02): what each live mutation changed and how.
+
+Makes live mutations observable — each record carries the transport, selection, affected ids,
+approval decision, before/after render paths, and status. Returns an empty log when there are
+none or no workspace root is configured (never an error path).
+
+Risk class: low (read-only).
+
+#### inkscape://live/selection
+Description: Current selection in the live instance (object ids).
+
+Returns an empty selection when no live session is connected (clean, not an error path).
+
+Risk class: low (read-only).
+
+#### inkscape://live/session
+Description: Current live-session state (enabled, connected, transport, available transports).
+
+Returns a not-connected `LiveSession` when no session is up — never an error.
+
+Risk class: low (read-only).
+
+#### inkscape://live/view
+Description: Current live frame's structured metadata: the `LiveScene` (E8-02), without the PNG bytes.
+
+Exposes the machine-readable scene — active-doc ref, selection ids + bboxes, viewport
+(zoom/center/visible region), canvas size, and a compact visible-object summary (reusing the
+headless object-inspection shape) — so a host can poll the canvas STRUCTURE, not pixels. Pulled
+over the fixed `get_scene` transport command (no code path — ADR-003). Returns an empty
+`LiveScene` when no live session is connected or the transport cannot report a scene (clean, not
+an error path). READ-ONLY — no document mutation, no Operation Record.
+
+Risk class: low (read-only perception).
+
+#### inkscape://prompts
+Description: Index of registered MCP prompts (name + one-line purpose + arguments) — E16-10e.
+
+Makes the shipped prompt library (`live_canvas_assist`, the export/recolor library, the
+authoring library) discoverable through the RESOURCE surface (`ListMcpResourcesTool`), which
+otherwise cannot see prompts at all. Fetch a prompt's full text via the MCP prompts API
+(`prompts/get`) using the name from this index.
+
+Shape: ``{"prompt_count": N, "prompts": [{name, purpose, arguments: [{name, description,
+required}]}, ...]}``. Sourced from the live registry (`mcp.list_prompts()`), so it cannot drift
+from the registered prompts.
+
+Risk class: low (read-only resource).
+
+#### inkscape://runtime/capabilities
+Description: Probed Inkscape/runtime capability matrix (version, actions, export formats, fonts, live).
+
+Returns the same cached matrix as the `list_capabilities` tool, including the authoritative
+MCP tool surface (`tool_count` + `tools`, from the live registry — E16-01). Use the
+`diagnose_runtime` tool to force a fresh probe.
+
+Risk class: low (read-only).
+
+#### inkscape://runtime/intents
+Description: Curated natural-language goal → tool(s) intent map, WITHOUT the full capabilities payload.
+
+Shape: ``{"intents": [{goal_pattern, tools, how_to, group}, ...]}``. This is the exact same
+curated map the `how_do_i` tool matches against and the `list_capabilities` `intents` section
+exposes — all three derive from `inkscape_mcp.intents.intents_summary`, so they cannot drift.
+Guidance only: it names which tool(s) achieve a goal, executes nothing, and offers no raw-action
+escape hatch (ADR-003). Host-independent (not probed), so it needs no Inkscape binary.
+
+Use this when you want just the discovery map without the heavier runtime probe matrix.
+
+Risk class: low (read-only).
+
+#### inkscape://document/{doc_id}/assets
+Description: Referenced assets (images, uses, external url() refs) for one document.
+
+Risk class: low (read-only resource).
+
+#### inkscape://document/{doc_id}/fonts
+Description: All font-family values (inline styles, `<style>` bodies, attrs) for one document.
+
+Risk class: low (read-only resource).
+
+#### inkscape://document/{doc_id}/layers
+Description: All Inkscape layers (with visible/locked state) for one document.
+
+Risk class: low (read-only resource).
+
+#### inkscape://document/{doc_id}/objects
+Description: Flattened object list for one document.
+
+Risk class: low (read-only resource).
+
+#### inkscape://document/{doc_id}/styles
+Description: Distinct fill/stroke colors plus inline-style and CSS-rule counts for one document.
+
+Risk class: low (read-only resource).
+
+#### inkscape://document/{doc_id}/summary
+Description: Document summary (size, units, viewBox, page/object/layer counts) for one document.
+
+Risk class: low (read-only resource).
+
+#### inkscape://document/{doc_id}/tree
+Description: Full element tree (local tags + ids + inkscape:labels) for one document.
+
+Risk class: low (read-only resource).

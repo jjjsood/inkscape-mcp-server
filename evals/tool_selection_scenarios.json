@@ -1,0 +1,51 @@
+{
+  "_about": "Tool-usability eval scenarios (E15-06). Each entry: a natural-language `task`, the `expected_tools` the deterministic discovery layer (how_do_i / intents.match_intents) should surface, a `group` (Create|Edit|Inspect|Export|Live) mirroring the E15-03 intent catalog, and `out_of_scope` for asks the server must REFUSE to map. Scoring (evals/run_eval.py): a scenario is a HIT when at least one expected tool appears among how_do_i's returned tools (or, for out_of_scope=true, when how_do_i flags it out_of_scope with no matches). This evaluates the server's OWN deterministic discovery surface — NO live LLM. A future real-agent runner can consume the same schema (swap the runner; keep task/expected_tools/group/out_of_scope).",
+  "scenarios": [
+    {"task": "Draw a rectangle on the canvas", "expected_tools": ["create_rect"], "group": "Create"},
+    {"task": "Add a square box to my drawing", "expected_tools": ["create_rect"], "group": "Create"},
+    {"task": "Draw a circle", "expected_tools": ["create_circle"], "group": "Create"},
+    {"task": "Draw an oval / ellipse", "expected_tools": ["create_ellipse"], "group": "Create"},
+    {"task": "Draw a straight line between two points", "expected_tools": ["create_line"], "group": "Create"},
+    {"task": "Draw a triangle polygon from points", "expected_tools": ["create_polygon", "create_polyline"], "group": "Create"},
+    {"task": "Draw a freeform bezier path", "expected_tools": ["create_path"], "group": "Create"},
+    {"task": "Add a text label to the image", "expected_tools": ["create_text"], "group": "Create"},
+    {"task": "Group these objects together into one group", "expected_tools": ["create_group", "group_objects"], "group": "Create"},
+    {"task": "Add a linear gradient fill", "expected_tools": ["add_linear_gradient", "add_radial_gradient"], "group": "Create"},
+    {"task": "Start a new blank SVG document", "expected_tools": ["create_document"], "group": "Create"},
+    {"task": "Reuse / clone an element with a use reference", "expected_tools": ["create_use"], "group": "Create"},
+
+    {"task": "Open an existing SVG file to work on it", "expected_tools": ["open_document"], "group": "Inspect"},
+    {"task": "Show me the structure and layers of this document", "expected_tools": ["inspect_document"], "group": "Inspect"},
+    {"task": "Find all the red shapes in the drawing", "expected_tools": ["find_objects"], "group": "Inspect"},
+    {"task": "Check that this document is valid and well formed", "expected_tools": ["validate_document"], "group": "Inspect"},
+    {"task": "Give me a quality report for this file", "expected_tools": ["quality_report"], "group": "Inspect"},
+    {"task": "What can this server do, list its capabilities", "expected_tools": ["list_capabilities"], "group": "Inspect"},
+
+    {"task": "Make this shape blue / change its fill color", "expected_tools": ["set_fill"], "group": "Edit"},
+    {"task": "Change the stroke outline and border color", "expected_tools": ["set_stroke"], "group": "Edit"},
+    {"task": "Make this object more transparent / change its opacity", "expected_tools": ["set_opacity"], "group": "Edit"},
+    {"task": "Change the font of this text", "expected_tools": ["set_font"], "group": "Edit"},
+    {"task": "Replace the text content of this label", "expected_tools": ["replace_text"], "group": "Edit"},
+    {"task": "Swap all the red in the document for green", "expected_tools": ["replace_color"], "group": "Edit"},
+    {"task": "Apply a brand color palette / theme to the document", "expected_tools": ["apply_palette"], "group": "Edit"},
+    {"task": "Move and scale and rotate this object", "expected_tools": ["move_object", "scale_object", "rotate_object"], "group": "Edit"},
+    {"task": "Duplicate this object", "expected_tools": ["duplicate_object", "rename_object"], "group": "Edit"},
+    {"task": "Resize the canvas to fit the content / crop the page", "expected_tools": ["resize_canvas", "fit_to_content", "normalize_viewbox"], "group": "Edit"},
+    {"task": "Simplify these paths and reduce the node count", "expected_tools": ["simplify_path", "cleanup_paths"], "group": "Edit"},
+    {"task": "Do a boolean union of these two paths", "expected_tools": ["combine_paths", "boolean_union", "boolean_difference"], "group": "Edit"},
+
+    {"task": "Export a PNG of the document", "expected_tools": ["export_document", "render_preview"], "group": "Export"},
+    {"task": "Export just one object on its own", "expected_tools": ["export_object"], "group": "Export"},
+    {"task": "Export a batch of icon sizes at once", "expected_tools": ["export_batch", "create_icon_set"], "group": "Export"},
+    {"task": "Make my SVG smaller and optimized for the web", "expected_tools": ["svg_web_optimize"], "group": "Export"},
+    {"task": "Export with a print-ready CMYK profile", "expected_tools": ["export_web_profile", "export_print_profile"], "group": "Export"},
+    {"task": "Save the document to a new file", "expected_tools": ["save_document_as"], "group": "Export"},
+
+    {"task": "Connect to my running Inkscape and edit the current selection live", "expected_tools": ["live_connect", "live_get_scene", "live_apply_to_selection"], "group": "Live"},
+
+    {"task": "Retouch the pixels of my JPEG photo", "expected_tools": [], "group": "Edit", "out_of_scope": true},
+    {"task": "Run an arbitrary Inkscape extension or macro for me", "expected_tools": [], "group": "Edit", "out_of_scope": true},
+    {"task": "Download an image from a URL on the internet", "expected_tools": [], "group": "Create", "out_of_scope": true},
+    {"task": "Execute this python code / run a shell command", "expected_tools": [], "group": "Edit", "out_of_scope": true}
+  ]
+}

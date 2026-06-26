@@ -1,0 +1,160 @@
+name: CI
+
+# E7-02 — cross-platform CI. Proves the headless feature suite is green on Linux, macOS, and
+# Windows independent of whether Inkscape is installed, validates the live transport abstraction
+# per platform via its fake-transport suite, runs the full suite (incl. real Inkscape) on Linux,
+# and exercises the packaged install end to end. Lint (ruff), types (mypy), and tests (pytest)
+# all gate the pipeline; a diagnostics step surfaces the capability matrix so a missing-dep
+# failure is legible, not opaque.
+
+"on":
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Headless feature suite on every OS, WITHOUT Inkscape installed.
+  # Headless-first (architecture §3.2): the core suite must stay green even when no Inkscape
+  # binary is present — the @pytest.mark.inkscape tests skip centrally (tests/conftest.py),
+  # everything else (incl. the fake-transport LIVE suite) runs everywhere. This is also the
+  # "live validated per platform via its transport" gate: the live tests use in-memory fakes +
+  # a real loopback mock helper, so they prove the transport/protocol is cross-platform, not
+  # Linux-only.
+  headless:
+    name: headless (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Diagnostics — capability matrix (legible missing-dep report)
+        run: uv run python scripts/ci_diagnostics.py
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Types (mypy)
+        run: uv run mypy src
+
+      - name: Tests (pytest) — headless + fake-transport live suite
+        run: uv run pytest -q
+
+      # E9-03 — enumerate the LIVE server over the FastMCP in-memory client and assert the WHOLE
+      # primitive surface is registered AND reachable. Catches both a stale process (wrong
+      # tool/prompt counts) and a resource-read serialization break (E9-01). Headless-safe: the
+      # Inkscape-gated calls skip when no binary is on PATH, so the counts + resource reads +
+      # pure-DOM tools gate the build on all three OS here.
+      - name: Surface smoke — full MCP primitive surface (64/5/13)
+        run: uv run python scripts/ci_surface_smoke.py
+
+  # ---------------------------------------------------------------------------
+  # Full suite on Linux WITH a real Inkscape installed (apt). Runs the @pytest.mark.inkscape
+  # tests + the live-capability probe surfaced in the log + a boot smoke. Best-effort GUI bits
+  # are not relied on; if the apt install ever flakes, only this job fails, not the headless
+  # matrix above.
+  linux-inkscape:
+    name: linux + inkscape (full suite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Inkscape
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends inkscape
+          inkscape --version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Diagnostics — capability matrix (Inkscape present)
+        run: uv run python scripts/ci_diagnostics.py
+
+      - name: Action-list probe (capabilities surfaced in log)
+        run: inkscape --action-list | head -n 40
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
+
+      - name: Format check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Types (mypy)
+        run: uv run mypy src
+
+      - name: Tests (pytest) — full suite incl. @pytest.mark.inkscape
+        run: uv run pytest -q
+
+      - name: Boot smoke — `uv run inkscape-mcp` over STDIO
+        run: uv run python scripts/ci_boot_smoke.py uv run inkscape-mcp
+
+  # ---------------------------------------------------------------------------
+  # Exercise the packaged install (E7-01) end to end on every OS: build the wheel with
+  # `uv build`, install the console script with pipx, and confirm `inkscape-mcp` launches over
+  # STDIO and exits cleanly on EOF (no import error, valid entry point). Mirrors docs/install/.
+  packaged-install:
+    name: packaged install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build distributions (uv build)
+        run: uv build
+
+      # Pure-Python wheel: inkscape_mcp-<ver>-py3-none-any.whl — one .whl matches everywhere.
+      - name: Install the wheel with pipx (POSIX)
+        if: runner.os != 'Windows'
+        run: |
+          python -m pip install --user pipx
+          python -m pipx ensurepath
+          python -m pipx install ./dist/*.whl
+          "$(python -m pipx environment --value PIPX_BIN_DIR)/inkscape-mcp" --help >/dev/null 2>&1 || true
+          uv run python scripts/ci_boot_smoke.py "$(python -m pipx environment --value PIPX_BIN_DIR)/inkscape-mcp"
+
+      - name: Install the wheel with pipx (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m pip install --user pipx
+          python -m pipx ensurepath
+          $whl = (Get-ChildItem dist/*.whl | Select-Object -First 1).FullName
+          python -m pipx install $whl
+          $bin = python -m pipx environment --value PIPX_BIN_DIR
+          uv run python scripts/ci_boot_smoke.py (Join-Path $bin "inkscape-mcp.exe")

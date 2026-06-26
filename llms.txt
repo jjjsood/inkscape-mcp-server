@@ -1,0 +1,168 @@
+# GENERATED FILE — do not edit by hand.
+# Regenerate with: uv run python scripts/gen_llms_txt.py
+# Source of truth: the live MCP registry (register_tools() -> mcp.list_tools()/...).
+# Unlike a hand-maintained llms.txt, this is regenerated from the registry so it can never
+# drift from the actual tool/prompt/resource surface.
+
+
+# inkscape-mcp — LLM index (llms.txt)
+
+inkscape-mcp — an MCP server that makes Inkscape/SVG documents agent-ready: inspect, edit safely (reversible), validate, render, and export.
+
+Surface: 99 tools, 7 prompts, 16 resources.
+
+## Run & transport
+Transport: STDIO only (local). No HTTP.
+Run: uv run inkscape-mcp
+Console script: inkscape-mcp = inkscape_mcp.server:main
+
+## Environment / configuration
+Workspace roots (required): INKSCAPE_MCP_WORKSPACE_ROOTS (OS-path-separator-delimited list of allowed dirs; the sandbox boundary).
+Operator-tunable limits / gates (all optional, env-overridable):
+  - INKSCAPE_MCP_ACTION_ALLOWLIST
+  - INKSCAPE_MCP_ARTIFACT_KEEP_DAYS
+  - INKSCAPE_MCP_ARTIFACT_MAX_BYTES
+  - INKSCAPE_MCP_ARTIFACT_MAX_BYTES_PER_DOC
+  - INKSCAPE_MCP_ENGINE_IDLE_TIMEOUT_S
+  - INKSCAPE_MCP_ENGINE_MAX_PROCESSES
+  - INKSCAPE_MCP_ENGINE_MODE
+  - INKSCAPE_MCP_EXTENSION_ALLOWLIST
+  - INKSCAPE_MCP_LIVE_CACHE_MAX_BYTES
+  - INKSCAPE_MCP_LIVE_CACHE_MAX_ENTRIES
+  - INKSCAPE_MCP_LIVE_COALESCE_BUDGET_MS
+  - INKSCAPE_MCP_LIVE_ENABLED
+  - INKSCAPE_MCP_LIVE_FRAME_KEEP_DAYS
+  - INKSCAPE_MCP_LIVE_FRAME_MAX_BYTES
+  - INKSCAPE_MCP_MAX_EXPORT_PX
+  - INKSCAPE_MCP_MAX_INPUT_BYTES
+  - INKSCAPE_MCP_MAX_OUTPUT_BYTES
+  - INKSCAPE_MCP_MAX_PROCS
+  - INKSCAPE_MCP_PROCESS_TIMEOUT_S
+  - INKSCAPE_MCP_RAW_ACTION_ENABLED
+  - INKSCAPE_MCP_SNAPSHOT_HARD_MAX_BYTES
+  - INKSCAPE_MCP_SNAPSHOT_HARD_MAX_N
+  - INKSCAPE_MCP_SNAPSHOT_KEEP_DAYS
+  - INKSCAPE_MCP_SNAPSHOT_KEEP_N
+  - INKSCAPE_MCP_TOOL_DESC
+  - INKSCAPE_MCP_TOOL_PROFILE
+
+## Tools (one line + risk class, grouped by category)
+
+### Create
+- add_linear_gradient [risk: medium] — Add a `<linearGradient>` to the document `<defs>` (created if absent).
+- add_radial_gradient [risk: medium] — Add a `<radialGradient>` to the document `<defs>` (created if absent).
+- compose_grid [risk: medium] — Lay out N DIFFERENT assets in a grid (contact / spec sheet) in ONE reversible call.
+- create_circle [risk: medium] — Create a `<circle>` centred at `(cx, cy)` with radius `r` (> 0).
+- create_document [risk: medium] — Create a blank, tracked working-copy document from scratch — NO source file required.
+- create_ellipse [risk: medium] — Create an `<ellipse>` centred at `(cx, cy)` with radii `rx` / `ry` (> 0).
+- create_group [risk: medium] — Create an empty `<g>` group inside `parent_id` (must exist) or the document default parent.
+- create_line [risk: medium] — Create a `<line>` from `(x1, y1)` to `(x2, y2)`.
+- create_path [risk: medium] — Create a `<path>` with the validated `d` data string.
+- create_polygon [risk: medium] — Create a closed `<polygon>` from `points` (≥ 1 `(x, y)` pairs).
+- create_polyline [risk: medium] — Create an open `<polyline>` from `points` (≥ 1 `(x, y)` pairs).
+- create_rect [risk: medium] — Create a `<rect>` at `(x, y)` sized `width` / `height` (> 0), with optional corner radii.
+- create_text [risk: medium] — Create a `<text>` element anchored at `(x, y)` holding `text`.
+- create_use [risk: medium] — Create a `<use href="#href_id">` referencing an existing same-document object.
+- group_objects [risk: medium] — Wrap existing objects (`object_ids`, ≥ 1, all must exist) in a NEW `<g>`.
+- insert_svg_fragment [risk: high] — Insert an agent-composed SVG fragment under a parent (`parent_id`) or the document root.
+- inspect_document [risk: low] — Inspect a loaded document: tree, layers, styles, fonts, external assets.
+- open_document [risk: low] — Open an SVG into a tracked workspace document and return its id + summary.
+- place_document [risk: medium] — Place an existing document or object INTO another document at `(x, y)` with `scale`.
+- reload_document [risk: low] — Refresh a working copy FROM ITS SOURCE under the SAME `doc_id`, discarding working edits.
+- reparent_object [risk: medium] — Move an object (`object_id`) under a new parent (`new_parent_id`); both must exist.
+- set_document_svg [risk: high] — REPLACE the whole working copy with an agent-composed SVG string (root must be `<svg>`).
+
+### Inspect
+- find_objects [risk: low] — Find addressable object ids in a tracked document by tag / paint / text / id-prefix / bbox.
+- quality_report [risk: low] — Build a machine-readable quality report for a document: validation findings plus metrics.
+- quality_report_set [risk: low] — Quality-report a SET of documents in one call: per-doc reports + aggregate + verdict.
+- validate_document [risk: low] — Validate a loaded document and return structured, machine-readable findings.
+
+### Edit
+- apply_edits [risk: medium] — Apply an ordered list of typed DOM edits to a document as ONE atomic, reversible operation.
+- apply_palette [risk: medium] — Apply many `from -> to` colour replacements in a single reversible operation.
+- delete_object [risk: high] — Delete objects by id from a document in ONE reversible, snapshot-backed operation.
+- duplicate_object [risk: medium] — Duplicate an object or group in place, inserting the clone right after the original.
+- fit_to_content [risk: medium] — Fit the document's root ``viewBox`` to its CONTENT bounding box.
+- move_object [risk: medium] — Translate an object/group by ``(dx, dy)`` in its parent coordinate space.
+- normalize_viewbox [risk: medium] — Normalize or repair the document's root ``viewBox``.
+- rename_object [risk: medium] — Change an object's `id` and/or its `inkscape:label`.
+- replace_color [risk: medium] — Replace one colour with another across the document (or within `scope_ids` subtrees).
+- replace_text [risk: medium] — Replace the text content of a text element (`<text>` / `<tspan>` / flow text).
+- resize_canvas [risk: medium] — Set the document canvas ``width`` / ``height`` to validated CSS lengths.
+- rotate_object [risk: medium] — Rotate an object/group by ``degrees`` about a point.
+- scale_object [risk: medium] — Scale an object/group by factor ``sx`` (and ``sy``, defaulting to ``sx`` for uniform).
+- set_fill [risk: medium] — Set the fill colour (and optional fill opacity) of one or more objects.
+- set_font [risk: medium] — Set font-family / font-size / font-weight on one or more text objects.
+- set_opacity [risk: medium] — Set the element-level opacity of one or more objects.
+- set_stroke [risk: medium] — Set the stroke colour, width, and/or opacity of one or more objects.
+- tile [risk: medium] — Lay out a ``rows`` x ``cols`` grid of an object in ONE reversible operation.
+
+### Paths
+- boolean_difference [risk: high] — Subtract the top path(s) from the bottom one via the Inkscape engine (``path-difference``).
+- boolean_union [risk: high] — Union two or more paths into one via the Inkscape engine (``path-union``).
+- break_apart [risk: high] — Break a compound path into its subpaths via the Inkscape engine (``path-break-apart``).
+- cleanup_paths [risk: high] — Reduce path nodes via the Inkscape engine (``path-simplify``) — an explicit alias of
+- combine_paths [risk: high] — Combine paths into a single multi-subpath path via the Inkscape engine (``path-combine``).
+- simplify_path [risk: high] — Simplify the given path(s) via the Inkscape engine (``path-simplify``).
+- stroke_to_path [risk: high] — Convert each object's stroke into a filled path via the Inkscape engine.
+
+### Export
+- capture_frame [risk: low] — Capture the next numbered PNG screenshot in a per-run frame series.
+- create_icon_set [risk: low] — Export a multi-size square PNG icon set from the source document.
+- export_batch [risk: low] — Run a bounded batch of typed export specs in one call (dry-run by default).
+- export_document [risk: low] — Export the whole document to PNG, PDF, or SVG.
+- export_object [risk: low] — Export a single object (by id) to PNG, PDF, or SVG.
+- export_print_profile [risk: low] — Export a print-oriented PDF (vector, page area) of the whole document.
+- export_set [risk: low] — Batch-export a SET of documents in one call: per-doc results + aggregate + verdict.
+- export_web_profile [risk: low] — Export a web-oriented asset set: a responsive PNG set plus one plain SVG (E11-11).
+- list_frames [risk: low] — List the frames of a `capture_frame` series, ordered by index.
+- render_preview [risk: low] — Render a PNG preview of the whole document into the artifacts dir.
+
+### Optimize
+- optimize_set [risk: medium] — Web-optimize a SET of documents in one call: per-doc results + aggregate + verdict.
+- svg_web_optimize [risk: medium] — Web-optimize an SVG: strip editor metadata, drop dead structure, reduce coordinate precision.
+
+### Live
+- check_live_support [risk: low] — Report which live transports are available on this host (read-only; no connection).
+- live_apply_to_selection [risk: high] — Apply a validated style and/or simple transform to the current live selection.
+- live_arm_socket [risk: restricted] — Auto-arm the extension-socket helper so a programmatic launch gets the FULL live surface.
+- live_connect [risk: medium] — Connect to a running Inkscape over the best-ranked available transport (enables live).
+- live_diff_view [risk: low] — Produce a FOCUSED, annotated before/after visual diff of a live operation (E8-04).
+- live_disconnect [risk: low] — Disconnect the current live session (the X1 disable switch). Idempotent.
+- live_export_selection [risk: low] — Export just the current live selection to a PNG under the live artifacts dir.
+- live_get_active_document [risk: low] — Identify the document open in the connected live instance (read-only).
+- live_get_scene [risk: low] — Capture one live frame as a PNG PLUS a structured, machine-readable `LiveScene` (E8-02).
+- live_get_selection [risk: low] — Read the current selection in the live instance as object ids (read-only).
+- live_insert_svg [risk: high] — Insert an SVG fragment into the running document.
+- live_inspect_selection [risk: low] — Inspect the selected objects in the live instance (semantic, by id; read-only).
+- live_install_helper [risk: restricted] — Install the shipped extension-socket helper into the Inkscape user extensions dir.
+- live_render_view [risk: low] — Rasterize the live canvas to a PNG in the live artifacts dir (visual feedback).
+- live_session_step [risk: high] — Run ONE perceive→decide→act→observe iteration of the live-view loop (E8-05).
+- live_set_selected_text [risk: high] — Replace the selected text object's content in the running document.
+- live_set_viewport [risk: low] — Control the live canvas viewport: zoom / pan / fit-to-selection / fit-to-page.
+- live_status [risk: low] — Report live-session state: enabled, connected, active transport, available transports.
+- live_sync_to_workspace [risk: medium] — Save the live document's current state into the workspace as a NEW tracked document.
+- live_wait_for_change [risk: low] — Block until the live state changes, or the bounded timeout elapses (E8-03; read-only).
+
+### Snapshots
+- create_snapshot [risk: low] — Snapshot the current working copy of a document and index it.
+- list_snapshots [risk: low] — List a document's snapshots in order, with metadata.
+- prune_snapshots [risk: low] — Apply the snapshot + live-frame retention policy, pruning superseded server state.
+- restore_snapshot [risk: medium] — Revert a document's working copy to a chosen snapshot.
+
+### Discover
+- how_do_i [risk: low] — Map a natural-language goal to the concrete inkscape-mcp tool(s) that achieve it.
+
+### System
+- diagnose_runtime [risk: low] — Probe the local Inkscape + Python runtime fresh and return the capability matrix.
+- discover_extensions [risk: low] — List the server-side allowlisted Inkscape extensions + probe notes (read-only, diagnostic).
+- list_actions [risk: low] — Discover the host's actual Inkscape Action surface (probe-driven, version-aware).
+- list_capabilities [risk: low] — Return the cached runtime capability matrix (probed once, then reused).
+- run_action_chain [risk: high] — Execute a validated Action chain over a document's working copy (HIGH risk, approval-gated).
+- run_raw_action [risk: high] — Run ONE raw, allowlisted Inkscape Action over a document (advanced mode; OFF by default).
+- save_document_as [risk: medium] — Save a document's current working-copy state to a NEW file in the workspace.
+- stat_artifact [risk: low] — Return the on-disk byte size + sha256 digest of one sandboxed artifact.
+- stat_artifacts [risk: low] — Stat a SET of sandboxed artifacts: per-file size + sha256 plus an aggregate byte total.
+- transform_objects [risk: medium] — Apply ONE typed op to EVERY object a selector matches — one atomic, reversible operation.
+- validate_action_chain [risk: low] — Dry-run-validate an ordered Action chain and return its resolved plan (NO mutation).

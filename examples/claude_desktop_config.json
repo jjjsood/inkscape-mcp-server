@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "inkscape": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "/absolute/path/to/inkscape-mcp/inkscape-mcp-server",
+        "inkscape-mcp"
+      ],
+      "env": {
+        "INKSCAPE_MCP_WORKSPACE_ROOTS": "/absolute/path/to/your/svgs",
+        "INKSCAPE_MCP_LIVE_ENABLED": "true",
+        "INKSCAPE_MCP_RAW_ACTION_ENABLED": "false"
+      }
+    }
+  }
+}

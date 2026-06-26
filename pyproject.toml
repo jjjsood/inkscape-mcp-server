@@ -1,0 +1,87 @@
+[project]
+name = "inkscape-mcp"
+version = "0.1.0"
+description = "MCP server that makes Inkscape/SVG documents agent-ready: inspect, edit safely, validate, render, export."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Johannes Sood" }]
+keywords = ["mcp", "inkscape", "svg", "fastmcp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics :: Editors :: Vector-Based",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "fastmcp>=3.0,<4.0",
+    "lxml>=5.0",
+    # Focused visual before/after diff (E8-04): load before/after PNGs, compute the
+    # changed-region bbox (ImageChops.difference(...).getbbox()), draw the annotation overlay.
+    "pillow>=10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/johnnyjagatpal/inkscape-mcp"
+Repository = "https://github.com/johnnyjagatpal/inkscape-mcp"
+Issues = "https://github.com/johnnyjagatpal/inkscape-mcp/issues"
+Changelog = "https://github.com/johnnyjagatpal/inkscape-mcp/blob/main/CHANGELOG.md"
+
+# inkex ships with Inkscape, not on PyPI as a clean wheel. Wire it via the local
+# Inkscape install / PYTHONPATH when E2 needs inkex-native edits. Until then: lxml + CLI.
+
+[project.scripts]
+inkscape-mcp = "inkscape_mcp.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "lxml-stubs>=0.5",
+    "types-Pillow>=10.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/inkscape_mcp"]
+# Ship the live helper extension's non-Python data (the .inx manifest) inside the wheel.
+artifacts = ["*.inx"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+# The live helper extension runs INSIDE Inkscape's interpreter (imports `inkex`, not the server
+# package); it is shipped data, not server code, so it is excluded from our lint + type checks.
+extend-exclude = ["src/inkscape_mcp/live/helper_extension"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "RUF"]
+# S603/S607: subprocess use is required for the Inkscape CLI adapter; we enforce
+# arg-lists (never shell strings) by review + the svg-security-reviewer agent instead.
+ignore = ["S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: asserts are expected; S105-S108 are dummy tokens / temp paths in fixtures, not secrets.
+"tests/**" = ["S101", "S105", "S106", "S107", "S108"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "inkscape: test requires a working Inkscape binary on PATH",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+# Excluded: runs under Inkscape's interpreter with `inkex`, unavailable/unimportable here.
+exclude = ['src/inkscape_mcp/live/helper_extension/']

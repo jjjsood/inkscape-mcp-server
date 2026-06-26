@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+  <name>inkscape-mcp Live Bridge</name>
+  <id>org.inkscape_mcp.live</id>
+  <dependency type="executable" location="inx">inkscape_mcp_live.py</dependency>
+  <effect needs-live-preview="false">
+    <object-type>all</object-type>
+    <effects-menu>
+      <submenu name="inkscape-mcp"/>
+    </effects-menu>
+  </effect>
+  <script>
+    <command location="inx" interpreter="python">inkscape_mcp_live.py</command>
+  </script>
+</inkscape-extension>

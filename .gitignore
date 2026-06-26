@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# uv / venv
+.venv/
+uv.lock.bak
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# MCP runtime artifacts (snapshots, working copies, previews, logs)
+/workspace/
+**/.inkscape-mcp/
+*.log
+
+# Editors / OS
+.DS_Store
+.idea/
+*.swp
