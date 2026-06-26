@@ -1,4 +1,4 @@
-"""E12-01: `EngineManager` — serialization, LRU cap, freshness reopen, crash restart, idle reaping.
+"""`EngineManager` — serialization, LRU cap, freshness reopen, crash restart, idle reaping.
 
 Exercised against the fake shell (no Inkscape). The fake records each command, so freshness/reopen
 behavior is asserted by inspecting what the worker was asked to do.

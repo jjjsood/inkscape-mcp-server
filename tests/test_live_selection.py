@@ -1,4 +1,4 @@
-"""Backend probe/rank/selection tests (E3-01): full per-host set, capability-aware ranking."""
+"""Backend probe/rank/selection tests: full per-host set, capability-aware ranking."""
 
 from __future__ import annotations
 

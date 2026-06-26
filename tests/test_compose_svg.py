@@ -1,4 +1,4 @@
-"""Compose-engine + tool tests (E14-03): `set_document_svg` / `insert_svg_fragment`.
+"""Compose-engine + tool tests: `set_document_svg` / `insert_svg_fragment`.
 
 Covers the STRICT allowlist (reject `<script>`, `on*` handlers, `javascript:`/external hrefs),
 the safe round-trip (valid fragment inserted + reversible via the pre-mutation snapshot), the HIGH
@@ -188,7 +188,7 @@ def test_insert_fragment_empty_token_refused(doc: str) -> None:
     assert "approval" in str(exc.value).lower()
 
 
-# --- input-size cap (sec.12 DoS guard, E14 review) --------------------------
+# --- input-size cap (sec.12 DoS guard, review) --------------------------
 
 
 def test_set_document_svg_oversized_rejected_before_parse(

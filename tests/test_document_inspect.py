@@ -1,4 +1,4 @@
-"""Inspection-engine tests (E1-04): models + functions over a fixture SVG."""
+"""Inspection-engine tests: models + functions over a fixture SVG."""
 
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ def test_original_source_byte_unchanged(tmp_path: Path, monkeypatch: pytest.Monk
     assert src.read_bytes() == FIXTURE_SVG
 
 
-# --- E10-06 / E11-06: paint, leaf/layer flags, bbox, font availability, used_by --------------
+# --- /: paint, leaf/layer flags, bbox, font availability, used_by --------------
 
 # A fixture exercising the per-element read surface: a stroke-only rect (S13), a leaf vs. a
 # nested group (S12), geometry-bearing shapes (bbox), and a referenced font + asset (used_by).
@@ -359,7 +359,7 @@ def test_fonts_available_flag_and_used_by(paint_doc: str) -> None:
     fonts = {f.family: f for f in inspect_fonts(paint_doc).fonts}
     assert "NoSuchFontXYZ123" in fonts
     bogus = fonts["NoSuchFontXYZ123"]
-    # used_by points at the referencing element id (D8/R7 + E11-10c).
+    # used_by points at the referencing element id (D8/R7 +).
     assert bogus.used_by == "label"
     if shutil.which("fc-list") is None:
         # No fontconfig: availability is unknown (skipped), not falsely "missing".

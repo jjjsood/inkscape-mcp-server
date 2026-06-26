@@ -1,6 +1,6 @@
-"""Registered-prompt index resource (E16-10e).
+"""Registered-prompt index resource.
 
-The shipped MCP prompts (`live_canvas_assist`, the E5-07 export/recolor library, the E15-04
+The shipped MCP prompts (`live_canvas_assist`, the export/recolor library, the
 authoring library) ARE registered via `@mcp.prompt` and are reachable through the MCP prompts API
 (`prompts/list` + `prompts/get`). But an agent driving the server through the RESOURCE surface
 (`ListMcpResourcesTool` / `ReadMcpResourceTool`) could not see them at all — prompts are a separate
@@ -62,7 +62,7 @@ def _prompt_index() -> list[dict[str, object]]:
 
 @mcp.resource("inkscape://prompts", mime_type="application/json")
 def prompts_index() -> str:
-    """Index of registered MCP prompts (name + one-line purpose + arguments) — E16-10e.
+    """Index of registered MCP prompts (name + one-line purpose + arguments).
 
     Makes the shipped prompt library (`live_canvas_assist`, the export/recolor library, the
     authoring library) discoverable through the RESOURCE surface (`ListMcpResourcesTool`), which

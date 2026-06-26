@@ -1,4 +1,4 @@
-"""DBus backend — Linux/BSD no-freeze fast-path (E3-03 + E3-07).
+"""DBus backend — Linux/BSD no-freeze fast-path (+).
 
 Where a session bus is present, Inkscape 1.2+ exports its GTK GAction group over DBus
 (``org.gtk.Actions`` on ``org.inkscape.Inkscape``). This backend drives that interface via the
@@ -11,7 +11,7 @@ itself ``no_freeze = True`` and serves the live operations that map cleanly to G
 What is faithfully serviceable over the action surface (verified against a live Inkscape 1.4.3,
 2026-06-14) — all no-freeze:
 
-* **Structured read via export-to-file (E3-07 workaround).** ``org.gtk.Actions`` cannot *return* the
+* **Structured read via export-to-file (workaround).** ``org.gtk.Actions`` cannot *return* the
   document, but it can be told to *export* it: ``export-filename`` → ``export-type`` → ``export-do``
   writes the live document to a temp path the server then reads. This yields ``get_document_svg``
   (plain SVG), ``render_view`` (PNG) and ``get_active_document`` (parsed from the exported SVG) with
@@ -148,9 +148,9 @@ class DBusTransport(LiveTransport):
     name: ClassVar[str] = "dbus"
     #: Fast-path but capability-limited; ranked below the socket backend so the default read-mode
     #: connect still prefers the full-read socket transport. The no-freeze path is reached via the
-    #: ``no_freeze`` connect preference (E3-07), not by out-ranking the socket for reads.
+    #: ``no_freeze`` connect preference, not by out-ranking the socket for reads.
     rank: ClassVar[int] = 10
-    #: Runs ops in Inkscape's own GLib main loop ⇒ no modal GUI freeze (E3-07).
+    #: Runs ops in Inkscape's own GLib main loop ⇒ no modal GUI freeze.
     no_freeze: ClassVar[bool] = True
     #: Honest capability set (verified 2026-06-14): liveness, export-based reads, viewport, and
     #: style/transform on the current selection. NOT get/inspect-selection (no action returns ids),
@@ -347,7 +347,7 @@ class DBusTransport(LiveTransport):
                     extra={"event": "file_io", "transport": "dbus"},
                 )
 
-    # --- read surface via export-to-file (E3-07) ----------------------------
+    # --- read surface via export-to-file ----------------------------
 
     def get_active_document(self) -> LiveDocumentRef:
         """Identify the live document by exporting it and parsing the result (no GUI freeze).
@@ -397,7 +397,7 @@ class DBusTransport(LiveTransport):
         dpi = _BASE_DPI * scale if scale is not None else None
         return self._export_document_bytes("png", area_page=region is None, region=region, dpi=dpi)
 
-    # --- viewport via the per-window action group (E3-07) --------------------
+    # --- viewport via the per-window action group --------------------
 
     def _active_window_path(self) -> str:
         """Resolve the live window's object path (``…/window/N``) for window-scoped actions.
@@ -466,7 +466,7 @@ class DBusTransport(LiveTransport):
             )
         return LiveViewportResult(mode=mode, applied=True, detail=detail)
 
-    # --- style/transform on the current selection (E3-07) -------------------
+    # --- style/transform on the current selection -------------------
 
     def apply_to_selection(
         self, *, style: dict[str, str], transform: str | None

@@ -1,4 +1,4 @@
-"""Controlled Action chain tests (E6-02 / ADR-002 / ADR-003 / ADR-004 / sec.12).
+"""Controlled Action chain tests (ADR-002 / ADR-003 / ADR-004 / sec.12).
 
 Hermetic: the Inkscape touch points are monkeypatched — `render_preview` in the pipeline (before/
 after frames), `run_inkscape` in the chain engine (the Action run), and `get_or_build_action_map` so
@@ -97,7 +97,7 @@ def fake_render(monkeypatch: pytest.MonkeyPatch) -> None:
         preview_dir.mkdir(parents=True, exist_ok=True)
         out = preview_dir / "preview-auto.png"
         out.write_bytes(PNG_BYTES)
-        # E11-01 one-location contract: artifact_path is workspace-ROOT-relative (matches engine).
+        # one-location contract: artifact_path is workspace-ROOT-relative (matches engine).
         rel = out.relative_to(root).as_posix()
         return RenderResult(
             doc_id=doc_id,
@@ -188,7 +188,7 @@ def test_malformed_arg_refused(doc: tuple[str, Path, Path]) -> None:
 
 
 def test_comma_joined_select_by_id_arg_refused_with_hint(doc: tuple[str, Path, Path]) -> None:
-    # E11-10(e) / S15: a comma-joined multi-id token is the documented foot-gun. It is rejected as
+    # S15: a comma-joined multi-id token is the documented foot-gun. It is rejected as
     # `malformed_arg`, but the message must carry an actionable HINT steering to separate tokens.
     with pytest.raises(ActionChainError) as exc:
         validate_chain([ActionStep(action="select-by-id", args=["p_a,p_b"])])
@@ -262,7 +262,7 @@ def test_validate_action_chain_tool_refuses_bad_chain(doc: tuple[str, Path, Path
 
 
 def test_validate_action_chain_tool_surfaces_comma_id_hint(doc: tuple[str, Path, Path]) -> None:
-    # E11-10(e) / S15: the comma-joined-id hint reaches the agent through the tool's ToolError.
+    # S15: the comma-joined-id hint reaches the agent through the tool's ToolError.
     with pytest.raises(ToolError) as exc:
         validate_action_chain([ActionStep(action="select-by-id", args=["p_a,p_b"])])
     text = str(exc.value)
@@ -364,11 +364,11 @@ def test_tools_module_imports_engine() -> None:
     assert actions_tools.chain_engine is chain_engine
 
 
-# --- E14-08a: capability-absent action errors name the discovery / alt tools ---
+# ---: capability-absent action errors name the discovery / alt tools ---
 
 
 def test_chain_error_message_action_absent_names_list_actions() -> None:
-    # E14-08a: an action absent from THIS runtime's capability map names list_actions; any other
+    #: an action absent from THIS runtime's capability map names list_actions; any other
     # chain error keeps its own `code: message`.
     from inkscape_mcp.actions.chains import ActionChainError
     from inkscape_mcp.tools.actions import _chain_error_message
@@ -383,7 +383,7 @@ def test_chain_error_message_action_absent_names_list_actions() -> None:
 
 
 def test_engine_error_message_unavailable_names_list_capabilities() -> None:
-    # E14-08a: an absent engine (no binary) names list_capabilities; other engine errors unchanged.
+    #: an absent engine (no binary) names list_capabilities; other engine errors unchanged.
     from inkscape_mcp.actions.chains import ActionEngineError
     from inkscape_mcp.tools.actions import _engine_error_message
 

@@ -1,4 +1,4 @@
-"""save_document_as tool tests (E2-05): new-file save, overwrite gating, sandbox + validation."""
+"""save_document_as tool tests: new-file save, overwrite gating, sandbox + validation."""
 
 from __future__ import annotations
 
@@ -171,7 +171,7 @@ def test_path_escape_rejected_nothing_written_outside(
 def test_symlinked_dest_escape_rejected_no_write_to_target(
     doc: tuple[str, Path, Path], tmp_path: Path
 ) -> None:
-    """E10-01 / SV5: a pre-existing symlink AT the dest name pointing OUTSIDE the workspace is
+    """SV5: a pre-existing symlink AT the dest name pointing OUTSIDE the workspace is
     rejected even with overwrite=True + an approval token, and nothing is written to the link
     target."""
     doc_id, root, _ = doc
@@ -227,7 +227,7 @@ def test_in_sandbox_symlinked_dest_refused_not_followed(
 def test_relative_dest_anchors_to_workspace_root_not_cwd(
     doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """E10-08 SV1: a relative dest resolves against the workspace ROOT, not the process CWD."""
+    """SV1: a relative dest resolves against the workspace ROOT, not the process CWD."""
     doc_id, root, _ = doc
 
     # Put the process CWD somewhere OTHER than the workspace root so the two bases differ.

@@ -1,4 +1,4 @@
-"""Tool + registry tests (E14-02): `create_document`.
+"""Tool + registry tests: `create_document`.
 
 `create_document` mints a blank, tracked working-copy document from a width/height (+ optional
 viewBox / background) with NO source file, returns the SAME `{doc_id, summary}` shape as

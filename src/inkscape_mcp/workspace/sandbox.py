@@ -73,7 +73,7 @@ def live_artifacts_dir(root: Path) -> Path:
 
 
 def live_operations_dir(root: Path) -> Path:
-    """`<root>/.inkscape-mcp/live/operations/` — root-scoped Live Operation Records (E4-02).
+    """`<root>/.inkscape-mcp/live/operations/` — root-scoped Live Operation Records.
 
     Live sessions have no registered `doc_id`, so a live mutation's record lives here rather
     than under a per-document `operations/` folder.
@@ -82,7 +82,7 @@ def live_operations_dir(root: Path) -> Path:
 
 
 def action_maps_dir(root: Path) -> Path:
-    """`<root>/.inkscape-mcp/action-maps/` — root-scoped versioned Action capability maps (E6-02).
+    """`<root>/.inkscape-mcp/action-maps/` — root-scoped versioned Action capability maps.
 
     The Action surface is host-wide (not per document), so the version-keyed capability maps live
     here rather than under a document folder. One file per detected Inkscape version.

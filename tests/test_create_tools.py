@@ -1,4 +1,4 @@
-"""Element-creation / defs / grouping tool tests (E14-01 / E14-04, ADR-004 / ADR-005).
+"""Element-creation / defs / grouping tool tests (, ADR-004 / ADR-005).
 
 Hermetic: `render_preview` is monkeypatched in the pipeline module so no test invokes Inkscape
 (mirrors `test_text_object_tools.py`). Each test opens a fixture SVG, runs a creation tool, and
@@ -108,7 +108,7 @@ def _find(root: etree._Element, object_id: str) -> etree._Element | None:
     return None
 
 
-# --- shape primitives (E14-01) ----------------------------------------------
+# --- shape primitives ----------------------------------------------
 
 
 def test_create_rect_inserts_into_default_layer_with_bbox(
@@ -220,7 +220,7 @@ def test_create_text_no_bbox_text_node(
     assert len(list(txt)) == 0
 
 
-# --- defs / gradients (E14-04) ----------------------------------------------
+# --- defs / gradients ----------------------------------------------
 
 
 def test_add_linear_gradient_lands_in_defs(
@@ -288,7 +288,7 @@ def test_gradient_rejects_bad_offset(
         add_linear_gradient(doc_id, [{"offset": "2", "color": "red"}])
 
 
-# --- grouping / symbols (E14-04) --------------------------------------------
+# --- grouping / symbols --------------------------------------------
 
 
 def test_create_group_empty(doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -448,7 +448,7 @@ def test_create_use_accepts_valid_transform(
 def test_create_use_rejects_unsafe_transform(
     doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch, bad_transform: str
 ) -> None:
-    # sec.12 (E14 review): a transform value is validated to be allowed transform functions only;
+    # sec.12 (review): a transform value is validated to be allowed transform functions only;
     # an injection/markup/foreign-function value is rejected and nothing is written.
     doc_id, root, _ = doc
     _install_fake_render(monkeypatch)

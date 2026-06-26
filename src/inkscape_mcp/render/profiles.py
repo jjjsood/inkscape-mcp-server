@@ -1,6 +1,6 @@
-"""Export-profile engine (E2-06).
+"""Export-profile engine.
 
-Pure functions (no MCP decorators) that compose the existing E1-06 CLI render/export engine
+Pure functions (no MCP decorators) that compose the existing CLI render/export engine
 (`inkscape_mcp.render.cli.export_document`) into three reproducible export profiles:
 
 - **web** — web-oriented defaults: a responsive PNG set (by explicit `widths` or `scales`, else a
@@ -45,11 +45,11 @@ DEFAULT_WEB_WIDTH_PX = 1024
 #: Default icon set sizes (px, square). A conventional favicon/app-icon ladder.
 DEFAULT_ICON_SIZES: tuple[int, ...] = (16, 32, 48, 64, 128, 256)
 
-#: Default density multipliers for the responsive web set (E11-11). 1x/2x/3x covers the standard
+#: Default density multipliers for the responsive web set. 1x/2x/3x covers the standard
 #: web/retina ladder; the base width is multiplied by each to mint the responsive PNG set.
 DEFAULT_WEB_SCALES: tuple[int, ...] = (1, 2, 3)
 
-#: Print-profile Inkscape export options (E11-11). These are REAL, verified Inkscape 1.4 flags
+#: Print-profile Inkscape export options. These are REAL, verified Inkscape 1.4 flags
 #: whose output is observably different from a plain PDF export — for ANY document, not just
 #: text-bearing ones — and they are REPORTED in the result's `applied_settings` so the print value
 #: is auditable:
@@ -77,7 +77,7 @@ _PRINT_APPLIED_SETTINGS: dict[str, str] = {
 class ProfileArtifact(BaseModel):
     """One produced artifact within a profile run.
 
-    ONE LOCATION CONTRACT (E11-01): `path` and `workspace_relative_path` carry the SAME value — the
+    ONE LOCATION CONTRACT: `path` and `workspace_relative_path` carry the SAME value — the
     file relative to the WORKSPACE ROOT (a managed output carries the
     `.inkscape-mcp/documents/<doc_id>/...` base) — so a caller opens the file by a single join to
     the workspace root with no `find`/`stat`. `path` is kept only for back-compat and now means
@@ -88,7 +88,7 @@ class ProfileArtifact(BaseModel):
     requested. `scale` is set only for responsive-web entries produced via `scales=` and carries
     the density multiplier (e.g. 2 for the 2x asset). `requested_width_px` is set on every
     responsive-web PNG entry — including the `widths=` form, where there is no density `scale` — so
-    a caller can always tell which requested width an entry corresponds to (E13-06).
+    a caller can always tell which requested width an entry corresponds to.
     """
 
     path: str
@@ -99,7 +99,7 @@ class ProfileArtifact(BaseModel):
     requested_size_px: int | None = None
     scale: int | None = None
     requested_width_px: int | None = None
-    #: CONTENT-TRUTH (E16-07), computed at produce time from the just-written artifact:
+    #: CONTENT-TRUTH, computed at produce time from the just-written artifact:
     #: raster (PNG) entries carry `opaque_px` (drawn non-transparent pixel count) + `all_blank`;
     #: PDF entries carry `is_vector` (no embedded raster image) + `fonts_outlined` (no embedded font
     #: — true vector when both hold). Each is None for entries it does not apply to / when skipped.
@@ -112,8 +112,7 @@ class ProfileArtifact(BaseModel):
 class ProfileResult(BaseModel):
     """Outcome of one profile run: the profile token, its ordered artifacts, and applied settings.
 
-    `applied_settings` records the print/profile-specific options that were applied (auditable;
-    E11-11) — empty for profiles that apply none.
+    `applied_settings` records the print/profile-specific options that were applied (auditable) — empty for profiles that apply none.
     """
 
     doc_id: str
@@ -134,7 +133,7 @@ def _settings(settings: Settings | None) -> Settings:
 
 
 def _compose_prefix(caller_prefix: str | None, profile_key: str | None) -> str | None:
-    """Join a caller-supplied `name_prefix` with the profile's own per-file key (E16-03).
+    """Join a caller-supplied `name_prefix` with the profile's own per-file key.
 
     The profile keys its files internally (e.g. `web-256w`, the icon size, `print`); a caller
     `name_prefix` is prepended so the produced filenames carry the caller's tag too. Either part may
@@ -179,7 +178,7 @@ def export_web_profile(
     name_prefix: str | None = None,
     settings: Settings | None = None,
 ) -> ProfileResult:
-    """Produce the web profile: a responsive PNG set plus one plain SVG (E11-11).
+    """Produce the web profile: a responsive PNG set plus one plain SVG.
 
     The set of PNG widths is resolved in this order:
       - `widths` — an explicit list of pixel widths (each becomes one PNG);
@@ -187,8 +186,8 @@ def export_web_profile(
       - else just `width_px` (the single-width back-compat default).
     Each PNG is pixel-capped before Inkscape runs (by the underlying engine), distinct on disk, and
     carries a resolvable location. The per-width stem (`web-<w>w`) keeps the responsive files
-    distinguishable; an optional caller `name_prefix` is prepended to it (E16-03). An optional
-    `out_dir` (relative paths anchored to the workspace ROOT, then sandbox-validated; E11-05/E16-03)
+    distinguishable; an optional caller `name_prefix` is prepended to it. An optional
+    `out_dir` (relative paths anchored to the workspace ROOT, then sandbox-validated;)
     targets a caller-chosen directory so a `dist/` tree can be assembled without a `Bash cp`. One
     plain SVG (vector) is always appended last. Returns resolvable artifact paths; the order is PNGs
     (ascending width) then the SVG.
@@ -271,8 +270,8 @@ def create_icon_set(
     default to `DEFAULT_ICON_SIZES`. Every requested size is validated BEFORE any Inkscape
     invocation: a size `<= 0` or `> settings.max_export_px` raises `ProfileSizeError` and nothing
     is produced. An optional `out_dir` (relative paths anchored to the workspace ROOT, then
-    sandbox-validated; E11-05/E16-03) targets a caller-chosen dir and an optional `name_prefix`
-    tags each file (E16-03). The artifact order follows the requested (or default) size order.
+    sandbox-validated;) targets a caller-chosen dir and an optional `name_prefix`
+    tags each file. The artifact order follows the requested (or default) size order.
     Returns workspace-relative artifact paths, one per size.
 
     Raises `SandboxViolation` for an out-of-workspace `out_dir`.
@@ -309,7 +308,7 @@ def export_print_profile(
     name_prefix: str | None = None,
     settings: Settings | None = None,
 ) -> ProfileResult:
-    """Produce the print profile: a single page-area PDF with REAL print-specific settings (E11-11).
+    """Produce the print profile: a single page-area PDF with REAL print-specific settings.
 
     Unlike a plain `export_document(doc_id, "pdf")`, this applies print-oriented Inkscape export
     flags (`--export-pdf-version=1.4` + `--export-text-to-path`) so the produced bytes ALWAYS
@@ -318,8 +317,8 @@ def export_print_profile(
     `%PDF-1.4` vs `%PDF-1.5`) regardless of content; `--export-text-to-path` additionally outlines
     any text for a press-safe, font-independent result. The applied options are REPORTED in
     `applied_settings` so the print value is auditable. An optional `out_dir` (relative paths
-    anchored to the workspace ROOT, then sandbox-validated; E11-05/E16-03) targets a caller-chosen
-    dir and an optional `name_prefix` tags the file (E16-03). Returns a resolvable PDF path.
+    anchored to the workspace ROOT, then sandbox-validated;) targets a caller-chosen
+    dir and an optional `name_prefix` tags the file. Returns a resolvable PDF path.
 
     Raises `SandboxViolation` for an out-of-workspace `out_dir`.
     """

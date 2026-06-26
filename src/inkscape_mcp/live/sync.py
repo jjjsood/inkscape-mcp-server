@@ -1,12 +1,12 @@
-"""Sync the live document into the workspace (E3-06, medium risk).
+"""Sync the live document into the workspace (medium risk).
 
-`sync_live_to_workspace` is the only mutating piece of E3: it reads the current SVG from the
+`sync_live_to_workspace` is the only mutating piece of: it reads the current SVG from the
 connected transport and persists it as a NEW workspace document so the live instance is not the
 only source of truth (architecture §4.5). A RELATIVE `dest_path` is anchored to the first workspace
-root (E11-09); when it names a not-yet-existing subfolder the missing parent dirs are auto-created
-INSIDE the sandbox first (E16-09, matching `save_document_as`). It then writes through the §3 policy
+root; when it names a not-yet-existing subfolder the missing parent dirs are auto-created
+INSIDE the sandbox first (matching `save_document_as`). It then writes through the §3 policy
 layer (`resolve_write_path` + containment/symlink guard), registers the file via `open_document`
-(E1 working copy) and mirrors the change as an Operation Record + snapshot (ADR-004).
+(working copy) and mirrors the change as an Operation Record + snapshot (ADR-004).
 
 Damage-safety (epic Done-when): the destination must be a NEW path — an existing file is refused,
 never overwritten. The SVG is written to a temp file and atomically `os.replace`d into place, so a
@@ -76,7 +76,7 @@ def sync_live_to_workspace(
     Operation Record (medium) + snapshot → mark applied. Raises `LiveSyncError` on any failure;
     nothing partial is left behind.
 
-    Destination validation runs BEFORE the transport is required (E13-07), so an out-of-sandbox or
+    Destination validation runs BEFORE the transport is required, so an out-of-sandbox or
     symlinked `dest_path` is rejected with `path rejected: outside workspace` even when DISCONNECTED
     — the sandbox guard is no longer shadowed by the connection check, and the branch is exercisable
     headless. Resolving the path writes nothing; it only canonicalizes + sandbox/symlink-checks.
@@ -86,16 +86,16 @@ def sync_live_to_workspace(
     reg = registry if registry is not None else get_registry()
 
     # 1. Anchor a RELATIVE dest to the workspace root (NOT the process CWD) before the sandbox
-    # check (E11-09 / shared relative-dest contract). An absolute dest is passed through unchanged;
+    # check (shared relative-dest contract). An absolute dest is passed through unchanged;
     # an out-of-sandbox dest is rejected by `resolve_write_path` below — and this happens BEFORE any
-    # transport/live work (E13-07), so the guard holds regardless of connection state.
+    # transport/live work, so the guard holds regardless of connection state.
     anchored = anchor_to_root(dest_path, s)
 
-    # 2. Create any missing parent dirs INSIDE the sandbox (E16-09), then resolve the destination
+    # 2. Create any missing parent dirs INSIDE the sandbox, then resolve the destination
     #    through the sandbox write-path choke point (§3 / sec.12). Parent creation proves
     #    containment BEFORE any mkdir (TOCTOU-safe, sec.12), so a `..`-escaping or absolute-outside
     #    dest creates nothing and is rejected with `path rejected: outside workspace` — matching
-    #    `save_document_as`. Both steps happen BEFORE any transport/live work (E13-07), so the
+    #    `save_document_as`. Both steps happen BEFORE any transport/live work, so the
     #    guard holds regardless of connection state. Neither step writes the synced file.
     try:
         ensure_parent_within_sandbox(anchored, s)

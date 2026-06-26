@@ -1,7 +1,7 @@
-"""Save tool (E2-05): `save_document_as` + pre/post validation.
+"""Save tool: `save_document_as` + pre/post validation.
 
 Persists the current working-copy state of a registered document to a NEW file inside the
-workspace sandbox, running `validate_document` (E1-08) both before and after the write. The
+workspace sandbox, running `validate_document` both before and after the write. The
 original/source file is never overwritten; overwriting an EXISTING file on disk requires an
 explicit `approval_token` and escalates the operation to HIGH risk (sec.12). Every save opens
 an Operation Record (ADR-004) so the persisted change is auditable.
@@ -134,7 +134,7 @@ def _anchor_dest(dest_path: str) -> str:
 
     A relative `dest_path` (the common, friendly form) resolves against the FIRST configured
     workspace root — the document root — so a save never lands relative to the server's process
-    CWD (E10-08 SV1). An absolute dest is returned unchanged; `resolve_write_path` then enforces
+    CWD (SV1). An absolute dest is returned unchanged; `resolve_write_path` then enforces
     that it still lands inside a configured root. If no workspace root is configured the raw
     value is returned and the sandbox choke point rejects it cleanly.
     """
@@ -286,7 +286,7 @@ def save_document_as(
 
     entry = registry.get(doc_id)
 
-    # 2. Anchor a RELATIVE dest to the workspace root (E10-08 SV1), NOT the server CWD, then
+    # 2. Anchor a RELATIVE dest to the workspace root (SV1), NOT the server CWD, then
     #    (when the dest names a not-yet-existing subfolder) create the parent tree under a
     #    pre-create containment proof (sec.12), and finally resolve through the sandbox write-path
     #    choke point (§3). An absolute dest is passed through unchanged and must itself resolve

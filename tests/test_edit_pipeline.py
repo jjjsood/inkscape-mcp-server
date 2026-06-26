@@ -1,4 +1,4 @@
-"""Shared mutating-edit pipeline tests (E2-04).
+"""Shared mutating-edit pipeline tests.
 
 Hermetic: `render_preview` is monkeypatched in the pipeline module so no test invokes Inkscape.
 The fake writes a tiny PNG-ish file into the deterministic preview path and returns a
@@ -61,7 +61,7 @@ def _install_fake_render(monkeypatch: pytest.MonkeyPatch) -> None:
         preview_dir.mkdir(parents=True, exist_ok=True)
         out = preview_dir / "preview-auto.png"
         out.write_bytes(PNG_BYTES)
-        # E11-01 one-location contract: the real engine returns a path relative to the workspace
+        # one-location contract: the real engine returns a path relative to the workspace
         # ROOT (carries the `.inkscape-mcp/documents/<doc_id>/...` base). Mirror that here so the
         # pipeline's `root / artifact_path` join resolves exactly as it does against real Inkscape.
         rel = out.relative_to(root).as_posix()
@@ -142,7 +142,7 @@ def test_happy_path_applies_links_snapshot_and_previews(
 def test_apply_edit_against_real_render_preview(doc: tuple[str, Path, Path]) -> None:
     """End-to-end against the REAL `render_preview` engine — NO fake render.
 
-    Guards the E11-01 contract seam: `render_preview` returns an `artifact_path` relative to the
+    Guards the contract seam: `render_preview` returns an `artifact_path` relative to the
     workspace ROOT, and the pipeline must resolve it against `root` (not `workspace_dir`) when it
     copies the before/after frames. A regression here (the doubled `.inkscape-mcp/documents/<id>/`
     join) makes EVERY mutating edit raise `FileNotFoundError` on any host with Inkscape — but the

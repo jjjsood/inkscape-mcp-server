@@ -1,8 +1,8 @@
-"""Short-form tool-description mode (E20-03).
+"""Short-form tool-description mode.
 
-The E15-02 6-part docstring template (summary · when-to-use · key params · render-and-look ·
+The 6-part docstring template (summary · when-to-use · key params · render-and-look ·
 return shape · example · risk class) gives excellent discoverability, but the full `tools/list`
-JSON is heavy in EVERY turn's context. E18-03 trims the tool COUNT (`tool_profile=core`); this
+JSON is heavy in EVERY turn's context. trims the tool COUNT (`tool_profile=core`); this
 trims the description LENGTH instead, orthogonally: when `INKSCAPE_MCP_TOOL_DESC=short`
 (:data:`inkscape_mcp.config.TOOL_DESC_SHORT`) the wire description for each tool is replaced by a
 DERIVED short form — the first "what it does" line plus the `Risk class:` line — dropping the
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-#: Start of the `Risk class:` paragraph the E15-02 template guarantees on every tool — the SAME
+#: Start of the `Risk class:` paragraph the template guarantees on every tool — the SAME
 #: marker the capability map / `gen_llms_txt` rely on. The paragraph itself can WRAP over several
 #: lines; `_risk_paragraph` collects the whole of it (to the next blank line / end) so the risk tier
 #: and the approval-gate hint for high-risk tools survive the trim intact, never cut mid-sentence.
@@ -62,7 +62,7 @@ def _risk_paragraph(lines: list[str]) -> str:
 
 
 def short_description(full: str) -> str:
-    """Derive the short-form description from a full E15-02 docstring.
+    """Derive the short-form description from a full docstring.
 
     Keeps the FIRST paragraph (the "what it does" summary, one or more non-blank lines up to the
     first blank line) and the whole `Risk class:` paragraph; drops everything else. Returns the

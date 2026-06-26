@@ -1,4 +1,4 @@
-"""Export tools (E1-06): `render_preview`, `capture_frame`, `list_frames`, `export_document`,
+"""Export tools: `render_preview`, `capture_frame`, `list_frames`, `export_document`,
 `export_object`.
 
 Thin MCP layer over the CLI render/export engine (`inkscape_mcp.render.cli`). Inkscape engine
@@ -9,7 +9,7 @@ snapshot is required.
 Client-facing errors are raised as `ToolError` with stable, host-path-free messages (sec.12):
 unknown document id -> "document id not found"; bad / missing object id -> a stable message;
 limit / process failures -> stable messages. Returned artifact paths follow ONE LOCATION CONTRACT
-(E11-01): `artifact_path` and `workspace_relative_path` carry the SAME value, always relative to the
+: `artifact_path` and `workspace_relative_path` carry the SAME value, always relative to the
 WORKSPACE ROOT, openable by a single join to the root — never an absolute host path.
 """
 
@@ -59,7 +59,7 @@ _DOCUMENT_FORMATS = frozenset({"png", "pdf", "svg"})
 #: Single-object export formats accepted by `export_object`.
 _OBJECT_FORMATS = frozenset({"png", "pdf", "svg"})
 
-#: DEFAULT inline-image byte threshold (E14-05). A produced raster is returned INLINE as an MCP
+#: DEFAULT inline-image byte threshold. A produced raster is returned INLINE as an MCP
 #: ImageContent block only when it is at or below this many bytes, so the agent sees its output
 #: without a second `Read` of the artifact path. The default is deliberately small (≈5 MiB) — far
 #: below the hard `Settings.max_output_bytes` artifact cap — because an inlined PNG is
@@ -139,7 +139,7 @@ def _with_inline[ModelT: BaseModel](result: ModelT, image: Image | None) -> Mode
     """Return the bare structured `result`, or a `ToolResult` carrying it PLUS the inline image.
 
     When `image` is None the bare Pydantic model is returned unchanged (existing direct callers and
-    structured-output consumers see exactly the same shape as before — E14-05 is additive). When an
+    structured-output consumers see exactly the same shape as before — is additive). When an
     image is present the structured result is preserved in `structured_content` (so `.artifact_path`
     / dims / `stale` remain machine-readable) and the inline raster is appended as an MCP
     ImageContent block, so the agent perceives its output without a second `Read`.
@@ -159,11 +159,11 @@ def _with_inline[ModelT: BaseModel](result: ModelT, image: Image | None) -> Mode
 class PreviewResult(BaseModel):
     """Result of `render_preview`: a resolvable PNG path plus its TRUE raster size.
 
-    ONE LOCATION CONTRACT (E11-01): `artifact_path` and `workspace_relative_path` carry the SAME
+    ONE LOCATION CONTRACT: `artifact_path` and `workspace_relative_path` carry the SAME
     value — the file relative to the WORKSPACE ROOT (carries the
     `.inkscape-mcp/documents/<doc_id>/...` base) — so you open it by a single join to the workspace
     root with no `find`/`stat`. `artifact_path` is kept only for back-compat and now means exactly
-    the same thing. `width_px`/`height_px` are the on-disk raster dimensions (E11-02).
+    the same thing. `width_px`/`height_px` are the on-disk raster dimensions.
     """
 
     doc_id: str
@@ -172,12 +172,12 @@ class PreviewResult(BaseModel):
     format: str
     width_px: int
     height_px: int
-    #: STALENESS SIGNAL (E14-06a): True iff the working copy changed after this preview was made, so
+    #: STALENESS SIGNAL: True iff the working copy changed after this preview was made, so
     #: it no longer reflects the current document. Computed at produce time (artifact mtime vs.
     #: working-copy mtime) by `inkscape_mcp.render.cli.compute_stale`; a freshly rendered preview
     #: reflects the current working copy, so this is False.
     stale: bool = False
-    #: CONTENT-TRUTH (E16-07): `opaque_px` is the count of drawn (non-transparent) pixels in the PNG
+    #: CONTENT-TRUTH: `opaque_px` is the count of drawn (non-transparent) pixels in the PNG
     #: and `all_blank` is True iff nothing was drawn, so a caller can prove the render is not blank
     #: straight from the result. None if verification was skipped/failed.
     opaque_px: int | None = None
@@ -187,7 +187,7 @@ class PreviewResult(BaseModel):
 class FrameResult(BaseModel):
     """Result of `capture_frame`: a `render_preview`-style PNG plus its series + index.
 
-    `artifact_path` / `workspace_relative_path` carry the SAME root-relative value (E11-01), opened
+    `artifact_path` / `workspace_relative_path` carry the SAME root-relative value, opened
     by a single join to the workspace root. `series` is the (sanitized) series folder under
     `artifacts/frames/`; `frame_index` is the 1-based position within that series.
     `width_px`/`height_px` are the on-disk raster dimensions.
@@ -201,7 +201,7 @@ class FrameResult(BaseModel):
     height_px: int
     series: str
     frame_index: int
-    #: STALENESS SIGNAL (E14-06a): True iff the working copy changed after this frame was captured.
+    #: STALENESS SIGNAL: True iff the working copy changed after this frame was captured.
     #: Computed at produce time (artifact mtime vs. working-copy mtime); a freshly captured frame
     #: reflects the current working copy, so this is False.
     stale: bool = False
@@ -229,13 +229,12 @@ class FrameListResult(BaseModel):
 class ExportResult(BaseModel):
     """Result of `export_document` / `export_object`.
 
-    ONE LOCATION CONTRACT (E11-01): `artifact_path` and `workspace_relative_path` carry the SAME
+    ONE LOCATION CONTRACT: `artifact_path` and `workspace_relative_path` carry the SAME
     value — the file relative to the WORKSPACE ROOT (a managed output carries the
     `.inkscape-mcp/documents/<doc_id>/...` base; an `out_dir` output is its in-workspace relative
     path) — so you open it by a single join to the workspace root with no `find`/`stat`, for EVERY
     output. `artifact_path` is kept only for back-compat and now means exactly the same thing.
-    `width_px`/`height_px` are the TRUE on-disk raster dimensions for raster (PNG) exports (E10-04 /
-    E11-02) and `None` for vector (PDF/SVG) outputs.
+    `width_px`/`height_px` are the TRUE on-disk raster dimensions for raster (PNG) exports and `None` for vector (PDF/SVG) outputs.
     """
 
     doc_id: str
@@ -244,11 +243,11 @@ class ExportResult(BaseModel):
     format: str
     width_px: int | None
     height_px: int | None
-    #: STALENESS SIGNAL (E14-06a): True iff the working copy changed after this export was produced.
+    #: STALENESS SIGNAL: True iff the working copy changed after this export was produced.
     #: Computed at produce time (artifact mtime vs. working-copy mtime); a freshly produced export
     #: reflects the current working copy, so this is False.
     stale: bool = False
-    #: CONTENT-TRUTH (E16-07), computed at produce time from the just-written artifact:
+    #: CONTENT-TRUTH, computed at produce time from the just-written artifact:
     #: raster (PNG) outputs carry `opaque_px` (drawn non-transparent pixel count) + `all_blank`
     #: (True iff nothing was drawn); PDF outputs carry `is_vector` (no embedded raster image) +
     #: `fonts_outlined` (no embedded font — text outlined to paths; true vector when both hold).
@@ -260,7 +259,7 @@ class ExportResult(BaseModel):
 
 
 def _model_output_schema(model: type[BaseModel]) -> dict[str, object]:
-    """Derive the `outputSchema` FastMCP would emit for a bare ``model`` return (E17-03).
+    """Derive the `outputSchema` FastMCP would emit for a bare ``model`` return.
 
     The inline-image tools (`render_preview` / `capture_frame` / `export_document` /
     `export_object`) annotate their return as ``<Model> | ToolResult`` so they can optionally append
@@ -290,7 +289,7 @@ def _map_failure(exc: Exception) -> ToolError:
     if isinstance(exc, InvalidObjectId):
         return ToolError("object id is not valid")
     if isinstance(exc, ProcessError):
-        # CAPABILITY-ABSENT (E14-08a): the Inkscape engine could not be launched (e.g. no binary on
+        # CAPABILITY-ABSENT: the Inkscape engine could not be launched (e.g. no binary on
         # this runtime). Name the discovery tool so the agent can see what this runtime supports
         # rather than retrying blindly. Stable + host-path-free (sec.12).
         return ToolError(
@@ -317,13 +316,13 @@ def render_preview(
 
     Key params: `width_px` scales the raster (height follows the document aspect ratio); omit for
     intrinsic size. Oversized requests are rejected before Inkscape runs. `name` tags the file
-    (successive calls do NOT clobber, E11-12 — each render gets a unique frame name). INLINE RASTER
-    (E14-05): by default the PNG is also returned as an MCP image block so the agent SEES it without
+    (successive calls do NOT clobber, — each render gets a unique frame name). INLINE RASTER
+: by default the PNG is also returned as an MCP image block so the agent SEES it without
     a second `Read`; gated by `max_output_bytes` (~5 MiB default) and skipped for an oversized
     render; `inline=False` returns only the structured result.
 
     Return shape: `PreviewResult` — `artifact_path` / `workspace_relative_path` (same root-relative
-    value, E11-01), `format`, `width_px`/`height_px` (TRUE on-disk size), `stale`. With an inline
+    value), `format`, `width_px`/`height_px` (TRUE on-disk size), `stale`. With an inline
     image, a `ToolResult` carrying the same structured fields plus the image block.
 
     Example: `render_preview(doc_id, width_px=512)`
@@ -376,10 +375,10 @@ def capture_frame(
     `artifacts/frames/<series>/`; the index is derived from the filesystem (highest existing
     `frame-NNN` + 1) — monotonic, survives a restart, never clobbers. `label` is folded into the
     frame name. Renders the whole canvas exactly like `render_preview` (no UI chrome). INLINE RASTER
-    (E14-05): the PNG is returned inline by default (gated by `max_output_bytes`); `inline=False`
+: the PNG is returned inline by default (gated by `max_output_bytes`); `inline=False`
     returns only the structured result.
 
-    Return shape: `FrameResult` — `artifact_path` / `workspace_relative_path` (same value, E11-01),
+    Return shape: `FrameResult` — `artifact_path` / `workspace_relative_path` (same value),
     `format`, `width_px`/`height_px`, `series`, `frame_index` (1-based), `stale`. With an inline
     image, a `ToolResult` carrying the same fields plus the image block.
 
@@ -469,13 +468,13 @@ def export_document(
     for many sizes/formats at once use `export_batch`; for a web/print bundle use the profile tools.
 
     Key params: `format` is one of "png"/"pdf"/"svg" (others rejected). PNG honors `width_px`
-    (pixel-capped before Inkscape runs); PDF/SVG are vector and ignore it. `out_dir` (E11-05) writes
+    (pixel-capped before Inkscape runs); PDF/SVG are vector and ignore it. `out_dir` writes
     into a caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is
     sandbox-checked (out-of-workspace is rejected with "path rejected: outside workspace");
-    `name_prefix` tags the filename. INLINE RASTER (E14-05): a PNG is returned inline by default
+    `name_prefix` tags the filename. INLINE RASTER: a PNG is returned inline by default
     (gated by `max_output_bytes`); PDF/SVG are never embedded; `inline=False` opts out.
 
-    Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value, E11-01),
+    Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value),
     `format`, `width_px`/`height_px` (TRUE size for PNG, None for vector), `stale`. With an inline
     image, a `ToolResult` carrying the same fields plus the image block.
 
@@ -545,13 +544,13 @@ def export_object(
     the whole document use `export_document`; for many at once use `export_batch`.
 
     Key params: `object_id` must exist and match the safe SVG-id charset (else rejected before it
-    reaches Inkscape). `format` is one of "png"/"pdf"/"svg". `out_dir` (E11-05) writes into a
+    reaches Inkscape). `format` is one of "png"/"pdf"/"svg". `out_dir` writes into a
     caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
     (out-of-workspace is rejected with "path rejected: outside workspace"); `name_prefix` tags the
-    filename. INLINE RASTER (E14-05): a PNG is returned inline by default (gated by
+    filename. INLINE RASTER: a PNG is returned inline by default (gated by
     `max_output_bytes`); PDF/SVG never embedded; `inline=False` opts out.
 
-    Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value, E11-01),
+    Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value),
     `format`, `width_px`/`height_px` (TRUE size for PNG, None for vector), `stale`. With an inline
     image, a `ToolResult` carrying the same fields plus the image block.
 

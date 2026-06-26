@@ -1,18 +1,18 @@
-"""System diagnostics tools (E1-03).
+"""System diagnostics tools.
 
 Exposes the runtime capability matrix so agents can branch on what the host actually supports.
 `list_capabilities` returns a cached probe (probe-once, reuse); `diagnose_runtime` forces a
 fresh probe and refreshes that cache. The `inkscape://runtime/capabilities` resource shares the
 same cache via `get_cached_capabilities`, so tool and resource always agree for a given probe.
 
-E16-01: the matrix also carries the authoritative MCP tool surface — `tool_count` + `tools`
+the matrix also carries the authoritative MCP tool surface — `tool_count` + `tools`
 (name + one-line purpose + risk class) — sourced from the LIVE FastMCP registry
 (`mcp.list_tools()`), the same single source of truth `scripts/gen_llms_txt.py` reads. The pure
 probe (`inkscape_mcp.runtime.probe`) stays MCP-free; this layer overlays the registry fields with
 `with_registry_tools` before tool and resource serve the matrix, so the one count can never drift
 from the registered surface.
 
-E16-06: this module also hosts the read-only artifact-stat utilities `stat_artifact` /
+this module also hosts the read-only artifact-stat utilities `stat_artifact` /
 `stat_artifacts` — on-disk byte size + sha256 of a sandboxed artifact (and an aggregate for a set)
 — so agents read back what they wrote without shelling out to `wc -c` / `sha256sum` / `du -cb`.
 
@@ -74,7 +74,7 @@ def _risk_class(description: str | None) -> str:
 
 
 def _registry_tools() -> list[ToolInfo]:
-    """Read the LIVE FastMCP tool surface (E16-01): name + one-line purpose + risk class.
+    """Read the LIVE FastMCP tool surface: name + one-line purpose + risk class.
 
     Uses `mcp.list_tools()` — the same async registry accessor `scripts/gen_llms_txt.py` and the
     drift-guard tests read — so the authoritative tool count is one number that cannot drift from
@@ -109,7 +109,7 @@ def get_cached_capabilities() -> Capabilities:
     """Return the cached capability matrix, probing once on first use.
 
     Shared by `list_capabilities` and the `inkscape://runtime/capabilities` resource so they
-    return identical data for the same probe. The live MCP tool surface (E16-01) is overlaid on
+    return identical data for the same probe. The live MCP tool surface is overlaid on
     every read, so a tool registered after the probe is still reflected.
     """
     global _cached
@@ -174,11 +174,11 @@ def list_capabilities() -> Capabilities:
     return get_cached_capabilities()
 
 
-# --- E16-06: artifact stat (read-only) --------------------------------------
+# ---: artifact stat (read-only) --------------------------------------
 
 
 class ArtifactStat(BaseModel):
-    """On-disk facts about one sandboxed artifact (E16-06).
+    """On-disk facts about one sandboxed artifact.
 
     `path` echoes the WORKSPACE-RELATIVE POSIX path of the resolved artifact (never a host path —
     sec.12); `bytes` is its raw on-disk size; `sha256` is the lowercase hex digest of its contents.
@@ -190,7 +190,7 @@ class ArtifactStat(BaseModel):
 
 
 class ArtifactStatSet(BaseModel):
-    """Per-file stat plus an aggregate byte total for a SET of artifacts (E16-06).
+    """Per-file stat plus an aggregate byte total for a SET of artifacts.
 
     `artifacts` carries one `ArtifactStat` per input path (order preserved); `total_bytes` is the
     sum of their `bytes` — the icon-set / dist-tree byte budget without a `du -cb`. `count` is the

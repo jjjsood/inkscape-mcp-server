@@ -1,6 +1,6 @@
-"""Quality-report tool (E5-05): `quality_report`.
+"""Quality-report tool: `quality_report`.
 
-Thin MCP layer over the read-only quality engine (`inkscape_mcp.quality`), which extends the E1-08
+Thin MCP layer over the read-only quality engine (`inkscape_mcp.quality`), which extends the
 validation engine with quantitative metrics and optimization opportunities. Direct DOM only
 (ADR-005); no mutation, no Operation Record, no network. Risk class **low** (read-only). All
 client-facing errors are raised as `ToolError` with stable, host-path-free messages (sec.12).
@@ -65,7 +65,7 @@ def quality_report(doc_id: str) -> QualityReport:
 
 
 class QualityReportSetResult(BaseModel):
-    """Result of `quality_report_set` (E16-05): per-doc reports + aggregate + consistency verdict.
+    """Result of `quality_report_set`: per-doc reports + aggregate + consistency verdict.
 
     `per_doc` is one `QualityReport` per input document (the SAME report the single-doc
     `quality_report` returns). `all_ok` is True iff every document is valid; `worst_score` /

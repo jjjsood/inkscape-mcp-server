@@ -1,4 +1,4 @@
-"""Typed DOM-edit batch tool tests (E19-01): ``apply_edits``.
+"""Typed DOM-edit batch tool tests: ``apply_edits``.
 
 Proves the four load-bearing guarantees the backlog requires of the batch tool:
 

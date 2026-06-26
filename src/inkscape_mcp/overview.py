@@ -1,20 +1,20 @@
-"""In-context system overview delivered as MCP server ``instructions`` (E19-02).
+"""In-context system overview delivered as MCP server ``instructions``.
 
 The Penpot survey's real onboarding edge is that its ``high_level_overview`` is delivered as MCP
 server **instructions** — so the model holds the document model + idioms every turn, not only if it
 happens to open a ``docs/`` file. Our equivalent prose already exists in
-``docs/agent-usage-guide.md`` (E15-05), but that sits OUTSIDE the agent's context. This module
+``docs/agent-usage-guide.md``, but that sits OUTSIDE the agent's context. This module
 delivers a CONCISE orientation in-context via the FastMCP ``instructions`` field.
 
 It is deliberately a SHORT orientation + pointers, NOT a second copy of the guide: it states the
 load-bearing invariants (document model + ``doc_id`` lifecycle, the working-copy + snapshot/restore
 reversibility idiom, the risk classes + ``approval_token`` gate, the intended tool ordering, and the
-render-and-look default — E19-03) and then routes to the authoritative, generated discovery surface
+render-and-look default) and then routes to the authoritative, generated discovery surface
 (``how_do_i`` / ``list_capabilities`` / ``llms.txt``) and the full guide for everything else. The
 deep detail stays single-sourced in the guide + the generated manifest; this never restates it.
 
-Audit (E19-02): before this module the server was constructed as ``FastMCP("inkscape-mcp")`` with NO
-``instructions`` field — E17/E18 wired tool ANNOTATIONS, TAGS, progressive disclosure, and the
+Audit: before this module the server was constructed as ``FastMCP("inkscape-mcp")`` with NO
+``instructions`` field — wired tool ANNOTATIONS, TAGS, progressive disclosure, and the
 ``inkscape://prompts`` index, but no always-in-context overview. This closes that gap.
 """
 

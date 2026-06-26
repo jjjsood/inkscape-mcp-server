@@ -1,4 +1,4 @@
-"""Cross-document / collection layer engine (E16-05).
+"""Cross-document / collection layer engine.
 
 Pure, framework-free helpers behind the SMALL TYPED collection tools (ADR-002 — NOT a portmanteau):
 
@@ -246,7 +246,7 @@ def make_place_document(
 ) -> MutateFn:
     """Build a ``mutate`` closure that PLACES one already-resolved source subtree into a target doc.
 
-    The single-asset counterpart of :func:`make_compose_grid` (E16-10a): ``source`` is one resolved
+    The single-asset counterpart of :func:`make_compose_grid`: ``source`` is one resolved
     element — a whole source document's ROOT or a named object, possibly from a DIFFERENT document —
     deep-copied (every id re-minted, intra-clone refs rewritten via
     :func:`dom.deep_copy_with_new_ids`) and wrapped in a ``<g>`` whose transform translates it to
@@ -295,7 +295,7 @@ def make_place_document(
 
 
 class ConsistencyProperty(BaseModel):
-    """Agreement of ONE property across a document set (E16-05).
+    """Agreement of ONE property across a document set.
 
     ``agree`` is True iff every document in the set reports the SAME value for this property
     (documents that could not report a value are excluded from the comparison and listed in
@@ -313,7 +313,7 @@ class ConsistencyProperty(BaseModel):
 
 
 class ConsistencyVerdict(BaseModel):
-    """Structured cross-document consistency audit over a set (E16-05).
+    """Structured cross-document consistency audit over a set.
 
     One :class:`ConsistencyProperty` per audited property (``viewBox``, ``stroke_width``,
     ``id_naming``). ``consistent`` is True iff EVERY audited property agrees across the set. Not

@@ -1,7 +1,7 @@
-"""Authoring/compose prompt tests (E15-04, architecture §4.1).
+"""Authoring/compose prompt tests (architecture §4.1).
 
-The two E14 on-ramp prompts (`compose_artwork`, `restyle_artwork`) must be registered + discoverable
-on the MCP prompt surface, weave in the caller's `goal`, reference only shipped E14 tools, and carry
+The two on-ramp prompts (`compose_artwork`, `restyle_artwork`) must be registered + discoverable
+on the MCP prompt surface, weave in the caller's `goal`, reference only shipped tools, and carry
 no authority (they are pure guidance strings — no raw-Action / code path).
 """
 

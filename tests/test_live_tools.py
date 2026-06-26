@@ -1,4 +1,4 @@
-"""Live tool + resource tests (E3-04/05/06): registration, gate default-on/opt-out, absence."""
+"""Live tool + resource tests (05/06): registration, gate default-on/opt-out, absence."""
 
 from __future__ import annotations
 
@@ -160,7 +160,7 @@ def test_connect_then_read_surface(on: None) -> None:
     assert LiveSelection.model_validate_json(live_selection()).object_ids == ["r1"]
 
 
-# --- E10-10 L5: live_install_helper returns a non-absolute extensions_dir -----------
+# --- L5: live_install_helper returns a non-absolute extensions_dir -----------
 
 
 def test_present_extensions_dir_collapses_home_prefix() -> None:
@@ -221,7 +221,7 @@ def test_live_install_helper_returns_relative_extensions_dir(
     assert str(Path.home()) not in result.extensions_dir
 
 
-# --- E14-08a: capability-absent live errors name the connect / probe tools ----
+# ---: capability-absent live errors name the connect / probe tools ----
 
 
 def test_map_live_error_not_available_names_live_connect() -> None:

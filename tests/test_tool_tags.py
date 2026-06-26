@@ -1,4 +1,4 @@
-"""Tag + progressive-disclosure drift guards (E17-02).
+"""Tag + progressive-disclosure drift guards.
 
 Every registered tool must carry exactly ONE domain tag and ONE risk tag from the central
 `tool_tags` map. The existing config flags (`live_enabled` / `raw_action_enabled`) then drive

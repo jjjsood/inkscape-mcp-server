@@ -1,4 +1,4 @@
-"""Snapshot + live-frame retention / cleanup pass (E1 follow-up; E8-06).
+"""Snapshot + live-frame retention / cleanup pass (follow-up).
 
 Pure functions implementing the deterministic snapshot retention policy from workspace-model §6:
 retain the UNION of the last `keep_n` snapshots and every snapshot within `keep_days`, bounded
@@ -9,7 +9,7 @@ and the reversibility chain back to `original` stays intact. Orphaned Operation 
 whose linked pre-mutation snapshot was pruned — are removed with their snapshots so every
 surviving snapshot keeps an explaining record.
 
-E8-06 folds LIVE-FRAME retention into this SAME explicit sweep: rasterized live frames accumulate
+folds LIVE-FRAME retention into this SAME explicit sweep: rasterized live frames accumulate
 under the root-scoped live artifacts dir and are pruned by age (`live_frame_keep_days`) and a total
 byte budget (`live_frame_max_bytes`, newest kept). This is deliberately part of the explicit pass —
 NEVER a side effect of a live mutating tool — per project policy.
@@ -45,7 +45,7 @@ _logger = get_logger("retention")
 
 
 class LivePruneResult(BaseModel):
-    """Outcome of pruning loop/live frames under one root's live artifacts dir (E8-06)."""
+    """Outcome of pruning loop/live frames under one root's live artifacts dir."""
 
     pruned_frames: int = 0
     freed_bytes: int = 0
@@ -55,7 +55,7 @@ class LivePruneResult(BaseModel):
 class PruneResult(BaseModel):
     """Outcome of pruning one document's snapshots under the §6 retention policy.
 
-    `live_frames` carries the E8-06 loop-frame prune for the document's OWN root (the maintenance
+    `live_frames` carries the loop-frame prune for the document's OWN root (the maintenance
     tool prunes live frames in the same explicit pass; null when invoked path-only). It is purely
     additive — it never affects which snapshots or records are retained."""
 
@@ -261,7 +261,7 @@ def prune_document(
 ) -> PruneResult:
     """Prune one registered document's snapshots, resolving its root via the registry.
 
-    Also prunes the document root's loop/live frames in the SAME explicit pass (E8-06), reported on
+    Also prunes the document root's loop/live frames in the SAME explicit pass, reported on
     the result's `live_frames`. Raises `KeyError` if `doc_id` is unknown (propagated from registry).
     """
     reg = registry if registry is not None else get_registry()
@@ -272,7 +272,7 @@ def prune_document(
     return result
 
 
-#: Glob for the rasterized loop/perceive frames `render_live_view` mints (E8-06). Only these are
+#: Glob for the rasterized loop/perceive frames `render_live_view` mints. Only these are
 #: pruned by live-frame retention; other live artifacts (diff overlays, selection exports) are left
 #: alone, and any frame still referenced by a Live Operation Record is excluded so a record's
 #: before/after preview is never orphaned by the sweep.
@@ -280,7 +280,7 @@ _LIVE_FRAME_GLOB = "live-view-*.png"
 
 
 def _referenced_live_frames(root: Path) -> set[str]:
-    """Basenames of live frames referenced by any Live Operation Record under `root` (E8-06).
+    """Basenames of live frames referenced by any Live Operation Record under `root`.
 
     Reads each `op_*.json` record and collects the basenames of its before/after `previews` and
     `diff_artifacts` paths so live-frame pruning never deletes a frame an existing record points at.
@@ -308,7 +308,7 @@ def prune_live_frames_at(
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> LivePruneResult:
-    """Prune loop/live frames under one root's live artifacts dir (E8-06; explicit only).
+    """Prune loop/live frames under one root's live artifacts dir (explicit only).
 
     Deletes `live-view-*.png` frames older than `live_frame_keep_days`, then trims the newest-kept
     survivors to fit `live_frame_max_bytes` (dropping oldest first). Frames still referenced by a
@@ -403,7 +403,7 @@ def sweep_all_roots(settings: Settings | None = None, now: datetime | None = Non
                     results.append(prune_snapshots_at(root, child.name, s, now=stamp))
                 except Exception:  # pragma: no cover - one bad doc never aborts the sweep
                     _logger.exception("snapshot prune failed for a document")
-        # E8-06: loop/live frames fold into the SAME explicit sweep (never a mutating-tool side
+        #: loop/live frames fold into the SAME explicit sweep (never a mutating-tool side
         # effect). A live-frame prune failure is logged and skipped, never aborting the sweep.
         try:
             live_results.append(prune_live_frames_at(root, s, now=stamp))

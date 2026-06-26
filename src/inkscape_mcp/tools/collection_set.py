@@ -1,4 +1,4 @@
-"""Shared scaffolding for the E16-05 ``*_set`` collection tools.
+"""Shared scaffolding for the ``*_set`` collection tools.
 
 The set tools (`export_set`, `optimize_set`, `quality_report_set`) each COMPOSE their existing
 single-doc engine over a SET of documents and add the SAME three things on top: per-doc results, an

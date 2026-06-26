@@ -1,4 +1,4 @@
-"""Drift-guard tests for the central MCP `ToolAnnotations` map (E17-01).
+"""Drift-guard tests for the central MCP `ToolAnnotations` map.
 
 Every registered tool must expose a correct, non-default `ToolAnnotations` set derived from ONE
 central map keyed off its parsed risk class:
@@ -32,7 +32,7 @@ def _tools() -> list:
 
 
 def test_every_tool_has_non_default_annotations() -> None:
-    """No registered tool may be left with `annotations is None` / no title (E17-01)."""
+    """No registered tool may be left with `annotations is None` / no title."""
     tools = _tools()
     assert tools, "expected a non-empty tool surface"
     for tool in tools:

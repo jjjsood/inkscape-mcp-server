@@ -1,4 +1,4 @@
-"""`core` tool-disclosure profile drift-guard (E18-03).
+"""`core` tool-disclosure profile drift-guard.
 
 The opt-in `INKSCAPE_MCP_TOOL_PROFILE=core` profile NARROWS `tools/list` to a curated essential set
 to cut the default per-turn model-context cost. This guard asserts the security + behaviour

@@ -1,4 +1,4 @@
-"""E12-03/E12-04: render/export + path/chain routing through the warm engine, with fallback.
+"""render/export + path/chain routing through the warm engine, with fallback.
 
 Two layers:
 - Fake-shell / monkeypatched unit tests (run everywhere): prove `engine_mode=shell` routes through
@@ -166,7 +166,7 @@ def test_byte_equivalent_whole_doc_png_svg(doc_id: str) -> None:
             pc = render_cli.export_document(doc_id, fmt, settings=per_call)
             reset_engine_manager()
             sh = render_cli.export_document(doc_id, fmt, settings=shell)
-            # E11-01: artifact_path is workspace-ROOT-relative now.
+            #: artifact_path is workspace-ROOT-relative now.
             pc_path = Path(get_registry().get(doc_id).root) / pc.artifact_path
             sh_path = Path(get_registry().get(doc_id).root) / sh.artifact_path
             assert _sha(pc_path) == _sha(sh_path), f"{fmt} differs between modes"

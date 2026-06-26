@@ -1,6 +1,6 @@
-"""Direct-DOM editing primitives (E2, ADR-005).
+"""Direct-DOM editing primitives (ADR-005).
 
-Pure lxml helpers shared by the E2 style / text / transform engines. They parse the WORKING
+Pure lxml helpers shared by the style / text / transform engines. They parse the WORKING
 COPY through the normative safe parser, resolve targets by id, edit in memory, and serialize
 back to the working copy only — the original source file is NEVER touched here.
 
@@ -213,7 +213,7 @@ def set_style_property(
     any same-named presentation attribute is dropped so the two cannot diverge. `prop` and
     `value` are assumed already validated by the caller.
 
-    No-op hygiene (E13-01): if the element's EFFECTIVE current value of `prop` — the inline-style
+    No-op hygiene: if the element's EFFECTIVE current value of `prop` — the inline-style
     declaration if present, else the same-named presentation attribute — already equals `value`,
     NOTHING is written and `False` is returned. Equality is compared through `key` when given
     (e.g. :func:`color_key`, so `fill="#3366CC"` matches a requested `#3366cc`). Without this

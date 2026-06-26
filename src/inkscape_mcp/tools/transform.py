@@ -1,4 +1,4 @@
-"""Transform tools (E2-03): direct-DOM, reversible, medium risk.
+"""Transform tools: direct-DOM, reversible, medium risk.
 
 Small typed tools (ADR-002, no portmanteau) — ``move_object``, ``scale_object``,
 ``rotate_object``, ``resize_canvas``, ``normalize_viewbox``, ``fit_to_content``, ``tile`` — that
@@ -206,7 +206,7 @@ def resize_canvas(
     Key params: `width`/`height` are validated CSS lengths; child geometry is not altered. By
     default an existing `viewBox` is preserved (synthesized only when absent). `adjust_viewbox=True`
     RETARGETS the `viewBox` to `"0 0 W H"` so it tracks the new canvas (opt-in; changes the
-    coordinate system). BLEED (opt-in, E16-10d): `bleed` > 0 ALSO grows the viewBox outward by that
+    coordinate system). BLEED (opt-in): `bleed` > 0 ALSO grows the viewBox outward by that
     many user units on every side and paints the new border strip with `bleed_color` (validated
     colour, default white) via one background `<rect>` behind all content — a print-bleed resize in
     ONE call instead of a second `scale_object`/background step. `bleed` needs a valid existing or

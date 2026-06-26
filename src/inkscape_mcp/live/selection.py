@@ -1,6 +1,6 @@
-"""Per-host backend probing, ranking, and selection (E3-01).
+"""Per-host backend probing, ranking, and selection.
 
-The registration seam that lets E3-02 (extension-socket) and E3-03 (DBus) plug in without the
+The registration seam that lets (extension-socket) and (DBus) plug in without the
 tool layer knowing either backend. ``probe_transports`` runs every registered backend's per-host
 probe — returning the FULL set of available transports rather than one assumed by OS — and
 ``select_transport`` ranks the available ones (filtered to those that support the required
@@ -23,7 +23,7 @@ from inkscape_mcp.live.transport import LiveTransport, TransportProbe
 #: Registered backend classes (the plug-in seam). Order is irrelevant — ranking decides.
 _BACKENDS: tuple[type[LiveTransport], ...] = (ExtensionSocketTransport, DBusTransport)
 
-#: The semantic read commands the E3-05 live read tools require. A transport must support all of
+#: The semantic read commands the live read tools require. A transport must support all of
 #: these to be eligible for a read-mode connection; this is what keeps DBus (action-only) from
 #: being selected for reads while still being reported as an available transport.
 READ_REQUIRED: frozenset[LiveCommand] = frozenset(
@@ -34,7 +34,7 @@ READ_REQUIRED: frozenset[LiveCommand] = frozenset(
     }
 )
 
-#: Minimum command surface for a no-freeze (E3-07) connection: only the export-based active-document
+#: Minimum command surface for a no-freeze connection: only the export-based active-document
 #: read, which the Linux DBus path can serve without freezing the GUI. A no-freeze connect also
 #: filters to transports whose `no_freeze` flag is set, so it selects the DBus action path (Linux)
 #: rather than the modal socket bridge; selection-id reads are unavailable in this mode (honest
@@ -76,7 +76,7 @@ def best_available(
 
     `required` defaults to the read surface (`READ_REQUIRED`); pass an empty set to pick the best
     available transport regardless of read capability (e.g. liveness only). When `no_freeze` is set,
-    only transports that drive the GUI without freezing it (E3-07 — the Linux DBus path) are
+    only transports that drive the GUI without freezing it (the Linux DBus path) are
     considered.
     """
     req = READ_REQUIRED if required is None else required

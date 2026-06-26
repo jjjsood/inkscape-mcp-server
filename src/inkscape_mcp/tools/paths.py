@@ -1,9 +1,9 @@
-"""Path geometry tools (E6-01): discrete, typed, HIGH-risk, reversible, dry-run-capable.
+"""Path geometry tools: discrete, typed, HIGH-risk, reversible, dry-run-capable.
 
 Seven small typed tools (ADR-002, no portmanteau) — ``simplify_path``, ``boolean_union``,
 ``boolean_difference``, ``combine_paths``, ``break_apart``, ``stroke_to_path``, ``cleanup_paths``
 — that each run ONE destructive path geometry op through the Inkscape ENGINE (ADR-005; geometry is
-real computation, not a DOM tweak) and route the result through the shared E2-04 mutating pipeline
+real computation, not a DOM tweak) and route the result through the shared mutating pipeline
 (:func:`inkscape_mcp.edit.pipeline.apply_edit`), so each change is uniformly snapshotted, recorded
 as an Operation Record, and linked to a before/after preview (ADR-004) — and therefore reversible.
 
@@ -43,12 +43,12 @@ _logger = get_logger("tools.paths")
 
 #: The stable engine message (from `inkscape_mcp.edit.paths`) signalling the Inkscape engine could
 #: not be launched on this runtime (capability ABSENT). Matched at the tool layer so the client-
-#: facing error can NAME the discovery tool without the engine importing the tool surface (E14-08a).
+#: facing error can NAME the discovery tool without the engine importing the tool surface.
 _ENGINE_UNAVAILABLE = "inkscape engine unavailable"
 
 
 def _path_op_error_message(exc: PathOpError) -> str:
-    """Stable, host-path-free message for a `PathOpError` (E14-08a).
+    """Stable, host-path-free message for a `PathOpError`.
 
     When the engine is ABSENT (no Inkscape binary on this runtime) the message names the discovery
     tool so the agent can inspect support rather than retry blindly; every other `PathOpError`
@@ -73,7 +73,7 @@ class PathOpResult(BaseModel):
 
     `result_id` is the id of the surviving merged element after a MERGE op (`boolean_union`,
     `boolean_difference`, `combine_paths`): the BOTTOM-most target — the one first in document
-    order — per the standardized id-survival rule (E10-07 / E11-07). It is immediately usable as an
+    order — per the standardized id-survival rule. It is immediately usable as an
     input to a chained boolean with no re-inspect. It is `None` for a dry run, for non-merge ops
     (e.g. `simplify_path`, `break_apart`, `stroke_to_path`), and if the engine produced no
     recognizable surviving target.
@@ -425,7 +425,7 @@ def cleanup_paths(
 
     Key params: `object_ids` are the targets. `dry_run=True` (DEFAULT) reports which ids would be
     simplified WITHOUT invoking the engine; a real run needs a non-empty `approval_token`. OVERLAP,
-    DELIBERATE (E10-07 P10): runs the SAME LOSSY `path-simplify` as `simplify_path` (removes nodes
+    DELIBERATE (P10): runs the SAME LOSSY `path-simplify` as `simplify_path` (removes nodes
     within a tolerance, can rewrite straight segments as curves). Inkscape 1.4.3 exposes no
     distinct, dependable non-destructive path-cleanup Action over `--actions`
     (`org.inkscape.path.to-absolute`

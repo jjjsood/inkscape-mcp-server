@@ -1,6 +1,6 @@
-"""Web-optimization edit engine (E5-04, ADR-005 direct DOM).
+"""Web-optimization edit engine (ADR-005 direct DOM).
 
-Pure ``mutate(tree) -> str`` builder for the one E5 tool that genuinely mutates the document,
+Pure ``mutate(tree) -> str`` builder for the one tool that genuinely mutates the document,
 ``svg_web_optimize``. It edits the parsed working tree IN MEMORY and returns a short human summary,
 so it plugs straight into :func:`inkscape_mcp.edit.pipeline.apply_edit` (snapshot + Operation
 Record + before/after preview — reversible, medium risk). No MCP decorators here; the
@@ -14,7 +14,7 @@ Three cleanups, applied in order over the WORKING COPY only (the original is nev
 2. **Drop dead structure** — remove unreferenced ``<defs>`` children (dead templates), then every
    ``id`` attribute nothing references, then empty ``<g>``/``<defs>`` containers. The set of
    referenced ids is computed FIRST (``#frag`` / ``url(#frag)`` / ``href="#frag"`` — mirroring the
-   E1-08 validate + E2-02 reference-rewrite discipline) so a referenced id is never stripped and no
+ validate + reference-rewrite discipline) so a referenced id is never stripped and no
    dangling reference is ever created.
 3. **Reduce coordinate precision** — round the numbers inside geometry/coordinate attributes (path
    ``d``, ``points``, transforms, ``x``/``y``/``width``/...) to a bounded number of decimals. Only
@@ -28,7 +28,7 @@ client input that reaches it is the bounded integer ``precision`` (validated to 
 never builds an argv, opens a path, or reaches the network.
 
 The read-only :func:`analyze_optimizations` runs the SAME detection logic without mutating, so
-``quality_report`` (E5-05) can surface exactly the opportunities this tool would remove.
+``quality_report`` can surface exactly the opportunities this tool would remove.
 """
 
 from __future__ import annotations
@@ -121,7 +121,7 @@ DEFAULT_PRECISION = 2
 
 
 #: Stable per-cleanup codes, IDENTICAL to ``quality_report.opportunities`` keys so the optimizer's
-#: ``removed`` map cross-joins with a quality report (E11-08). Order = the order cleanups run.
+#: ``removed`` map cross-joins with a quality report. Order = the order cleanups run.
 OPTIMIZE_CODES = (
     "editor_metadata",
     "unused_defs",
@@ -134,7 +134,7 @@ OPTIMIZE_CODES = (
 class OptimizationCounts(BaseModel):
     """Read-only tally of what :func:`optimize_web_mutate` would remove/rewrite.
 
-    Mirrors the mutator's cleanup targets one-for-one (E5-04 ⇄ E5-05 alignment): ``editor_metadata``
+    Mirrors the mutator's cleanup targets one-for-one (⇄ alignment): ``editor_metadata``
     counts editor-only elements + namespaced attributes + comments; ``unused_defs`` the unreferenced
     ``<defs>`` children; ``unreferenced_ids`` the ``id`` attributes nothing references;
     ``empty_groups`` the empty ``<g>``/``<defs>`` containers; ``reducible_coords`` the
@@ -161,7 +161,7 @@ class OptimizationCounts(BaseModel):
         """``{code: count}`` for every cleanup with a non-zero count, keyed like OPTIMIZE_CODES.
 
         Codes are IDENTICAL to ``quality_report.opportunities`` keys, so an agent can cross-join the
-        optimizer's actual removals against a prior quality report without parsing prose (E11-08).
+        optimizer's actual removals against a prior quality report without parsing prose.
         """
         return {
             "editor_metadata": self.editor_metadata,
@@ -173,7 +173,7 @@ class OptimizationCounts(BaseModel):
 
 
 class WebOptimizeDeltas(BaseModel):
-    """Machine-diffable result of one :func:`optimize_web_mutate` run (E11-08).
+    """Machine-diffable result of one :func:`optimize_web_mutate` run.
 
     ``bytes_before`` / ``bytes_after`` are the serialized working-copy sizes around the mutation
     (so ``bytes_before - bytes_after`` is the saving, no on-disk ``stat`` needed). ``removed`` maps
@@ -373,12 +373,12 @@ def analyze_optimizations(
 ) -> OptimizationCounts:
     """Count (without mutating) what :func:`optimize_web_mutate` would remove/rewrite.
 
-    Read-only: used by ``quality_report`` (E5-05) so the optimization opportunities it reports are
+    Read-only: used by ``quality_report`` so the optimization opportunities it reports are
     exactly what ``svg_web_optimize`` strips. ``precision`` is clamped into range rather than
     raising (a report should never fail on a stray value). ``keep_ids`` mirrors the optimizer's
     allowlist: listed ids are treated as live, so a kept id is NOT counted as an unreferenced-id /
     unused-defs / empty-group opportunity (keeps the count cross-joinable with an optimize run that
-    used the same allowlist — E11-08). ``quality_report`` calls without it, counting the default.
+    used the same allowlist). ``quality_report`` calls without it, counting the default.
     """
     precision = max(PRECISION_MIN, min(PRECISION_MAX, precision))
     referenced = collect_referenced_ids(root) | {kid for kid in (keep_ids or []) if kid}
@@ -459,13 +459,13 @@ def optimize_web_mutate(
 
     ``keep_ids`` is an allowlist of ids that are NEVER stripped as "unreferenced" — a deliberately
     set human/a11y id (e.g. from ``rename_object``) survives the optimize pass even when nothing in
-    the document references it (E10-07 O3 / E11-04). Listed ids are added to the live-reference set,
+    the document references it (O3). Listed ids are added to the live-reference set,
     so the elements/defs/groups carrying them are preserved too. Unknown ids in the list are
     harmless no-ops.
 
     When ``deltas_holder`` is supplied, the closure writes a single :class:`WebOptimizeDeltas`
     (``bytes_before``/``bytes_after`` around the mutation + a ``{code: count}`` ``removed`` map
-    keyed like ``quality_report.opportunities``) into it for the tool layer to return (E11-08). The
+    keyed like ``quality_report.opportunities``) into it for the tool layer to return. The
     human summary is still returned for the Operation Record.
     """
     precision = _check_precision(precision)
@@ -479,7 +479,7 @@ def optimize_web_mutate(
         # Reported opportunity counts are taken on the PRE-mutation tree via the SAME detection that
         # `quality_report` uses (`analyze_optimizations`), with the keep_ids allowlist folded in.
         # This makes the returned `removed` map cross-join exactly with a prior `quality_report`
-        # (E11-08) — independent-per-category, not the order-dependent removal tallies (where an
+        # — independent-per-category, not the order-dependent removal tallies (where an
         # earlier step would otherwise consume what a later step counts).
         reported = (
             analyze_optimizations(root, precision, keep_ids=keep_list)

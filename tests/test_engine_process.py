@@ -1,4 +1,4 @@
-"""E12-01/E12-02: `EngineProcess` framing + lifecycle, exercised against a fake shell (no Inkscape).
+"""`EngineProcess` framing + lifecycle, exercised against a fake shell (no Inkscape).
 
 The fake (``fake_inkscape_shell.py``) reproduces the real shell's framing, so these tests drive the
 PRODUCTION framing / threading / timeout / crash / shutdown code without a real Inkscape binary.

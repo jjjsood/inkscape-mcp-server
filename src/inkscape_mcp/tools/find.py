@@ -1,4 +1,4 @@
-"""Object-discovery tool (E14-07): ``find_objects``.
+"""Object-discovery tool: ``find_objects``.
 
 Thin MCP layer over the read-only `find_objects` engine in :mod:`inkscape_mcp.document.inspect`.
 Its purpose is to make the id-taking edit tools (`set_fill`, `move_object`, `replace_text`, …)

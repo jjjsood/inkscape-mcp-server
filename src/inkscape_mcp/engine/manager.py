@@ -1,4 +1,4 @@
-"""Warm-shell worker pool (E12-01 / ADR-007).
+"""Warm-shell worker pool (ADR-007).
 
 `EngineManager` maps a document's working-copy path to a long-lived :class:`EngineProcess` that has
 that document ``file-open``-ed, so engine ops run against a warm, stateful worker. It owns its
@@ -9,13 +9,13 @@ lifecycle:
 - **Freshness.** Before handing a worker to a caller it re-``file-open``s the working copy iff the
   on-disk file changed (mtime/size) since the worker last opened it, OR the caller forces a reopen
   (mutating ops always do — they reload disk so the warm worker's in-memory document can never
-  diverge from the on-disk working copy; E12-04 "reconcile in-process ↔ disk").
+  diverge from the on-disk working copy; "reconcile in-process ↔ disk").
 - **Bounded pool + LRU eviction.** At most ``engine_max_processes`` workers; the least-recently-used
   is shut down to make room. Workers idle beyond ``engine_idle_timeout_s`` are reaped on access.
 - **Crash → restart.** A dead worker is replaced and the document re-opened transparently.
 
 The manager raises only :class:`EngineError` subclasses; callers wrap every engine op so any fault
-falls back to the per-call CLI (correctness can never regress — E12-03/E12-04).
+falls back to the per-call CLI (correctness can never regress).
 
 SECURITY (sec.12): the only path reaching ``file-open`` is the caller-supplied working-copy path,
 which is the registry's sandbox-validated ``working_path`` (never raw client input). The worker argv

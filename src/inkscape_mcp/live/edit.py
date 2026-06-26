@@ -1,13 +1,13 @@
-"""Live semantic edit engine (E4-01, ADR-003/004/005).
+"""Live semantic edit engine (ADR-003/004/005).
 
-The kernel behind the live WRITE tools. It reuses the E2 safe-edit *semantics* (the same colour /
+The kernel behind the live WRITE tools. It reuses the safe-edit *semantics* (the same colour /
 length / number / text validators) to build typed, injection-safe parameters, then routes the
 change through the connected `LiveTransport` so the same tool works on whichever backend the host
 has. There is NO arbitrary code path and NO raw Action string — a mutation is only ever a
 validated style-property map, a composed SVG ``transform``, a safe-parsed SVG fragment, or a text
 string (ADR-003).
 
-Governance (E4-02) is woven in by :func:`run_live_mutation`: it gates the op behind the risk /
+Governance is woven in by :func:`run_live_mutation`: it gates the op behind the risk /
 approval policy BEFORE touching the instance, opens a Live Operation Record, captures a
 before/after canvas render, and marks the record applied/discarded — so every live mutation is
 observable, undo-friendly where the backend allows, and syncable to a workspace snapshot.
@@ -62,7 +62,7 @@ _logger = get_logger("live.edit")
 #: the document input cap.
 _MAX_FRAGMENT_BYTES = 1 * 1024 * 1024
 
-#: Max text length for `live_set_selected_text` (mirrors the E2 `replace_text` bound).
+#: Max text length for `live_set_selected_text` (mirrors the `replace_text` bound).
 _MAX_TEXT_LEN = 100_000
 
 #: Control chars forbidden in live text content (C0/C1 except tab / newline / carriage return).
@@ -100,11 +100,11 @@ class LiveExportResult(BaseModel):
     object_ids: list[str] = Field(default_factory=list)
 
 
-# --- Validated parameter builders (reuse E2 semantics) ----------------------
+# --- Validated parameter builders (reuse semantics) ----------------------
 
 
 def _check_opacity(value: float) -> str:
-    """Validate an opacity in [0, 1] and format it compactly (reuses the E2 bound)."""
+    """Validate an opacity in [0, 1] and format it compactly (reuses the bound)."""
     try:
         num = float(value)
     except (TypeError, ValueError) as exc:
@@ -121,7 +121,7 @@ def build_style(
     stroke_width: str | None = None,
     opacity: float | None = None,
 ) -> dict[str, str]:
-    """Build a validated CSS style-property map from typed inputs (reuses the E2 validators).
+    """Build a validated CSS style-property map from typed inputs (reuses the validators).
 
     Each value is normalized/canonicalized exactly as the headless style tools do, so a value
     carrying CSS-injection punctuation is rejected here, before it crosses the transport boundary.
@@ -147,7 +147,7 @@ def build_transform(
 ) -> str | None:
     """Compose a validated SVG `transform` string from simple move/scale/rotate inputs.
 
-    Mirrors the E2 transform engine's safety: every number goes through `fmt_num` (finite-checked),
+    Mirrors the transform engine's safety: every number goes through `fmt_num` (finite-checked),
     `scale` must be finite and positive, and a translate needs BOTH `dx` and `dy`. Order is
     ``translate rotate scale``. Returns `None` when no transform part was requested.
     """
@@ -184,7 +184,7 @@ def validate_svg_fragment(fragment: str) -> str:
 
 
 def validate_text(text: str) -> str:
-    """Validate live text content (length bound + forbidden control chars). Reuses E2 guards."""
+    """Validate live text content (length bound + forbidden control chars). Reuses guards."""
     if len(text) > _MAX_TEXT_LEN:
         raise EditError(f"text too long: {len(text)} > {_MAX_TEXT_LEN} characters")
     if _FORBIDDEN_CTRL_RE.search(text):
@@ -192,7 +192,7 @@ def validate_text(text: str) -> str:
     return text
 
 
-# --- View-only parameter validators (E8) ------------------------------------
+# --- View-only parameter validators ------------------------------------
 
 #: Viewport modes the agent may request — a fixed semantic set (no raw Action/code passthrough).
 VIEWPORT_MODES = frozenset({"zoom", "pan", "fit_selection", "fit_page"})
@@ -205,7 +205,7 @@ _MAX_REGION_EXTENT = 1e7
 _MAX_RENDER_SCALE = 64.0
 _MIN_RENDER_SCALE = 1e-3
 
-#: Default downscale for the loop's FAST perceive frame (E8-06). A `fast` render with no explicit
+#: Default downscale for the loop's FAST perceive frame. A `fast` render with no explicit
 #: scale uses this — a half-resolution raster the agent can look at cheaply during rapid iteration;
 #: full-res stays available on demand (omit `fast`, or pass an explicit `scale`).
 FAST_RENDER_SCALE = 0.5
@@ -266,7 +266,7 @@ def validate_viewport(
 
 
 def validate_region(x: float, y: float, width: float, height: float) -> RenderRegion:
-    """Validate a render region (E8): finite/bounded origin + positive, bounded extent.
+    """Validate a render region: finite/bounded origin + positive, bounded extent.
 
     Raises a stable `EditError` on any non-finite, out-of-bounds, or non-positive value before the
     region crosses the transport. View-only — produces no mutation.
@@ -281,7 +281,7 @@ def validate_region(x: float, y: float, width: float, height: float) -> RenderRe
 
 
 def validate_render_scale(scale: float) -> float:
-    """Validate a render scale factor (E8): finite, positive, and within bounds."""
+    """Validate a render scale factor: finite, positive, and within bounds."""
     num = _finite_bounded(scale, _MAX_RENDER_SCALE, "scale")
     if not (_MIN_RENDER_SCALE <= num <= _MAX_RENDER_SCALE):
         raise EditError("scale is out of bounds")
@@ -319,7 +319,7 @@ def run_live_mutation(
     manager: LiveSessionManager | None = None,
     settings: Settings | None = None,
 ) -> LiveEditResult:
-    """Run one semantic live mutation as a governed, recorded, reversible step (E4-01 + E4-02).
+    """Run one semantic live mutation as a governed, recorded, reversible step (+).
 
     Order (fail-safe): require a connected transport → refuse if it cannot serve the command →
     capture document + selection context → open a Live Operation Record (this enforces the risk /
@@ -441,7 +441,7 @@ def set_live_viewport(
     manager: LiveSessionManager | None = None,
     settings: Settings | None = None,
 ) -> LiveViewportResult:
-    """Drive the live canvas viewport over the connected transport (E8, low risk).
+    """Drive the live canvas viewport over the connected transport (low risk).
 
     VIEW-ONLY: like `render_live_view`/`export_live_selection`, it changes only how the canvas is
     displayed — it touches no workspace document and produces NO Operation Record (it never routes

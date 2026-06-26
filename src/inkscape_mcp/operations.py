@@ -1,10 +1,10 @@
-"""Operation Record scaffold (E1-09 / ADR-004).
+"""Operation Record scaffold (ADR-004).
 
 Every mutating tool call creates an Operation Record linking params → policy decision →
 invocation → snapshot → artifacts → logs, persisted as append-only JSON under the document's
-`operations/` dir and referenceable by id. `snapshot_id` links to the E1-07 snapshot taken
+`operations/` dir and referenceable by id. `snapshot_id` links to the snapshot taken
 before the mutation; `previews` links the before/after PNG preview pair produced for the change
-(E2-04, keyed `"before"` / `"after"`, workspace-relative paths). Records move proposed → applied
+(keyed `"before"` / `"after"`, workspace-relative paths). Records move proposed → applied
 (or discarded / reverted).
 """
 

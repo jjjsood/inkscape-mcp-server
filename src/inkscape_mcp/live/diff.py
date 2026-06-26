@@ -1,11 +1,11 @@
-"""Focused visual before/after diff (E8-04, ADR-006, low risk).
+"""Focused visual before/after diff (ADR-006, low risk).
 
 The decisive "better than inkmcp" feedback step: instead of dumping two raw whole-window
 screenshots, ``live_diff_view`` resolves the before/after frames a live mutation ALREADY captured
-(E4-02 ``run_live_mutation`` persists ``preview_before`` / ``preview_after`` on each
+(``run_live_mutation`` persists ``preview_before`` / ``preview_after`` on each
 ``LiveOperationRecord``), computes the CHANGED-REGION bbox by pixel-diffing the two frames
 (``PIL.ImageChops.difference(...).getbbox()``), and renders ONE annotated overlay that highlights
-the changed bbox, the selection outline (scene bboxes from E8-02), and the highlighted ids.
+the changed bbox, the selection outline (scene bboxes from), and the highlighted ids.
 
 ARTIFACT-ONLY / LOW RISK: this never mutates the live document, never opens or routes through
 ``run_live_mutation`` / ``apply_edit``, and needs no approval — it reads two PNGs, diffs them, and
@@ -53,7 +53,7 @@ class LiveDiffError(LiveError):
 class LiveDiffResult(BaseModel):
     """Outcome of `live_diff_view`: the annotated overlay + the computed changed-region bbox.
 
-    `operation_id` links the diff back to its Live Operation Record (E4-02). `artifact_path` is the
+    `operation_id` links the diff back to its Live Operation Record. `artifact_path` is the
     WORKSPACE-RELATIVE annotated overlay PNG. `changed_bbox` is the pixel-space bounding box of the
     differing region (`null` when the before/after frames are identical — no change to highlight).
     """
@@ -170,9 +170,9 @@ def diff_live_operation(
     canvas: BBox | None = None,
     settings: Settings | None = None,
 ) -> LiveDiffResult:
-    """Produce a focused, annotated before/after visual diff for one Live Operation Record (E8-04).
+    """Produce a focused, annotated before/after visual diff for one Live Operation Record.
 
-    Resolves the before/after frames the mutation ALREADY captured (E4-02 `preview_before` /
+    Resolves the before/after frames the mutation ALREADY captured (`preview_before` /
     `preview_after` on the record — reuse, not re-derivation), pixel-diffs them to a changed-region
     bbox, and writes ONE annotated overlay (changed bbox + selection outlines) under the live
     artifacts dir with a server-minted, operation-id-based name. Returns a workspace-relative path,

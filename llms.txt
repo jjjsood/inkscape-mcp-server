@@ -115,7 +115,7 @@ Operator-tunable limits / gates (all optional, env-overridable):
 - export_object [risk: low] — Export a single object (by id) to PNG, PDF, or SVG.
 - export_print_profile [risk: low] — Export a print-oriented PDF (vector, page area) of the whole document.
 - export_set [risk: low] — Batch-export a SET of documents in one call: per-doc results + aggregate + verdict.
-- export_web_profile [risk: low] — Export a web-oriented asset set: a responsive PNG set plus one plain SVG (E11-11).
+- export_web_profile [risk: low] — Export a web-oriented asset set: a responsive PNG set plus one plain SVG.
 - list_frames [risk: low] — List the frames of a `capture_frame` series, ordered by index.
 - render_preview [risk: low] — Render a PNG preview of the whole document into the artifacts dir.
 
@@ -128,22 +128,22 @@ Operator-tunable limits / gates (all optional, env-overridable):
 - live_apply_to_selection [risk: high] — Apply a validated style and/or simple transform to the current live selection.
 - live_arm_socket [risk: restricted] — Auto-arm the extension-socket helper so a programmatic launch gets the FULL live surface.
 - live_connect [risk: medium] — Connect to a running Inkscape over the best-ranked available transport (enables live).
-- live_diff_view [risk: low] — Produce a FOCUSED, annotated before/after visual diff of a live operation (E8-04).
+- live_diff_view [risk: low] — Produce a FOCUSED, annotated before/after visual diff of a live operation.
 - live_disconnect [risk: low] — Disconnect the current live session (the X1 disable switch). Idempotent.
 - live_export_selection [risk: low] — Export just the current live selection to a PNG under the live artifacts dir.
 - live_get_active_document [risk: low] — Identify the document open in the connected live instance (read-only).
-- live_get_scene [risk: low] — Capture one live frame as a PNG PLUS a structured, machine-readable `LiveScene` (E8-02).
+- live_get_scene [risk: low] — Capture one live frame as a PNG PLUS a structured, machine-readable `LiveScene`.
 - live_get_selection [risk: low] — Read the current selection in the live instance as object ids (read-only).
 - live_insert_svg [risk: high] — Insert an SVG fragment into the running document.
 - live_inspect_selection [risk: low] — Inspect the selected objects in the live instance (semantic, by id; read-only).
 - live_install_helper [risk: restricted] — Install the shipped extension-socket helper into the Inkscape user extensions dir.
 - live_render_view [risk: low] — Rasterize the live canvas to a PNG in the live artifacts dir (visual feedback).
-- live_session_step [risk: high] — Run ONE perceive→decide→act→observe iteration of the live-view loop (E8-05).
+- live_session_step [risk: high] — Run ONE perceive→decide→act→observe iteration of the live-view loop.
 - live_set_selected_text [risk: high] — Replace the selected text object's content in the running document.
 - live_set_viewport [risk: low] — Control the live canvas viewport: zoom / pan / fit-to-selection / fit-to-page.
 - live_status [risk: low] — Report live-session state: enabled, connected, active transport, available transports.
 - live_sync_to_workspace [risk: medium] — Save the live document's current state into the workspace as a NEW tracked document.
-- live_wait_for_change [risk: low] — Block until the live state changes, or the bounded timeout elapses (E8-03; read-only).
+- live_wait_for_change [risk: low] — Block until the live state changes, or the bounded timeout elapses (read-only).
 
 ### Snapshots
 - create_snapshot [risk: low] — Snapshot the current working copy of a document and index it.

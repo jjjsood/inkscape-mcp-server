@@ -1,6 +1,6 @@
-"""Gated raw-action tool tests (E6-03 / ADR-003 / ADR-002 / ADR-004 / sec.12).
+"""Gated raw-action tool tests (ADR-003 / ADR-002 / ADR-004 / sec.12).
 
-The `run_raw_action` escape hatch is a thin façade over the E6-02 chain machinery (one typed Action
+The `run_raw_action` escape hatch is a thin façade over the chain machinery (one typed Action
 → a one-step chain) plus an advanced-mode gate. Hermetic: the Inkscape touch points are
 monkeypatched — `render_preview` in the pipeline (before/after frames), `run_inkscape` in the chain
 engine (the Action run), and `get_or_build_action_map` so validation consults a synthetic capability
@@ -58,7 +58,7 @@ PNG_BYTES = b"\x89PNG\r\n\x1a\n-fake"
 TOKEN = "approved-by-operator"
 
 #: A synthetic capability map: the allowlisted ops we exercise are present; one allowlisted op is
-#: deliberately ABSENT to test graceful degradation (mirrors the E6-02 chain tests).
+#: deliberately ABSENT to test graceful degradation (mirrors the chain tests).
 _MAP = ActionCapabilityMap(
     inkscape_version="1.4.3",
     inkscape_version_tuple=(1, 4, 3),
@@ -117,7 +117,7 @@ def fake_render(monkeypatch: pytest.MonkeyPatch) -> None:
         preview_dir.mkdir(parents=True, exist_ok=True)
         out = preview_dir / "preview-auto.png"
         out.write_bytes(PNG_BYTES)
-        # E11-01 one-location contract: artifact_path is workspace-ROOT-relative (matches engine).
+        # one-location contract: artifact_path is workspace-ROOT-relative (matches engine).
         rel = out.relative_to(root).as_posix()
         return RenderResult(
             doc_id=doc_id,
@@ -201,7 +201,7 @@ def test_malformed_arg_refused(enabled: tuple[str, Path, Path]) -> None:
 
 
 def test_comma_joined_id_arg_surfaces_hint(enabled: tuple[str, Path, Path]) -> None:
-    # E11-10(e) / S15: a comma-joined multi-id token surfaces the actionable separate-token hint
+    # S15: a comma-joined multi-id token surfaces the actionable separate-token hint
     # through the raw-action façade too (it shares the chain validator).
     doc_id, _root, _ = enabled
     with pytest.raises(ToolError) as exc:

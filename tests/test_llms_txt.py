@@ -1,4 +1,4 @@
-"""Tests for the generated LLM manifest (E15-01): ``llms.txt`` + ``llms-full.txt``.
+"""Tests for the generated LLM manifest: ``llms.txt`` + ``llms-full.txt``.
 
 The two files are GENERATED from the live MCP registry by ``scripts/gen_llms_txt.py`` (not
 hand-maintained). These tests prove the generator covers the WHOLE surface and that the committed

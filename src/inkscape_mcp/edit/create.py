@@ -1,4 +1,4 @@
-"""Direct-DOM element-creation / defs / grouping engines (E14-01, E14-04, ADR-005).
+"""Direct-DOM element-creation / defs / grouping engines (, ADR-005).
 
 Pure ``mutate(tree) -> str`` builders for the authoring surface: one engine per shape primitive
 (``create_rect`` / ``create_circle`` / ``create_ellipse`` / ``create_line`` / ``create_polygon`` /
@@ -189,7 +189,7 @@ def _append(parent: etree._Element, local: str, attrs: dict[str, str]) -> etree.
 def _canon_inline_style(
     fill: str | None, stroke: str | None, stroke_width: str | None
 ) -> tuple[str | None, str | None, str | None]:
-    """Validate optional inline paint EAGERLY (E16-10b), returning canonical ``(fill, stroke, sw)``.
+    """Validate optional inline paint EAGERLY, returning canonical ``(fill, stroke, sw)``.
 
     Mirrors how ``set_fill`` / ``set_stroke`` validate paint: ``fill`` / ``stroke`` go through
     :func:`dom.normalize_paint` (a colour OR a ``url(#id)`` paint-server reference; CSS-injection
@@ -220,7 +220,7 @@ def _apply_inline_style(
         set_style_property(elem, "stroke-width", stroke_width)
 
 
-# --- Shape primitives (E14-01) ----------------------------------------------
+# --- Shape primitives ----------------------------------------------
 
 
 def make_create_rect(
@@ -243,7 +243,7 @@ def make_create_rect(
     optional ``rx`` / ``ry`` are corner radii (≥ 0). The rect is appended to ``parent_id`` (must
     exist) or the document default parent (first layer, else root). Every numeric is finite-checked
     and formatted via :func:`dom.fmt_num` so no garbage token can land in an attribute. Optional
-    ``fill`` / ``stroke`` / ``stroke_width`` paint it in the same call (E16-10b), validated like
+    ``fill`` / ``stroke`` / ``stroke_width`` paint it in the same call, validated like
     ``set_fill`` / ``set_stroke``.
     """
     sx, sy = _num(x, "x"), _num(y, "y")
@@ -494,7 +494,7 @@ def make_create_text(
     return mutate
 
 
-# --- defs / gradients (E14-04) ----------------------------------------------
+# --- defs / gradients ----------------------------------------------
 
 
 def _ensure_defs(root: etree._Element) -> etree._Element:
@@ -659,7 +659,7 @@ def make_add_radial_gradient(
     return mutate
 
 
-# --- grouping / symbols (E14-04) --------------------------------------------
+# --- grouping / symbols --------------------------------------------
 
 
 def make_create_group(

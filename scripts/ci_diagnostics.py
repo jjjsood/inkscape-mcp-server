@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print the runtime capability matrix as JSON (CI diagnostics, E7-02).
+"""Print the runtime capability matrix as JSON (CI diagnostics).
 
 Runs the same `probe_capabilities()` the `diagnose_runtime` MCP tool uses, so a CI failure
 caused by a missing dependency (no Inkscape binary, no fontconfig, no session bus, ...) is

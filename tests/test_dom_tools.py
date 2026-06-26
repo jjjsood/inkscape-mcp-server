@@ -1,4 +1,4 @@
-"""`delete_object` tool tests (E16-08 / ADR-002 / ADR-004 / ADR-005).
+"""`delete_object` tool tests (ADR-002 / ADR-004 / ADR-005).
 
 HIGH-risk, reversible DOM delete. Hermetic: `render_preview` is monkeypatched in the pipeline
 module so no test invokes Inkscape (mirrors `test_transform_tools.py`). Covers: removal + affected
@@ -156,7 +156,7 @@ def test_delete_object_reversible_via_restore_snapshot(doc: tuple[str, Path]) ->
     assert _ids(root, doc_id) == {"keep", "seed1", "seed2"}
 
 
-# --- no-op hygiene (E10-05 / E11-13) ----------------------------------------
+# --- no-op hygiene ----------------------------------------
 
 
 def test_delete_object_no_match_reports_changed_false_no_snapshot(doc: tuple[str, Path]) -> None:

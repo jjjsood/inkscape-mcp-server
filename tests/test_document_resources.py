@@ -1,4 +1,4 @@
-"""Document-resource tests (E1-05): registration, parity with inspect_*, error mapping."""
+"""Document-resource tests: registration, parity with inspect_*, error mapping."""
 
 from __future__ import annotations
 
@@ -139,7 +139,7 @@ def test_seven_templates_registered_on_mcp(doc_id: str) -> None:
     assert _EXPECTED_TEMPLATES <= _template_uris()
 
 
-# --- E10-06 / E11-06 / E11-10c: new read-surface fields + index discoverability ---------------
+# --- /: new read-surface fields + index discoverability ---------------
 
 
 def test_objects_resource_carries_bbox_and_paint(doc_id: str) -> None:
@@ -191,7 +191,7 @@ def test_fonts_resource_carries_available_and_used_by(doc_id: str) -> None:
 
 
 def test_documents_index_is_a_static_resource(doc_id: str) -> None:
-    """E11-10c: the index is a concrete (non-template) resource so ListMcpResourcesTool sees it."""
+    """the index is a concrete (non-template) resource so ListMcpResourcesTool sees it."""
     assert "inkscape://documents" in _static_resource_uris()
 
 

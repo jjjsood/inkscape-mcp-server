@@ -1,4 +1,4 @@
-"""System-tool + runtime-resource registration/agreement tests (E1-03 / E16-06)."""
+"""System-tool + runtime-resource registration/agreement tests."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from inkscape_mcp.tools.system import (
 )
 
 # Register the full surface once so `mcp.list_tools()` reflects every `@mcp.tool` independent of
-# test ordering (E16-01 asserts the authoritative count against the whole registry). Idempotent.
+# test ordering (asserts the authoritative count against the whole registry). Idempotent.
 register_tools()
 
 
@@ -68,7 +68,7 @@ def test_list_capabilities_and_resource_agree() -> None:
 
 
 def test_list_capabilities_reports_authoritative_tool_count() -> None:
-    """E16-01: `tool_count` equals the live registry count, and `tools` is the full surface.
+    """`tool_count` equals the live registry count, and `tools` is the full surface.
 
     The single source of truth is `mcp.list_tools()` — the same accessor `gen_llms_txt.py` reads —
     so an agent reads one unambiguous number instead of deriving it (the 98/87/88/91 disagreement).
@@ -88,7 +88,7 @@ def test_list_capabilities_reports_authoritative_tool_count() -> None:
 
 
 def test_resource_carries_tool_count_field() -> None:
-    """E16-01: the runtime resource mirrors `tool_count` + `tools` and agrees with the tool."""
+    """the runtime resource mirrors `tool_count` + `tools` and agrees with the tool."""
     system_mod.refresh_capabilities()
     resource_caps = Capabilities.model_validate_json(runtime_capabilities())
     assert resource_caps.tool_count == len(_tool_names())
@@ -112,7 +112,7 @@ def test_diagnose_runtime_refreshes_cache() -> None:
         assert refreshed.actions == first.actions
 
 
-# --- E16-06: stat_artifact / stat_artifacts ---------------------------------
+# ---: stat_artifact / stat_artifacts ---------------------------------
 
 
 @pytest.fixture

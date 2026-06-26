@@ -1,4 +1,4 @@
-"""Compose tools (E14-03): `set_document_svg` / `insert_svg_fragment`.
+"""Compose tools: `set_document_svg` / `insert_svg_fragment`.
 
 Thin MCP layer over the direct-DOM compose engine (:mod:`inkscape_mcp.edit.compose`). These two
 tools ADOPT agent-composed SVG into a tracked WORKING COPY — `set_document_svg` replaces the whole
@@ -58,7 +58,7 @@ _logger = get_logger("tools.compose")
 
 
 class ComposeResult(EditResult):
-    """An :class:`EditResult` extended with the post-adopt `validate_document` findings (E14-03).
+    """An :class:`EditResult` extended with the post-adopt `validate_document` findings.
 
     `validation` is the structured report run on the working copy AFTER the SVG was adopted, so an
     agent sees in one call whether the composed document is correct (broken refs, duplicate ids,
@@ -219,7 +219,7 @@ def insert_svg_fragment(
 
 
 class ComposeGridResult(EditResult):
-    """An :class:`EditResult` for `compose_grid` extended with the grid layout (E16-05).
+    """An :class:`EditResult` for `compose_grid` extended with the grid layout.
 
     `target_doc_id` is the document the sheet was composed INTO — a freshly created blank document
     when `target_doc_id` was not supplied (so the caller learns the new id), else the one passed in.
@@ -416,7 +416,7 @@ def _require_doc(doc_id: str) -> None:
 
 
 class PlaceResult(EditResult):
-    """An :class:`EditResult` for `place_document` (E16-10a).
+    """An :class:`EditResult` for `place_document`.
 
     `placed_id` is the id of the new `<g>` cell wrapper grafted into the TARGET document (it holds
     the deep-copied, re-id'd source subtree), so the caller can immediately move/style/export it.

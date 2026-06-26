@@ -1,6 +1,6 @@
-"""Resource-client regression tests (E9-02).
+"""Resource-client regression tests.
 
-Locks the E9-01 resource-serialization fix at the layer where it broke: the FastMCP resource
+Locks the resource-serialization fix at the layer where it broke: the FastMCP resource
 WRAPPER, not the inspection engine. Pre-fix, every resource handler returned its pydantic model
 object; reading any resource over the FastMCP in-memory `Client` raised
 ``contents must be str, bytes, or list[ResourceContent], got <Model>`` (a `TypeError` surfaced as
@@ -150,7 +150,7 @@ def test_document_resource_reads_round_trips_and_matches_inspect(
     json.loads(text)  # parses as JSON
     decoded = model.model_validate_json(text)
     assert decoded is not None
-    # Parity contract (E1-05): the resource payload IS the matching inspect_document component.
+    # Parity contract: the resource payload IS the matching inspect_document component.
     assert decoded == inspect_fn(doc_id)
 
 
@@ -163,7 +163,7 @@ def test_all_thirteen_resource_uris_covered(doc_id: str) -> None:
         assert _read_text(uri)  # non-empty payload, no serialization error
 
 
-# --- E11-10c: per-doc resource URIs discoverable via the listing the client tool reads ---------
+# ---: per-doc resource URIs discoverable via the listing the client tool reads ---------
 
 
 def _listed_resource_uris() -> set[str]:

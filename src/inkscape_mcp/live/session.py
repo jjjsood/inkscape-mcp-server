@@ -1,4 +1,4 @@
-"""Live session state + manager (E3-04).
+"""Live session state + manager.
 
 Holds the process-wide live session: which transport (if any) is connected, when, and the active
 document identity. The live gate is ON by default (X1, operator decision 2026-06-14) — the master
@@ -6,7 +6,7 @@ gate (`settings.live_enabled`) must be on for `connect` to attach (set the env f
 and `connect`/`disconnect` are the per-session enable/disable toggle.
 Nothing here runs unless a tool explicitly asks; headless is wholly independent of this module.
 
-A connected transport is held privately so the read tools (E3-05) and sync/render (E3-06) can use
+A connected transport is held privately so the read tools and sync/render can use
 it; the public `LiveSession` model never exposes the live socket or any host-internal detail.
 """
 
@@ -91,12 +91,12 @@ class LiveSessionManager:
         self._transport: LiveTransport | None = None
         self._connected_at: str | None = None
         self._active_document: LiveDocumentRef | None = None
-        #: Last state token + last classified change from the change-detection layer (E8-03). Held
+        #: Last state token + last classified change from the change-detection layer. Held
         #: across calls so `live_wait_for_change` and the events resource share a baseline; reset on
         #: every connect/disconnect so a stale token can never survive a new session.
         self._last_token: LiveStateToken | None = None
         self._last_change: LiveChange | None = None
-        #: Per-session bounded render-frame cache + coalescing state (E8-06). Built on connect from
+        #: Per-session bounded render-frame cache + coalescing state. Built on connect from
         #: the settings bounds and reset on every connect/disconnect so a frame from one session can
         #: never leak into another. None while disconnected.
         self._render_cache: RenderCache | None = None
@@ -141,7 +141,7 @@ class LiveSessionManager:
                 raise LiveNotAvailable("no live session connected")
             return self._transport
 
-    # --- change-detection state (E8-03) ---
+    # --- change-detection state ---
 
     def last_change_state(self) -> tuple[LiveStateToken | None, LiveChange | None]:
         """Return the last observed (token, change) pair (None,None before the first poll)."""
@@ -154,7 +154,7 @@ class LiveSessionManager:
             self._last_token = token
             self._last_change = change
 
-    # --- render cache (E8-06) ---
+    # --- render cache ---
 
     def render_cache(self) -> RenderCache | None:
         """Return the per-session render cache, or None when no session is connected.
@@ -176,7 +176,7 @@ class LiveSessionManager:
         * ``"read"`` (default) — select the best READ-capable transport (extension-socket primary;
           full selection/inspect surface, but modal on every OS).
         * ``"no_freeze"`` — select a transport that drives the GUI WITHOUT freezing it (the Linux
-          DBus action path, E3-07). The export-based active-document read, viewport, and
+          DBus action path). The export-based active-document read, viewport, and
           style/transform writes are no-freeze; selection-id reads are unavailable over this path
           (honest trade-off). Falls back cleanly to "no transport" on Windows/macOS or when no DBus
           instance is present.
@@ -244,7 +244,7 @@ class LiveSessionManager:
         self._render_cache = None
         # Scope live op state to the session: clear persisted Live Operation Records on every
         # connect/disconnect boundary so a stale prior-session record (potentially carrying a host
-        # path before E10-03 sanitization) can never surface in the `live/operations` resource of a
+        # path before sanitization) can never surface in the `live/operations` resource of a
         # later session. Best-effort — clearing must never break the lifecycle.
         try:
             clear_live_operations(self._settings)

@@ -1,6 +1,6 @@
-"""Batch-export tool (E5-06): `export_batch`.
+"""Batch-export tool: `export_batch`.
 
-Thin MCP layer over the batch engine (`inkscape_mcp.render.batch`), which composes the E1-06 CLI
+Thin MCP layer over the batch engine (`inkscape_mcp.render.batch`), which composes the CLI
 render/export engine. Inkscape engine per ADR-005. Risk class **low**: artifact-only, no new
 authority over the single-export tools — it adds only the batch bounds (item cap + total byte
 budget + dry-run default).
@@ -8,12 +8,12 @@ budget + dry-run default).
 Following ADR-002 the input is a TYPED list of `ExportSpec` (NOT a string / portmanteau).
 `dry_run` defaults to True: the call validates every spec and reports the planned exports +
 projected sizes, writing nothing. A real run (`dry_run=False`) refuses cleanly if the projected
-total exceeds the byte budget, then exports each spec through the E1-06 engine.
+total exceeds the byte budget, then exports each spec through the engine.
 
 Client-facing errors are raised as `ToolError` with stable, host-path-free messages (sec.12):
 unknown document id -> "document id not found"; a malformed / oversized / over-budget batch -> the
 validation message (built from typed parameters, no host path); a render/limit/process failure ->
-"render/export failed". Returned artifact paths follow ONE LOCATION CONTRACT (E11-01):
+"render/export failed". Returned artifact paths follow ONE LOCATION CONTRACT:
 `artifact_path` and `workspace_relative_path` carry the SAME value, always relative to the WORKSPACE
 ROOT, openable by a single join to the root — never an absolute host path.
 """
@@ -60,7 +60,7 @@ def _map_failure(exc: Exception) -> ToolError:
     if isinstance(exc, LimitExceeded):
         return ToolError("export exceeds the configured size or dimension limit")
     if isinstance(exc, ProcessError):
-        # CAPABILITY-ABSENT (E14-08a): the Inkscape engine could not be launched on this runtime.
+        # CAPABILITY-ABSENT: the Inkscape engine could not be launched on this runtime.
         # Name the discovery tool so the agent can inspect support rather than retry blindly.
         return ToolError(
             "render/export failed: the Inkscape engine is unavailable on this runtime; "
@@ -90,7 +90,7 @@ def export_batch(
     total-output byte budget (`byte_budget`, default: the per-document artifact budget).
     `dry_run=True` (DEFAULT) validates and returns the plan + projected sizes + `within_budget`,
     writing nothing; `dry_run=False` refuses cleanly if the projection exceeds the budget. `out_dir`
-    (E11-05) writes into a caller-chosen dir — relative anchors to the workspace ROOT,
+ writes into a caller-chosen dir — relative anchors to the workspace ROOT,
     sandbox-checked (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix`
     tags each file.
 
@@ -99,7 +99,7 @@ def export_batch(
 
     Example: `export_batch(doc_id, [{"format": "png", "width_px": 256}], dry_run=False)`
 
-    Risk class: low (artifact-only export to a sandbox-checked dir; composes the E1-06 engine).
+    Risk class: low (artifact-only export to a sandbox-checked dir; composes the engine).
     """
     try:
         result = _export_batch(
@@ -134,14 +134,14 @@ def export_batch(
 
 
 class ExportSetEntry(BaseModel):
-    """One document's batch-export result inside an :class:`ExportSetResult` (E16-05)."""
+    """One document's batch-export result inside an :class:`ExportSetResult`."""
 
     doc_id: str
     result: BatchResult
 
 
 class ExportSetResult(BaseModel):
-    """Result of `export_set` (E16-05): per-doc batch results + aggregate + consistency verdict.
+    """Result of `export_set`: per-doc batch results + aggregate + consistency verdict.
 
     `per_doc` is one :class:`ExportSetEntry` per input document (each carrying the SAME
     `BatchResult` the single-doc `export_batch` returns). `total_bytes` is the sum of every per-doc
@@ -222,7 +222,7 @@ def export_set(
         entries.append(ExportSetEntry(doc_id=doc_id, result=result))
         total_items += result.item_count
         # Aggregate the same number the per-doc result reports: actual output on a real run, the
-        # conservative projection on a dry run (E16-06 stat machinery semantics).
+        # conservative projection on a dry run (stat machinery semantics).
         total_bytes += (
             result.actual_total_bytes
             if result.actual_total_bytes is not None

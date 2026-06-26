@@ -1,4 +1,4 @@
-"""Web-optimize tool (E5-04): `svg_web_optimize`.
+"""Web-optimize tool: `svg_web_optimize`.
 
 Thin MCP layer over the direct-DOM web-optimization engine (`inkscape_mcp.edit.optimize`). Small
 and typed (ADR-002, no portmanteau): it validates the trivial argument shape, builds the engine's
@@ -39,7 +39,7 @@ class WebOptimizeResult(EditResult):
     """`svg_web_optimize` result: the standard reversible-edit fields plus machine-diffable deltas.
 
     Extends :class:`EditResult` (so `operation_id` / `snapshot_id` / previews / `summary` are
-    unchanged for existing callers) with the E11-08 structured deltas: `bytes_before` /
+    unchanged for existing callers) with the structured deltas: `bytes_before` /
     `bytes_after` (serialized working-copy sizes around the optimize, so `bytes_before -
     bytes_after` is the saving with no on-disk ``stat``) and `removed` — a ``{code: count}`` map
     keyed IDENTICALLY to ``quality_report.opportunities`` (``editor_metadata``, ``unused_defs``,
@@ -92,13 +92,13 @@ def svg_web_optimize(
     (3) round geometry numbers (path `d`, transforms, `x`/`y`/`width`/…) to `precision` decimals
     (0-8, default 2; root `viewBox` untouched). `keep_ids` is an allowlist of ids that must NEVER be
     stripped as "unreferenced" — pass a deliberate human/a11y id (e.g. one from `rename_object`) to
-    keep "one clean file with a stable id" (E10-07 / E11-04); unknown ids are ignored. Re-running on
+    keep "one clean file with a stable id"; unknown ids are ignored. Re-running on
     optimized output removes/rounds nothing further.
 
     Return shape: `WebOptimizeResult` — the reversible-edit fields (`operation_id`, `snapshot_id`,
     before/after preview) plus machine-diffable deltas `bytes_before`, `bytes_after`, and `removed`
     (a ``{code: count}`` map keyed IDENTICALLY to `quality_report.opportunities`), so an agent on a
-    byte budget can compute the saving without parsing prose or stat-ing the file (E11-08).
+    byte budget can compute the saving without parsing prose or stat-ing the file.
 
     Example: `svg_web_optimize(doc_id, precision=2, keep_ids=["header"])`
 
@@ -153,14 +153,14 @@ def _optimize_one(doc_id: str, precision: int, keep_ids: list[str] | None) -> We
 
 
 class OptimizeSetEntry(BaseModel):
-    """One document's web-optimize result inside an :class:`OptimizeSetResult` (E16-05)."""
+    """One document's web-optimize result inside an :class:`OptimizeSetResult`."""
 
     doc_id: str
     result: WebOptimizeResult
 
 
 class OptimizeSetResult(BaseModel):
-    """Result of `optimize_set` (E16-05): per-doc optimize results + aggregate + verdict.
+    """Result of `optimize_set`: per-doc optimize results + aggregate + verdict.
 
     `per_doc` is one :class:`OptimizeSetEntry` per input document (each carrying the SAME
     `WebOptimizeResult` the single-doc `svg_web_optimize` returns, incl. its `operation_id` /

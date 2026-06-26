@@ -1,10 +1,10 @@
-"""Bounded render-frame cache + coalescing for the live loop (E8-06, low risk).
+"""Bounded render-frame cache + coalescing for the live loop (low risk).
 
 Keeps the perceive→act→observe loop low-latency under rapid edits WITHOUT changing what a frame
 is or touching the document. Two mechanisms, both pure server-side bookkeeping:
 
 * **Render cache** — keyed on ``(doc_revision, viewport, scale)``. A hit returns the previously
-  written frame's `LiveRenderResult` and SKIPS the re-render. ``doc_revision`` is the E8-03
+  written frame's `LiveRenderResult` and SKIPS the re-render. ``doc_revision`` is the
   document-revision digest (`LiveStateToken.revision`), so the cache invalidates the instant the
   document changes: a stale frame can NEVER be served after an edit, because a changed document
   yields a different revision digest and therefore a different key. The cache is bounded both by
@@ -67,7 +67,7 @@ def scale_key(scale: float | None) -> str:
 class CacheKey:
     """Render-cache key: the document revision plus the viewport + scale that produced the frame.
 
-    ``doc_revision`` is the E8-03 `LiveStateToken.revision` digest. Because it is part of the key, a
+    ``doc_revision`` is the `LiveStateToken.revision` digest. Because it is part of the key, a
     document change (new revision digest) yields a DIFFERENT key, so the previous frame is never
     returned for the changed document — the freshness guarantee.
     """
@@ -87,7 +87,7 @@ class _Entry:
 
 
 class RenderCache:
-    """Bounded LRU render-frame cache with a coalescing latency budget (E8-06).
+    """Bounded LRU render-frame cache with a coalescing latency budget.
 
     Bounded by BOTH ``max_entries`` and ``max_bytes`` (whichever binds first); eviction drops the
     least-recently-used entry until both bounds hold. ``coalesce_budget_ms`` is the window within

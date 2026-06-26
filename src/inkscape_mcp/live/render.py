@@ -1,12 +1,12 @@
-"""Live canvas render persistence + cache (E3-06 / E8-06, low risk).
+"""Live canvas render persistence + cache (, low risk).
 
 Takes the rasterized PNG bytes returned by a connected transport's `render_view` and writes them
 into the root-scoped live artifacts dir (`<root>/.inkscape-mcp/live/artifacts/`), enforcing the
 output-size cap. Returns a WORKSPACE-RELATIVE path (never an absolute host path). No workspace
 document is touched, so no Operation Record is required (render is read-only feedback).
 
-E8-06: the result is cached on the per-session `RenderCache` keyed on
-``(doc_revision, viewport, scale)``. ``doc_revision`` is the E8-03 document-revision digest pulled
+the result is cached on the per-session `RenderCache` keyed on
+``(doc_revision, viewport, scale)``. ``doc_revision`` is the document-revision digest pulled
 cheaply via `get_state_token`, so a cache hit can NEVER serve a stale frame after the document
 changes (a changed document yields a new revision digest → a different key). Within the coalescing
 latency budget a repeated identical-key request returns the just-cached frame instead of thrashing
@@ -43,7 +43,7 @@ def _cache_key(
 ) -> CacheKey | None:
     """Build the ``(doc_revision, viewport, scale)`` key, or None when caching can't be safe.
 
-    Pulls the cheap E8-03 state token for the document-revision digest. If the transport cannot
+    Pulls the cheap state token for the document-revision digest. If the transport cannot
     serve a state token (no revision marker), returns None so the caller re-renders every time — a
     stale frame must be impossible, so caching is only enabled when a revision is available.
     """
@@ -83,12 +83,12 @@ def render_live_view(
 
     Reads bytes from the connected transport (raising `LiveNotAvailable` if none) and writes them
     atomically (temp + replace) so a partial transfer never leaves a half-written artifact. With
-    `region` (E8) the renderer clips to that user-unit bbox; with `scale` it downscales/upscales the
+    `region` the renderer clips to that user-unit bbox; with `scale` it downscales/upscales the
     raster. Both must already be server-validated; passing neither renders the whole canvas
     (backward-compatible). View-only — no document mutation, no Operation Record.
 
-    E8-06: when ``use_cache`` and a session-scoped `RenderCache` exists, the result is served from /
-    stored in a cache keyed on ``(doc_revision, viewport, scale)``. ``doc_revision`` is the E8-03
+: when ``use_cache`` and a session-scoped `RenderCache` exists, the result is served from /
+    stored in a cache keyed on ``(doc_revision, viewport, scale)``. ``doc_revision`` is the
     revision digest, so a hit can never return a stale frame after the document changes. Within the
     coalescing budget a repeated identical-key request returns the just-cached frame instead of
     re-rendering. Caching is skipped (re-render every call) when the transport supplies no revision

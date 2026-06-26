@@ -1,4 +1,4 @@
-"""Direct-DOM style edit engine (E2-01, ADR-005).
+"""Direct-DOM style edit engine (ADR-005).
 
 Pure ``mutate(tree) -> str`` builders for the five style tools (``set_fill``, ``set_stroke``,
 ``set_opacity``, ``replace_color``, ``apply_palette``). Each function returns a closure suitable
@@ -53,7 +53,7 @@ MutateFn = Callable[[etree._ElementTree], str]
 #: CSS named colours (Color Module Level 4) plus the SVG keywords ``none`` / ``transparent`` /
 #: ``currentcolor``. Used to STRICTLY validate a named-colour token: :func:`normalize_color`
 #: accepts any letters-only word as a "named colour", which is too permissive for ``apply_palette``
-#: (a typo like ``notacolor`` would slip through as a silent no-op — E10-02). A palette colour name
+#: (a typo like ``notacolor`` would slip through as a silent no-op). A palette colour name
 #: must be one of these to be accepted. Stored casefolded; lookups casefold the candidate.
 _CSS_NAMED_COLORS: frozenset[str] = frozenset(
     {
@@ -218,7 +218,7 @@ def validate_palette_color(raw: str) -> str:
     Stricter than :func:`normalize_color`: a named colour must be a real CSS colour keyword (in
     :data:`_CSS_NAMED_COLORS`), not merely a letters-only word. Hex and ``rgb()/hsl()`` forms are
     accepted exactly as :func:`normalize_color` accepts them. This closes the ``apply_palette``
-    gap where a typo such as ``notacolor`` was silently accepted as a "named colour" (E10-02).
+    gap where a typo such as ``notacolor`` was silently accepted as a "named colour".
     Returns the canonicalized colour string.
     """
     canon = normalize_color(raw)
@@ -429,7 +429,7 @@ def apply_palette_mutate(mapping: dict[str, str], scope_ids: list[str] | None = 
     """Build a mutate that applies many ``from -> to`` colour replacements in one operation.
 
     Every key AND value is STRICTLY colour-validated eagerly via :func:`validate_palette_color`
-    (a typo'd named colour such as ``notacolor`` is rejected, not silently accepted — E10-02), so
+    (a typo'd named colour such as ``notacolor`` is rejected, not silently accepted), so
     an invalid entry raises BEFORE the builder returns and therefore before any op record, snapshot,
     or write exists. Each mapping entry reuses the same colour-matching logic as
     :func:`replace_color_mutate`. The summary reports the total replacement count across entries.

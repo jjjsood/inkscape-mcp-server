@@ -1,4 +1,4 @@
-"""Live sync + render tests (E3-06): new-doc sync, Operation Record + snapshot, damage-safety."""
+"""Live sync + render tests: new-doc sync, Operation Record + snapshot, damage-safety."""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ def test_render_view_writes_png_under_live_artifacts(
     assert result.size_bytes == len(FAKE_PNG)
 
 
-# --- E11-09: relative dest anchors to the workspace root, not the process CWD --------
+# ---: relative dest anchors to the workspace root, not the process CWD --------
 
 
 def test_relative_dest_anchors_to_workspace_root(
@@ -142,7 +142,7 @@ def test_relative_dest_into_existing_subdir_anchors_to_workspace(
     assert result.saved_path == "out/nested.svg"
 
 
-# --- E16-09: live sync auto-creates missing parent dirs inside the sandbox ----------
+# ---: live sync auto-creates missing parent dirs inside the sandbox ----------
 
 
 def test_sync_creates_missing_parent_dir_in_sandbox(
@@ -209,7 +209,7 @@ def test_absolute_out_of_sandbox_dest_still_rejected_no_leak(
     assert str(outside) not in str(exc.value)
 
 
-# --- E13-07: the dest sandbox guard fires independent of connection state -----------
+# ---: the dest sandbox guard fires independent of connection state -----------
 
 
 def _disconnected(tmp_path: Path) -> tuple[LiveSessionManager, Settings]:
@@ -221,7 +221,7 @@ def _disconnected(tmp_path: Path) -> tuple[LiveSessionManager, Settings]:
 def test_dest_sandbox_guard_fires_when_disconnected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # E13-07: an out-of-sandbox absolute dest is rejected by the sandbox guard EVEN WHEN NOT
+    #: an out-of-sandbox absolute dest is rejected by the sandbox guard EVEN WHEN NOT
     # CONNECTED — the guard runs before the transport is required, so the branch is reachable
     # headless. The error names the sandbox rejection (not "no live session"), no host path leaked.
     mgr, settings = _disconnected(tmp_path)

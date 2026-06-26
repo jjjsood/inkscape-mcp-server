@@ -1,9 +1,9 @@
-"""Live Operation Records (E4-02 / ADR-004).
+"""Live Operation Records (ADR-004).
 
-Governance + observability for live mutations. Every mutating live tool (E4-01) opens a
+Governance + observability for live mutations. Every mutating live tool opens a
 `LiveOperationRecord` that captures WHAT changed, on WHICH selection/objects, via WHICH transport,
 plus the before/after canvas renders and the risk-policy decision — the live analogue of the
-headless `OperationRecord` scaffold (E1-09). Records are root-scoped (a live session has no
+headless `OperationRecord` scaffold. Records are root-scoped (a live session has no
 registered `doc_id`) and persisted append-only under `<root>/.inkscape-mcp/live/operations/`.
 
 This module also enforces the live approval gate: `new_live_operation` runs `enforce_risk_policy`
@@ -29,13 +29,13 @@ from inkscape_mcp.workspace.paths import owning_root
 from inkscape_mcp.workspace.risk import RiskClass, enforce_risk_policy
 
 #: Minted operation-id shape (`op_` + 8 hex chars). Shape-validated before any path construction
-#: so a caller-supplied id can never traverse out of the live `operations/` dir (mirrors E1-09).
+#: so a caller-supplied id can never traverse out of the live `operations/` dir (mirrors).
 _OPERATION_ID_RE = re.compile(r"^op_[0-9a-f]{8}$")
 
 #: Opaque stand-in persisted in place of a live document path that lies OUTSIDE the workspace
 #: sandbox. The running Inkscape reports the user's own on-disk path (a host path); persisting it
 #: verbatim would leak it through the `live/operations` resource (sec.12 — no host paths in output,
-#: E10-03/R14). We keep the human-readable `name` (a base filename the user already exposed by
+#: R14). We keep the human-readable `name` (a base filename the user already exposed by
 #: connecting) but never the absolute host path.
 _OPAQUE_DOCUMENT_PATH = "<external>"
 
@@ -52,7 +52,7 @@ class LiveOperationRecord(BaseModel):
     `affected_ids`, whether it ran as an `undo_friendly` Inkscape step, and the before/after
     canvas render paths in `previews` (keyed `"before"` / `"after"`, workspace-relative).
     `diff_artifacts` lists any focused before/after visual-diff overlays produced for this op by
-    `live_diff_view` (E8-04, workspace-relative; appended, never replacing the source previews).
+    `live_diff_view` (workspace-relative; appended, never replacing the source previews).
     """
 
     operation_id: str
@@ -96,7 +96,7 @@ def _first_root(settings: Settings) -> Path:
 def _sanitize_document(
     document: LiveDocumentRef | None, settings: Settings
 ) -> LiveDocumentRef | None:
-    """Strip any host path off a live document ref BEFORE it is persisted (sec.12 / E10-03).
+    """Strip any host path off a live document ref BEFORE it is persisted (sec.12).
 
     The running Inkscape reports the user's own on-disk document path; persisting it verbatim would
     surface a host path outside the sandbox through the `live/operations` resource. Rewrite `path`
@@ -185,7 +185,7 @@ def update_live_operation(
 
 
 def clear_live_operations(settings: Settings | None = None) -> int:
-    """Delete all persisted Live Operation Records, returning how many were removed (E10-03).
+    """Delete all persisted Live Operation Records, returning how many were removed.
 
     Called on every live connect/disconnect boundary so a record from a prior session can never
     surface in the `live/operations` resource of a later one. Best-effort + idempotent: a missing

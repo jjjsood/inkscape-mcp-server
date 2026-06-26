@@ -1,6 +1,6 @@
 """Unit tests for the sandbox path choke point (workspace/paths.py).
 
-Focus: the FINAL-component symlink guard on the write path (E10-01 / SV5). A pre-existing
+Focus: the FINAL-component symlink guard on the write path (SV5). A pre-existing
 symlink at the destination filename must not let a write escape the configured workspace
 roots, even though the parent directory is contained.
 """

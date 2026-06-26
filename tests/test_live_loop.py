@@ -1,10 +1,10 @@
-"""Live view loop orchestrator tests (E8-05): perceive→decide→act→observe, zero new authority.
+"""Live view loop orchestrator tests: perceive→decide→act→observe, zero new authority.
 
 Covers: a perceive-only step returns scene/frame and creates NO Operation Record; an act routes
 through `run_live_mutation` and is REFUSED without `approval_token` (HIGH gate); a successful act
 produces a Live Operation Record + links a focused diff artifact; only the fixed semantic ops are
 accepted (an unknown op is rejected at the type boundary); the `live_canvas_assist` Prompt is
-registered (smoke); and the step's mutation path IS the E4 write path (no new authority).
+registered (smoke); and the step's mutation path IS the write path (no new authority).
 """
 
 from __future__ import annotations
@@ -114,7 +114,7 @@ def test_act_apply_produces_record_and_links_diff(live_on: Path) -> None:
     assert result.action is StepAction.APPLY
     assert result.operation_id is not None and result.operation_id.startswith("op_")
     assert result.edit is not None and result.edit.affected_ids == ["r1"]
-    # Exactly one Live Operation Record from the act (the E4 governed path).
+    # Exactly one Live Operation Record from the act (the governed path).
     log = list_live_operations(settings=s)
     assert log.count == 1
     assert log.operations[0].operation_id == result.operation_id
@@ -179,13 +179,13 @@ def test_insert_svg_rejects_unsafe_fragment(live_on: Path) -> None:
         )
 
 
-# --- No new authority: the step's mutation path == the E4 write path --------------
+# --- No new authority: the step's mutation path == the write path --------------
 
 
 def test_step_mutation_path_is_the_e4_write_path(
     live_on: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The act must flow through run_live_mutation (E4-02) — not a new mutation path.
+    # The act must flow through run_live_mutation — not a new mutation path.
     import inkscape_mcp.live.loop as loop_mod
 
     seen: dict[str, object] = {}

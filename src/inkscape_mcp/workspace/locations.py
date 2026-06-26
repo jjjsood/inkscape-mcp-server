@@ -1,4 +1,4 @@
-"""Caller-resolvable artifact locations (E11-01 / folds E10-08 N9).
+"""Caller-resolvable artifact locations (folds N9).
 
 ONE LOCATION CONTRACT. Every artifact-producing tool returns two path fields — ``artifact_path``
 and ``workspace_relative_path`` — that now carry the SAME value with a single, documented meaning:

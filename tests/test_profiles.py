@@ -1,4 +1,4 @@
-"""Export-profile tool tests (E2-06): export_web_profile / create_icon_set / export_print_profile.
+"""Export-profile tool tests: export_web_profile / create_icon_set / export_print_profile.
 
 Following the `tests/test_export.py` pattern: Inkscape-dependent tests are marked
 `@pytest.mark.inkscape` and actually run the local binary (it IS available on this host); they
@@ -59,7 +59,7 @@ def doc_id(root: Path) -> str:
 
 
 def _root_join(doc_id: str, ws_rel: str) -> Path:
-    """Join a returned path (`path` or `workspace_relative_path`) to the workspace ROOT (E11-01).
+    """Join a returned path (`path` or `workspace_relative_path`) to the workspace ROOT.
 
     ONE LOCATION CONTRACT: both fields are root-relative and identical, so a single plain join to
     the workspace ROOT opens any artifact — no `find`/`stat`.
@@ -83,7 +83,7 @@ def test_create_icon_set_rejects_oversized(doc_id: str) -> None:
     too_big = get_settings().max_export_px + 1
     with pytest.raises(ToolError) as exc:
         create_icon_set(doc_id, sizes=[64, too_big])
-    # E10-10 PF5: over-cap cause is its own message, distinct from the <=0 case.
+    # PF5: over-cap cause is its own message, distinct from the <=0 case.
     assert "exceeds the configured pixel cap" in str(exc.value)
 
 
@@ -91,12 +91,12 @@ def test_create_icon_set_rejects_oversized(doc_id: str) -> None:
 def test_create_icon_set_rejects_non_positive(doc_id: str, bad_size: int) -> None:
     with pytest.raises(ToolError) as exc:
         create_icon_set(doc_id, sizes=[bad_size])
-    # E10-10 PF5: <=0 size gets its OWN distinguishable message, not the over-cap "limit" one.
+    # PF5: <=0 size gets its OWN distinguishable message, not the over-cap "limit" one.
     assert "must be a positive integer" in str(exc.value)
 
 
 def test_create_icon_set_message_split_distinguishes_cause(doc_id: str) -> None:
-    # E10-10 PF5: 999999 (over-cap) and 0 (<=0) previously returned the SAME message; now distinct.
+    # PF5: 999999 (over-cap) and 0 (<=0) previously returned the SAME message; now distinct.
     too_big = get_settings().max_export_px + 1
     with pytest.raises(ToolError) as over:
         create_icon_set(doc_id, sizes=[too_big])
@@ -137,7 +137,7 @@ def test_export_web_profile_produces_png_and_svg(doc_id: str) -> None:
     # height follows the 100x80 aspect ratio
     assert png.height_px == 205 or png.height_px == 204
     for art in result.artifacts:
-        # ONE LOCATION CONTRACT (E11-01): path == workspace_relative_path, both root-relative.
+        # ONE LOCATION CONTRACT: path == workspace_relative_path, both root-relative.
         assert not art.path.startswith("/")
         assert art.path == art.workspace_relative_path
         out = _root_join(doc_id, art.path)
@@ -197,13 +197,13 @@ def test_export_print_profile_produces_pdf(doc_id: str) -> None:
     assert out.read_bytes()[:4] == PDF_MAGIC
 
 
-# --- E11-01: resolvable locations -------------------------------------------
+# ---: resolvable locations -------------------------------------------
 
 
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_web_profile_locations_resolve_by_root_join(doc_id: str) -> None:
-    # E11-01 ONE LOCATION CONTRACT: every emitted file's `path` == `workspace_relative_path`, both
+    # ONE LOCATION CONTRACT: every emitted file's `path` == `workspace_relative_path`, both
     # root-relative, and opens by a single plain join to the workspace ROOT (no find/stat).
     result = export_web_profile(doc_id, width_px=128)
     for art in result.artifacts:
@@ -213,7 +213,7 @@ def test_web_profile_locations_resolve_by_root_join(doc_id: str) -> None:
         assert _root_join(doc_id, art.workspace_relative_path).exists()
 
 
-# --- E11-11: responsive web set ---------------------------------------------
+# ---: responsive web set ---------------------------------------------
 
 
 @pytest.mark.inkscape
@@ -242,7 +242,7 @@ def test_web_profile_explicit_widths(doc_id: str) -> None:
     pngs = [a for a in result.artifacts if a.format == "png"]
     assert sorted(a.width_px for a in pngs) == [64, 256]
     assert len({a.workspace_relative_path for a in pngs}) == 2
-    # E13-06: widths-mode entries carry no density `scale` but DO carry `requested_width_px`, so a
+    #: widths-mode entries carry no density `scale` but DO carry `requested_width_px`, so a
     # caller can always identify which requested width each responsive entry corresponds to.
     assert all(a.scale is None for a in pngs)
     assert sorted(a.requested_width_px or 0 for a in pngs) == [64, 256]
@@ -261,13 +261,13 @@ def test_web_profile_rejects_non_positive_scale(doc_id: str) -> None:
     assert "positive integer" in str(exc.value)
 
 
-# --- E11-11: print profile applies + reports real settings ------------------
+# ---: print profile applies + reports real settings ------------------
 
 
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_print_profile_reports_applied_settings(doc_id: str) -> None:
-    # The print profile reports the print-specific options it applied (auditable; E11-11).
+    # The print profile reports the print-specific options it applied (auditable).
     result = export_print_profile(doc_id)
     assert result.applied_settings.get("text_to_path") == "true"
     # Pinned to 1.4 (vs Inkscape's default 1.5) so the print output ALWAYS differs from a plain PDF.
@@ -275,7 +275,7 @@ def test_print_profile_reports_applied_settings(doc_id: str) -> None:
 
 
 # A text-bearing document: --export-text-to-path outlines the text, so the print profile's PDF
-# bytes observably differ from a plain PDF export (E11-11 / S3).
+# bytes observably differ from a plain PDF export (S3).
 SVG_TEXT = b"""<?xml version="1.0"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="200" height="80" viewBox="0 0 200 80">
   <rect x="0" y="0" width="200" height="80" fill="#ffffff"/>
@@ -294,7 +294,7 @@ def text_doc_id(root: Path) -> str:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_print_profile_bytes_differ_from_plain_pdf(text_doc_id: str) -> None:
-    # E11-11 / S3: with text present, the print profile's text-to-path flag changes the PDF bytes
+    # S3: with text present, the print profile's text-to-path flag changes the PDF bytes
     # vs a plain PDF export, so the print value is observable (not byte-identical).
     from inkscape_mcp.tools.export import export_document as _plain_export
 
@@ -327,7 +327,7 @@ def textfree_doc_id(root: Path) -> str:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_print_profile_bytes_differ_from_plain_pdf_textfree(textfree_doc_id: str) -> None:
-    # E11-11: the print profile must produce DIFFERENT bytes than a plain PDF export even when the
+    #: the print profile must produce DIFFERENT bytes than a plain PDF export even when the
     # document has NO text. The pinned PDF version 1.4 (vs the plain export's default 1.5)
     # guarantees this — the file header (`%PDF-1.4` vs `%PDF-1.5`) is a deterministic,
     # content-independent byte difference.
@@ -344,7 +344,7 @@ def test_print_profile_bytes_differ_from_plain_pdf_textfree(textfree_doc_id: str
     assert profile_bytes[:8] == b"%PDF-1.4"
 
 
-# --- E14-08a: capability-absent profile errors name list_capabilities ---------
+# ---: capability-absent profile errors name list_capabilities ---------
 
 
 def test_profile_map_failure_missing_engine_names_list_capabilities() -> None:
@@ -356,14 +356,14 @@ def test_profile_map_failure_missing_engine_names_list_capabilities() -> None:
     assert "binary not found" not in msg  # host-path/detail-free (sec.12)
 
 
-# --- E16-03: profile exporters honor out_dir / name_prefix ------------------
+# ---: profile exporters honor out_dir / name_prefix ------------------
 
 
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_web_profile_out_dir_in_workspace(root: Path, doc_id: str) -> None:
     # A caller-chosen, in-workspace out_dir is honored: every artifact lands under <root>/dist/web/
-    # and resolves by a single root join (E11-01 / E16-03).
+    # and resolves by a single root join.
     result = export_web_profile(doc_id, width_px=64, out_dir="dist/web", name_prefix="brand")
     assert result.artifacts
     for art in result.artifacts:
@@ -398,7 +398,7 @@ def test_print_profile_out_dir_in_workspace(root: Path, doc_id: str) -> None:
 
 
 def test_web_profile_out_dir_outside_workspace_rejected(root: Path, doc_id: str) -> None:
-    # sec.12 / E11-05: an out_dir escaping the workspace is rejected with the stable sandbox
+    # sec.12 /: an out_dir escaping the workspace is rejected with the stable sandbox
     # message — BEFORE any Inkscape invocation, so no binary is needed for this test.
     with pytest.raises(ToolError) as exc:
         export_web_profile(doc_id, width_px=16, out_dir="../escape")
@@ -428,14 +428,14 @@ def test_profile_out_dir_omitted_back_compat(doc_id: str) -> None:
     assert _resolve_out_dir(None, entry, get_settings()) is None
 
 
-# --- E16-07: profile exports self-certify content truth ---------------------
+# ---: profile exports self-certify content truth ---------------------
 
 
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_print_profile_pdf_reports_vector_and_outlined(text_doc_id: str) -> None:
     # The print profile outlines text (--export-text-to-path) and embeds no raster, so the produced
-    # PDF self-certifies as TRUE VECTOR: is_vector and fonts_outlined both True (E16-07).
+    # PDF self-certifies as TRUE VECTOR: is_vector and fonts_outlined both True.
     result = export_print_profile(text_doc_id)
     pdf = result.artifacts[0]
     assert pdf.format == "pdf"
@@ -447,7 +447,7 @@ def test_print_profile_pdf_reports_vector_and_outlined(text_doc_id: str) -> None
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_web_profile_png_reports_opaque_pixels(doc_id: str) -> None:
     # The PNGs in the web set actually drew pixels, so each reports a non-zero opaque-pixel count
-    # and is not flagged blank (E16-07).
+    # and is not flagged blank.
     result = export_web_profile(doc_id, width_px=64)
     pngs = [a for a in result.artifacts if a.format == "png"]
     assert pngs

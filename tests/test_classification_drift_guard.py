@@ -1,4 +1,4 @@
-"""Classification-set drift-guard (E18-01).
+"""Classification-set drift-guard.
 
 The hand-maintained name-keyed classification surfaces in `tool_annotations.py` / `tool_tags.py`
 can drift silently as tools are added or renamed. A new tool nobody lists quietly inherits the

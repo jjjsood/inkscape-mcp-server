@@ -1,4 +1,4 @@
-"""Controlled Inkscape Action/Extension surface (E6-02).
+"""Controlled Inkscape Action/Extension surface.
 
 Pure logic only — no MCP decorators. Three concerns:
 
@@ -10,6 +10,6 @@ Pure logic only — no MCP decorators. Three concerns:
   ``shell=False``), and execute via the Inkscape engine. Discovery is low risk; execution is HIGH
   risk + approval-gated and refused for anything not allowlisted-and-present.
 
-This is the gate machinery E6-03 (the raw-action escape hatch) builds on — there is no open-string
+This is the gate machinery (the raw-action escape hatch) builds on — there is no open-string
 Action passthrough here (ADR-003; project rule: no arbitrary extension exec; sec.12).
 """

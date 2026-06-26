@@ -1,4 +1,4 @@
-"""Style tool + engine tests (E2-01 / ADR-004 / ADR-005).
+"""Style tool + engine tests (ADR-004 / ADR-005).
 
 Hermetic: the pipeline's preview rendering is monkeypatched so no Inkscape is invoked. Each test
 asserts the working copy changes, the original source stays byte-identical, the Operation Record
@@ -44,7 +44,7 @@ def _fake_render_preview(doc_id: str, width_px: int | None = None) -> RenderResu
 
     Mirrors the real engine's contract: the file lands under `artifacts/preview/` with the
     deterministic `preview-<descriptor>.png` name and `artifact_path` is workspace-ROOT-relative
-    (E11-01 one-location contract), so the pipeline's `root / artifact_path` join resolves.
+    (one-location contract), so the pipeline's `root / artifact_path` join resolves.
     """
     reg = get_registry()
     entry = reg.get(doc_id)
@@ -264,7 +264,7 @@ def test_empty_object_ids_rejected(doc: tuple[str, Path, Path]) -> None:
         set_fill(doc_id, [], "#000000")
 
 
-# --- 8. Honest `changed` flag (E10-05) ---
+# --- 8. Honest `changed` flag ---
 
 
 def _op_files(root: Path, doc_id: str) -> int:
@@ -344,7 +344,7 @@ def test_apply_palette_no_matches_reports_changed_false(doc: tuple[str, Path, Pa
     assert result.changed is False
 
 
-# --- 9. apply_palette validates colours up front (E10-02) ---
+# --- 9. apply_palette validates colours up front ---
 
 
 def _op_count(root: Path, doc_id: str) -> int:
@@ -399,7 +399,7 @@ def test_tools_registered_on_mcp(doc: tuple[str, Path, Path]) -> None:
         assert tool_name in names
 
 
-# --- 8. E13-01: re-applying an existing value is a true no-op (no attr->style migration) ---
+# --- 8.: re-applying an existing value is a true no-op (no attr->style migration) ---
 
 
 def _snapshot_count(doc_id: str, root: Path) -> int:
@@ -458,11 +458,11 @@ def test_set_fill_different_value_still_changes_once(doc: tuple[str, Path, Path]
     assert _snapshot_count(doc_id, root) == snaps_before + 1
 
 
-# --- E14-04a: url(#id) paint-server reference accepted by set_fill / set_stroke ---
+# ---: url(#id) paint-server reference accepted by set_fill / set_stroke ---
 
 
 def test_set_fill_accepts_url_paint_reference(doc: tuple[str, Path, Path]) -> None:
-    """A `url(#id)` gradient/pattern reference is a valid fill (the E14-04 gradient round-trip)."""
+    """A `url(#id)` gradient/pattern reference is a valid fill (the gradient round-trip)."""
     doc_id, root, _ = doc
     result = set_fill(doc_id, ["r1"], "url(#grad1)")
     assert result.changed is True

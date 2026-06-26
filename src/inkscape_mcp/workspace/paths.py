@@ -65,8 +65,7 @@ def anchor_to_root(raw: str | Path, settings: Settings | None = None) -> str:
     """Anchor a RELATIVE path to the FIRST configured workspace root (the shared anchor contract).
 
     A relative path (the common, friendly form) is joined to `workspace_roots[0]` — the document
-    root — so it never resolves relative to the server's process CWD (E10-08 SV1 / E11-09 /
-    E16-02). An ABSOLUTE path is returned unchanged; the sandbox choke point
+    root — so it never resolves relative to the server's process CWD (SV1 /). An ABSOLUTE path is returned unchanged; the sandbox choke point
     (`resolve_read_path` / `resolve_write_path`) then enforces that it still lands inside a
     configured root. When no workspace root is configured the raw value is returned and that same
     choke point rejects it cleanly. This helper does NO containment work itself — it only chooses
@@ -89,7 +88,7 @@ def ensure_parent_within_sandbox(anchored: str | Path, settings: Settings | None
     `anchored` is a destination already anchored to the workspace root (relative dests resolved via
     `anchor_to_root`, absolute dests untouched). When the parent already exists this is a no-op;
     when one or more leading components are missing they are created so a caller can write into a
-    fresh subfolder without a manual `mkdir -p` first (E16-09; mirrors `save_document_as`). The
+    fresh subfolder without a manual `mkdir -p` first (mirrors `save_document_as`). The
     creation can NEVER escape the sandbox, proven BEFORE any side-effect (mirrors the audited
     `render/cli.py::_resolve_out_dir`/`tools/save.py::_ensure_parent_dir` pattern):
 

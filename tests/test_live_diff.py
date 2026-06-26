@@ -1,4 +1,4 @@
-"""Focused visual before/after diff tests (E8-04): changed-region bbox, annotated overlay,
+"""Focused visual before/after diff tests: changed-region bbox, annotated overlay,
 artifact-only no-record, record linkage, size-mismatch + host-path-free errors."""
 
 from __future__ import annotations

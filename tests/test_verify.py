@@ -1,4 +1,4 @@
-"""In-process export content-truth verifier tests (E16-07).
+"""In-process export content-truth verifier tests.
 
 These exercise `inkscape_mcp.render.verify` directly with SYNTHETIC artifacts (hand-built minimal
 PDF bytes and Pillow-generated rasters), so they need NO Inkscape binary and run on every host. The

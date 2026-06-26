@@ -1,4 +1,4 @@
-"""Live-agent eval runner test (E15-06a).
+"""Live-agent eval runner test.
 
 Exercises the OPTIONAL live-agent runner (``evals/run_live_eval.py``) with the deterministic FAKE
 replay driver over the SHARED scenario dataset — no real model required. Asserts the runner emits a

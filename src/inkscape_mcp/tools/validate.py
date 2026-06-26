@@ -1,7 +1,7 @@
-"""Validation tool (E1-08): `validate_document`.
+"""Validation tool: `validate_document`.
 
 Thin MCP layer over the read-only validation engine (`inkscape_mcp.validate`). Direct DOM
-only (ADR-005); no mutation and no repair in E1. All client-facing errors are raised as
+only (ADR-005); no mutation and no repair in. All client-facing errors are raised as
 `ToolError` with stable, host-path-free messages (fastmcp error model / sec.12).
 """
 

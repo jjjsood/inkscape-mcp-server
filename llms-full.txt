@@ -141,7 +141,7 @@ Description:
     `create_rect`.
 
     Key params: `r` > 0; inserted into `parent_id` (must exist) or the document default parent;
-    `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` (E16-10b) paint it in
+    `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` paint it in
     this call (validated like `set_fill` / `set_stroke`; default None = unpainted).
 
     Return shape: `CreateResult` — `object_id` (new id), analytic `bbox`, plus the pipeline fields
@@ -187,7 +187,7 @@ Description:
     `create_rect`.
 
     Key params: `rx` / `ry` > 0; inserted into `parent_id` (must exist) or the document default
-    parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` (E16-10b) paint
+    parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` paint
     it in this call (validated like `set_fill` / `set_stroke`; default None = unpainted).
 
     Return shape: `CreateResult` — `object_id` (new id), analytic `bbox`, plus the pipeline fields
@@ -231,7 +231,7 @@ Description:
     a closed shape use `create_polygon`.
 
     Key params: endpoints `(x1, y1)` / `(x2, y2)`; inserted into `parent_id` (must exist) or the
-    document default parent; `object_id` to pin the id. Optional `stroke` / `stroke_width` (E16-10b)
+    document default parent; `object_id` to pin the id. Optional `stroke` / `stroke_width`
     paint the segment in this call (a line is unfilled by nature, so no `fill`; validated like
     `set_stroke`; default None = unpainted).
 
@@ -258,7 +258,7 @@ Description:
     Key params: `d` validated against a strict charset (digits, whitespace, `,`, `.`, sign,
     exponent, SVG path command letters only) and length-bounded; geometry is NOT fully parsed; into
     `parent_id` (must exist) or the document default parent. Optional `fill` / `stroke` /
-    `stroke_width` (E16-10b) paint it in this call (validated like `set_fill` / `set_stroke`;
+    `stroke_width` paint it in this call (validated like `set_fill` / `set_stroke`;
     default None = unpainted).
 
     Return shape: `CreateResult` — `object_id` (new id), `bbox=None` (paths are not analytically
@@ -281,7 +281,7 @@ Description:
     `create_polyline`; for curves use `create_path`.
 
     Key params: `points` ≥ 1 `(x, y)` pairs; inserted into `parent_id` (must exist) or the document
-    default parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` (E16-10b)
+    default parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width`
     paint it in this call (validated like `set_fill` / `set_stroke`; default None = unpainted).
 
     Return shape: `CreateResult` — `object_id` (new id), analytic `bbox` (extent of the points),
@@ -304,7 +304,7 @@ Description:
     single segment use `create_line`; for curves use `create_path`.
 
     Key params: `points` ≥ 1 `(x, y)` pairs; inserted into `parent_id` (must exist) or the document
-    default parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` (E16-10b)
+    default parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width`
     paint it in this call (validated like `set_fill` / `set_stroke`; default None = unpainted).
 
     Return shape: `CreateResult` — `object_id` (new id), analytic `bbox` (extent of the points),
@@ -328,7 +328,7 @@ Description:
 
     Key params: `width` / `height` > 0; `rx` / `ry` optional corner radii; inserted into `parent_id`
     (must exist) or the document default parent (first layer, else root); `object_id` to pin the id.
-    Optional `fill` / `stroke` / `stroke_width` (E16-10b) paint the shape IN THIS CALL — validated
+    Optional `fill` / `stroke` / `stroke_width` paint the shape IN THIS CALL — validated
     exactly like `set_fill` / `set_stroke` (colour or `url(#id)`; CSS length) — so no mandatory
     second styling call (default None = unpainted, prior behaviour).
 
@@ -353,7 +353,7 @@ Description:
 
     Key params: `text` is length-bounded and rejects control characters other than tab / newline /
     carriage return (stored as a text node, no markup injection); inserted into `parent_id` (must
-    exist) or the document default parent. Optional `fill` / `stroke` / `stroke_width` (E16-10b)
+    exist) or the document default parent. Optional `fill` / `stroke` / `stroke_width`
     paint the glyphs in this call (validated like `set_fill` / `set_stroke`; default None =
     unpainted). For font family/size/weight use `set_font`.
 
@@ -755,7 +755,7 @@ Description:
 
     Key params: `mapping` maps each source colour to its replacement; every key AND value is
     strictly colour-validated UP FRONT — a typo'd or non-colour entry (e.g. `notacolor`) is rejected
-    with a `ToolError` BEFORE any mutation, op record, or snapshot is created (E10-02). Each reuses
+    with a `ToolError` BEFORE any mutation, op record, or snapshot is created. Each reuses
     the `replace_color` matching logic. `scope_ids`, if given, confines all replacements to those
     elements' subtrees.
 
@@ -976,7 +976,7 @@ Description:
     Key params: `width`/`height` are validated CSS lengths; child geometry is not altered. By
     default an existing `viewBox` is preserved (synthesized only when absent). `adjust_viewbox=True`
     RETARGETS the `viewBox` to `"0 0 W H"` so it tracks the new canvas (opt-in; changes the
-    coordinate system). BLEED (opt-in, E16-10d): `bleed` > 0 ALSO grows the viewBox outward by that
+    coordinate system). BLEED (opt-in): `bleed` > 0 ALSO grows the viewBox outward by that
     many user units on every side and paints the new border strip with `bleed_color` (validated
     colour, default white) via one background `<rect>` behind all content — a print-bleed resize in
     ONE call instead of a second `scale_object`/background step. `bleed` needs a valid existing or
@@ -1076,7 +1076,7 @@ Description:
 
     Return shape: `SetFontResult` — all `EditResult` fields (`operation_id`, `snapshot_id`,
     `changed`, before/after preview; the edit lands on the working copy only, reversible) PLUS glyph
-    coverage (E16-04): `coverage_ok` is False when a target now names a family that cannot render
+    coverage: `coverage_ok` is False when a target now names a family that cannot render
     its text, and `font_coverage` lists per object the `uncovered_chars` (read from the font's OWN
     cmap, never fontconfig substitution) and a `suggested_family` that covers them — so a
     non-covering font choice is checkable at apply time instead of silently shipping tofu.
@@ -1244,7 +1244,7 @@ Description:
 
     Key params: `object_ids` are the targets. `dry_run=True` (DEFAULT) reports which ids would be
     simplified WITHOUT invoking the engine; a real run needs a non-empty `approval_token`. OVERLAP,
-    DELIBERATE (E10-07 P10): runs the SAME LOSSY `path-simplify` as `simplify_path` (removes nodes
+    DELIBERATE (P10): runs the SAME LOSSY `path-simplify` as `simplify_path` (removes nodes
     within a tolerance, can rewrite straight segments as curves). Inkscape 1.4.3 exposes no
     distinct, dependable non-destructive path-cleanup Action over `--actions`
     (`org.inkscape.path.to-absolute`
@@ -1340,24 +1340,25 @@ Key params: doc_id: string, series: string | null, width_px: integer | null, lab
 Description:
     Capture the next numbered PNG screenshot in a per-run frame series.
 
-    When to use: documenting a scripted edit sequence step-by-step. For a one-off check use
-    `render_preview`; to gather a finished series use `list_frames`.
+        When to use: documenting a scripted edit sequence step-by-step. For a one-off check use
+        `render_preview`; to gather a finished series use `list_frames`.
 
-    Key params: `series` (sanitized; defaults to `run`) groups frames into a folder under
-    `artifacts/frames/<series>/`; the index is derived from the filesystem (highest existing
-    `frame-NNN` + 1) — monotonic, survives a restart, never clobbers. `label` is folded into the
-    frame name. Renders the whole canvas exactly like `render_preview` (no UI chrome). INLINE RASTER
-    (E14-05): the PNG is returned inline by default (gated by `max_output_bytes`); `inline=False`
-    returns only the structured result.
+        Key params: `series` (sanitized; defaults to `run`) groups frames into a folder under
+        `artifacts/frames/<series>/`; the index is derived from the filesystem (highest existing
+        `frame-NNN` + 1) — monotonic, survives a restart, never clobbers. `label` is folded into the
+        frame name. Renders the whole canvas exactly like `render_preview` (no UI chrome). INLINE RASTER
+    : the PNG is returned inline by default (gated by `max_output_bytes`); `inline=False`
+        returns only the structured result.
 
-    Return shape: `FrameResult` — `artifact_path` / `workspace_relative_path` (same value, E11-01),
-    `format`, `width_px`/`height_px`, `series`, `frame_index` (1-based), `stale`. With an inline
-    image, a `ToolResult` carrying the same fields plus the image block.
+        Return shape: `FrameResult` — `artifact_path` / `workspace_relative_path` (same value),
+        `format`, `width_px`/`height_px`, `series`, `frame_index` (1-based), `stale`. With an inline
+        image, a `ToolResult` carrying the same fields plus the image block.
 
-    Example: `capture_frame(doc_id, series="cleanup", label="after-simplify")`
+        Example: `capture_frame(doc_id, series="cleanup", label="after-simplify")`
 
-    Risk class: low (render to the managed artifacts dir; no original overwrite, no Operation
-    Record).
+        Risk class: low (render to the managed artifacts dir; no original overwrite, no Operation
+        Record).
+
 
 #### create_icon_set
 Risk class: low
@@ -1365,23 +1366,24 @@ Key params: doc_id: string, sizes: array | null, out_dir: string | null, name_pr
 Description:
     Export a multi-size square PNG icon set from the source document.
 
-    When to use: producing a standard square icon set in one call. For a responsive web bundle use
-    `export_web_profile`; for arbitrary batch specs use `export_batch`.
+       When to use: producing a standard square icon set in one call. For a responsive web bundle use
+       `export_web_profile`; for arbitrary batch specs use `export_batch`.
 
-    Key params: `sizes` is the list of square px sizes (defaults to 16, 32, 48, 64, 128, 256). Each
-    must be a positive integer no greater than the configured pixel cap; an out-of-range or
-    non-positive size is rejected before Inkscape runs and no partial set is written. `out_dir`
-    (E11-05/E16-03) writes the set into a caller-chosen dir — a relative `out_dir` anchors to the
-    workspace ROOT and is sandbox-checked (out-of-workspace rejected "path rejected: outside
-    workspace"); `name_prefix` tags each file.
+       Key params: `sizes` is the list of square px sizes (defaults to 16, 32, 48, 64, 128, 256). Each
+       must be a positive integer no greater than the configured pixel cap; an out-of-range or
+       non-positive size is rejected before Inkscape runs and no partial set is written. `out_dir`
+    writes the set into a caller-chosen dir — a relative `out_dir` anchors to the
+       workspace ROOT and is sandbox-checked (out-of-workspace rejected "path rejected: outside
+       workspace"); `name_prefix` tags each file.
 
-    Return shape: `ProfileExportResult` — `profile`, `applied_settings`, and `artifacts` (each
-    carries its `requested_size_px`, a `workspace_relative_path`, and content-truth
-    `opaque_px`/`all_blank`; E16-07).
+       Return shape: `ProfileExportResult` — `profile`, `applied_settings`, and `artifacts` (each
+       carries its `requested_size_px`, a `workspace_relative_path`, and content-truth
+       `opaque_px`/`all_blank`).
 
-    Example: `create_icon_set(doc_id, sizes=[16, 32, 64], out_dir="dist/icons")`
+       Example: `create_icon_set(doc_id, sizes=[16, 32, 64], out_dir="dist/icons")`
 
-    Risk class: low (export to a sandbox-checked dir; no original overwrite).
+       Risk class: low (export to a sandbox-checked dir; no original overwrite).
+
 
 #### export_batch
 Risk class: low
@@ -1389,24 +1391,25 @@ Key params: doc_id: string, specs: array, dry_run: boolean, byte_budget: integer
 Description:
     Run a bounded batch of typed export specs in one call (dry-run by default).
 
-    When to use: exporting many sizes/formats/objects in one call. For a single export use
-    `export_document` / `export_object`; for a standard icon set use `create_icon_set`.
+       When to use: exporting many sizes/formats/objects in one call. For a single export use
+       `export_document` / `export_object`; for a standard icon set use `create_icon_set`.
 
-    Key params: `specs` is a typed list (each: `format` png/pdf/svg, optional `width_px`, optional
-    `object_id` for a single object). Bounded: at most a fixed number of specs per call and a
-    total-output byte budget (`byte_budget`, default: the per-document artifact budget).
-    `dry_run=True` (DEFAULT) validates and returns the plan + projected sizes + `within_budget`,
-    writing nothing; `dry_run=False` refuses cleanly if the projection exceeds the budget. `out_dir`
-    (E11-05) writes into a caller-chosen dir — relative anchors to the workspace ROOT,
-    sandbox-checked (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix`
-    tags each file.
+       Key params: `specs` is a typed list (each: `format` png/pdf/svg, optional `width_px`, optional
+       `object_id` for a single object). Bounded: at most a fixed number of specs per call and a
+       total-output byte budget (`byte_budget`, default: the per-document artifact budget).
+       `dry_run=True` (DEFAULT) validates and returns the plan + projected sizes + `within_budget`,
+       writing nothing; `dry_run=False` refuses cleanly if the projection exceeds the budget. `out_dir`
+    writes into a caller-chosen dir — relative anchors to the workspace ROOT,
+       sandbox-checked (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix`
+       tags each file.
 
-    Return shape: `BatchResult` — `item_count`, per-item entries (each with a
-    `workspace_relative_path` on a real run), projected/actual total size, and `within_budget`.
+       Return shape: `BatchResult` — `item_count`, per-item entries (each with a
+       `workspace_relative_path` on a real run), projected/actual total size, and `within_budget`.
 
-    Example: `export_batch(doc_id, [{"format": "png", "width_px": 256}], dry_run=False)`
+       Example: `export_batch(doc_id, [{"format": "png", "width_px": 256}], dry_run=False)`
 
-    Risk class: low (artifact-only export to a sandbox-checked dir; composes the E1-06 engine).
+       Risk class: low (artifact-only export to a sandbox-checked dir; composes the engine).
+
 
 #### export_document
 Risk class: low
@@ -1418,13 +1421,13 @@ Description:
     for many sizes/formats at once use `export_batch`; for a web/print bundle use the profile tools.
 
     Key params: `format` is one of "png"/"pdf"/"svg" (others rejected). PNG honors `width_px`
-    (pixel-capped before Inkscape runs); PDF/SVG are vector and ignore it. `out_dir` (E11-05) writes
+    (pixel-capped before Inkscape runs); PDF/SVG are vector and ignore it. `out_dir` writes
     into a caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is
     sandbox-checked (out-of-workspace is rejected with "path rejected: outside workspace");
-    `name_prefix` tags the filename. INLINE RASTER (E14-05): a PNG is returned inline by default
+    `name_prefix` tags the filename. INLINE RASTER: a PNG is returned inline by default
     (gated by `max_output_bytes`); PDF/SVG are never embedded; `inline=False` opts out.
 
-    Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value, E11-01),
+    Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value),
     `format`, `width_px`/`height_px` (TRUE size for PNG, None for vector), `stale`. With an inline
     image, a `ToolResult` carrying the same fields plus the image block.
 
@@ -1442,13 +1445,13 @@ Description:
     the whole document use `export_document`; for many at once use `export_batch`.
 
     Key params: `object_id` must exist and match the safe SVG-id charset (else rejected before it
-    reaches Inkscape). `format` is one of "png"/"pdf"/"svg". `out_dir` (E11-05) writes into a
+    reaches Inkscape). `format` is one of "png"/"pdf"/"svg". `out_dir` writes into a
     caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
     (out-of-workspace is rejected with "path rejected: outside workspace"); `name_prefix` tags the
-    filename. INLINE RASTER (E14-05): a PNG is returned inline by default (gated by
+    filename. INLINE RASTER: a PNG is returned inline by default (gated by
     `max_output_bytes`); PDF/SVG never embedded; `inline=False` opts out.
 
-    Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value, E11-01),
+    Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value),
     `format`, `width_px`/`height_px` (TRUE size for PNG, None for vector), `stale`. With an inline
     image, a `ToolResult` carrying the same fields plus the image block.
 
@@ -1468,13 +1471,13 @@ Description:
     Key params: applies real print-specific Inkscape settings (PDF version pinned to 1.4 + text
     outlined to paths) so output is press-safe and ALWAYS differs from a plain PDF export — even for
     text-free docs, since the plain export defaults to PDF 1.5 while this pins 1.4 (header
-    `%PDF-1.4`, a deterministic byte difference). `out_dir` (E11-05/E16-03) writes into a
+    `%PDF-1.4`, a deterministic byte difference). `out_dir` writes into a
     caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
     (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix` tags the file.
 
-    Return shape: `ProfileExportResult` — `profile`, the auditable `applied_settings` (E11-11), and
+    Return shape: `ProfileExportResult` — `profile`, the auditable `applied_settings`, and
     one PDF in `artifacts` with a `workspace_relative_path` plus content-truth `is_vector` /
-    `fonts_outlined` (true vector when both hold; E16-07).
+    `fonts_outlined` (true vector when both hold).
 
     Example: `export_print_profile(doc_id, out_dir="dist/print")`
 
@@ -1511,25 +1514,26 @@ Description:
 Risk class: low
 Key params: doc_id: string, width_px: integer, widths: array | null, scales: array | null, out_dir: string | null, name_prefix: string | null
 Description:
-    Export a web-oriented asset set: a responsive PNG set plus one plain SVG (E11-11).
+    Export a web-oriented asset set: a responsive PNG set plus one plain SVG.
 
-    When to use: producing a web-ready asset bundle. For a print PDF use `export_print_profile`; for
-    a square icon set use `create_icon_set`; for a single export use `export_document`.
+       When to use: producing a web-ready asset bundle. For a print PDF use `export_print_profile`; for
+       a square icon set use `create_icon_set`; for a single export use `export_document`.
 
-    Key params: PNG widths resolve as — explicit `widths` (each a PNG); else density `scales`
-    applied to `width_px` (e.g. [1,2,3] -> 1x/2x/3x); else `width_px`. Every PNG is pixel-capped
-    before Inkscape runs and distinct on disk; responsive entries report their `scale`. `out_dir`
-    (E11-05/E16-03) writes the set into a caller-chosen dir so a `dist/` tree assembles with no
-    `Bash cp` — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
-    (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix` tags each file.
+       Key params: PNG widths resolve as — explicit `widths` (each a PNG); else density `scales`
+       applied to `width_px` (e.g. [1,2,3] -> 1x/2x/3x); else `width_px`. Every PNG is pixel-capped
+       before Inkscape runs and distinct on disk; responsive entries report their `scale`. `out_dir`
+    writes the set into a caller-chosen dir so a `dist/` tree assembles with no
+       `Bash cp` — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
+       (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix` tags each file.
 
-    Return shape: `ProfileExportResult` — `profile`, `applied_settings`, and ordered `artifacts`
-    (ascending width, then one plain SVG last); each carries a `workspace_relative_path` plus
-    content-truth fields (PNG: `opaque_px`/`all_blank`; E16-07).
+       Return shape: `ProfileExportResult` — `profile`, `applied_settings`, and ordered `artifacts`
+       (ascending width, then one plain SVG last); each carries a `workspace_relative_path` plus
+       content-truth fields (PNG: `opaque_px`/`all_blank`).
 
-    Example: `export_web_profile(doc_id, scales=[1, 2, 3], out_dir="dist/web")`
+       Example: `export_web_profile(doc_id, scales=[1, 2, 3], out_dir="dist/web")`
 
-    Risk class: low (export to a sandbox-checked dir; no original overwrite).
+       Risk class: low (export to a sandbox-checked dir; no original overwrite).
+
 
 #### list_frames
 Risk class: low
@@ -1556,23 +1560,24 @@ Key params: doc_id: string, width_px: integer | null, name: string | null, inlin
 Description:
     Render a PNG preview of the whole document into the artifacts dir.
 
-    When to use: a quick visual check of the whole document. For a final file use `export_document`;
-    for one object use `export_object`; for an ordered run series use `capture_frame`.
+        When to use: a quick visual check of the whole document. For a final file use `export_document`;
+        for one object use `export_object`; for an ordered run series use `capture_frame`.
 
-    Key params: `width_px` scales the raster (height follows the document aspect ratio); omit for
-    intrinsic size. Oversized requests are rejected before Inkscape runs. `name` tags the file
-    (successive calls do NOT clobber, E11-12 — each render gets a unique frame name). INLINE RASTER
-    (E14-05): by default the PNG is also returned as an MCP image block so the agent SEES it without
-    a second `Read`; gated by `max_output_bytes` (~5 MiB default) and skipped for an oversized
-    render; `inline=False` returns only the structured result.
+        Key params: `width_px` scales the raster (height follows the document aspect ratio); omit for
+        intrinsic size. Oversized requests are rejected before Inkscape runs. `name` tags the file
+        (successive calls do NOT clobber, — each render gets a unique frame name). INLINE RASTER
+    : by default the PNG is also returned as an MCP image block so the agent SEES it without
+        a second `Read`; gated by `max_output_bytes` (~5 MiB default) and skipped for an oversized
+        render; `inline=False` returns only the structured result.
 
-    Return shape: `PreviewResult` — `artifact_path` / `workspace_relative_path` (same root-relative
-    value, E11-01), `format`, `width_px`/`height_px` (TRUE on-disk size), `stale`. With an inline
-    image, a `ToolResult` carrying the same structured fields plus the image block.
+        Return shape: `PreviewResult` — `artifact_path` / `workspace_relative_path` (same root-relative
+        value), `format`, `width_px`/`height_px` (TRUE on-disk size), `stale`. With an inline
+        image, a `ToolResult` carrying the same structured fields plus the image block.
 
-    Example: `render_preview(doc_id, width_px=512)`
+        Example: `render_preview(doc_id, width_px=512)`
 
-    Risk class: low (render/export to artifact dir; no original overwrite).
+        Risk class: low (render/export to artifact dir; no original overwrite).
+
 
 ### Optimize
 
@@ -1621,13 +1626,13 @@ Description:
     (3) round geometry numbers (path `d`, transforms, `x`/`y`/`width`/…) to `precision` decimals
     (0-8, default 2; root `viewBox` untouched). `keep_ids` is an allowlist of ids that must NEVER be
     stripped as "unreferenced" — pass a deliberate human/a11y id (e.g. one from `rename_object`) to
-    keep "one clean file with a stable id" (E10-07 / E11-04); unknown ids are ignored. Re-running on
+    keep "one clean file with a stable id"; unknown ids are ignored. Re-running on
     optimized output removes/rounds nothing further.
 
     Return shape: `WebOptimizeResult` — the reversible-edit fields (`operation_id`, `snapshot_id`,
     before/after preview) plus machine-diffable deltas `bytes_before`, `bytes_after`, and `removed`
     (a ``{code: count}`` map keyed IDENTICALLY to `quality_report.opportunities`), so an agent on a
-    byte budget can compute the saving without parsing prose or stat-ing the file (E11-08).
+    byte budget can compute the saving without parsing prose or stat-ing the file.
 
     Example: `svg_web_optimize(doc_id, precision=2, keep_ids=["header"])`
 
@@ -1668,7 +1673,7 @@ Description:
     `live_insert_svg`; to edit text use `live_set_selected_text`; for headless edits use `set_fill`
     / `move_object` / etc.
 
-    Key params: reuses the headless E2 safe-edit semantics — `fill`/`stroke` colour-validated,
+    Key params: reuses the headless safe-edit semantics — `fill`/`stroke` colour-validated,
     `stroke_width` a CSS length, `opacity` in [0, 1], transform composed from `dx`/`dy` (both
     required together), `scale` (positive), `rotate` (degrees); at least one input required.
     Semantic-only — no arbitrary code, no raw Action (ADR-003). Mutating a running user session is
@@ -1688,7 +1693,7 @@ Description:
     Auto-arm the extension-socket helper so a programmatic launch gets the FULL live surface.
 
     When to use: bringing up the FULL perceive/compose live command set without a human
-    Extensions-menu click (E16-10f) — a programmatic launch otherwise yields only DBus's reduced
+    Extensions-menu click — a programmatic launch otherwise yields only DBus's reduced
     action set. After this returns `armed`, call `live_connect` (the socket bridge is then the best
     transport). To install the helper files first use `live_install_helper`; to probe readiness use
     `check_live_support`.
@@ -1718,8 +1723,7 @@ Description:
 
     Key params: `prefer` selects the profile. `read` (default) is the best READ-capable transport
     (extension-socket primary; full selection/inspect surface) but is MODAL on the socket bridge —
-    the GUI freezes for the session. `no_freeze` drives the GUI WITHOUT freezing (Linux DBus path,
-    E3-07): the export-based active-doc read, `live_render_view`, `live_set_viewport`, and
+    the GUI freezes for the session. `no_freeze` drives the GUI WITHOUT freezing (Linux DBus path): the export-based active-doc read, `live_render_view`, `live_set_viewport`, and
     `live_apply_to_selection` are no-freeze; selection-id reads (`live_get_selection` /
     `live_inspect_selection`) and `live_insert_svg` / `live_set_selected_text` are NOT available
     over DBus and stay modal. Requires the master gate (`INKSCAPE_MCP_LIVE_ENABLED`). With no
@@ -1735,7 +1739,7 @@ Description:
 Risk class: low
 Key params: operation_id: string
 Description:
-    Produce a FOCUSED, annotated before/after visual diff of a live operation (E8-04).
+    Produce a FOCUSED, annotated before/after visual diff of a live operation.
 
     When to use: visualizing what one live mutation changed. To produce a mutation to diff use
     `live_apply_to_selection` / `live_insert_svg` / `live_set_selected_text` (or
@@ -1814,16 +1818,16 @@ Description:
 Risk class: low
 Key params: region_x: number | null, region_y: number | null, region_width: number | null, region_height: number | null, scale: number | null, fast: boolean
 Description:
-    Capture one live frame as a PNG PLUS a structured, machine-readable `LiveScene` (E8-02).
+    Capture one live frame as a PNG PLUS a structured, machine-readable `LiveScene`.
 
     When to use: the core perception step — the agent reasons over STRUCTURE, not pixels. For
     pixels-only use `live_render_view`; for one loop iteration use `live_session_step`.
 
     Key params: region/scale/fast work exactly as `live_render_view` (all four region parts at once,
     user units, w/h > 0; optional `scale` > 0; `fast=True` for the downscaled loop preview, explicit
-    `scale` wins). Frame rendered through the transport (E8-01), never an OS screenshot
+    `scale` wins). Frame rendered through the transport, never an OS screenshot
     (deterministic, cross-platform — ADR-006); served from the per-session cache keyed on
-    `(doc_revision, viewport, scale)` (E8-06). Scene pulled over the fixed `get_scene` command — no
+    `(doc_revision, viewport, scale)`. Scene pulled over the fixed `get_scene` command — no
     code or raw Action path (ADR-003). Requires an established session. READ-ONLY (no Operation
     Record, no approval).
 
@@ -1906,7 +1910,7 @@ Description:
     the master gate (live is opt-in). Touches no workspace document.
 
     Return shape: `HelperInstallResult` — `installed_files` and `extensions_dir` (presented
-    `~`-relative, never an absolute host path; E10-10/L5).
+    `~`-relative, never an absolute host path/L5).
 
     Example: `live_install_helper()`
 
@@ -1927,7 +1931,7 @@ Description:
     explicit `scale` always wins. Every numeric is finite-checked and bounded server-side before it
     crosses the transport; the frame comes from the transport renderer, never an OS screenshot
     (deterministic, cross-platform — ADR-006). Served from a per-session cache keyed on
-    `(doc_revision, viewport, scale)` (E8-06) so a stale frame is never returned after a change.
+    `(doc_revision, viewport, scale)` so a stale frame is never returned after a change.
 
     Return shape: `LiveRenderResult` — a workspace-relative PNG path plus render metadata.
 
@@ -1939,7 +1943,7 @@ Description:
 Risk class: high
 Key params: action: string | null, approval_token: string | null, fill: string | null, stroke: string | null, stroke_width: string | null, opacity: number | null, dx: number | null, dy: number | null, scale: number | null, rotate: number | null, svg_fragment: string | null, text: string | null
 Description:
-    Run ONE perceive→decide→act→observe iteration of the live-view loop (E8-05).
+    Run ONE perceive→decide→act→observe iteration of the live-view loop.
 
     When to use: the flagship loop step — call it repeatedly to drive a live edit loop (use
     `live_wait_for_change` between steps to react to the user's edits). It COMPOSES the existing
@@ -1957,7 +1961,7 @@ Description:
     `approval_token`. Requires a session.
 
     Return shape: `LiveSessionStepResult` — always the PERCEIVE scene + frame; after an act also the
-    `operation_id`, a focused `live_diff_view` artifact (E8-04), and the after scene/frame.
+    `operation_id`, a focused `live_diff_view` artifact, and the after scene/frame.
 
     Example: `live_session_step(action="apply", approval_token="ok", fill="#3366cc")`
 
@@ -2052,7 +2056,7 @@ Description:
 Risk class: low
 Key params: timeout_s: number, poll_interval_s: number
 Description:
-    Block until the live state changes, or the bounded timeout elapses (E8-03; read-only).
+    Block until the live state changes, or the bounded timeout elapses (read-only).
 
     When to use: between `live_session_step` iterations so the loop reacts to the user's own GUI
     edits instead of busy-rendering. To then re-perceive use `live_get_scene`.
@@ -2116,24 +2120,25 @@ Key params: doc_id: string
 Description:
     Apply the snapshot + live-frame retention policy, pruning superseded server state.
 
-    When to use: reclaiming disk from old snapshots/frames. To roll back instead use
-    `restore_snapshot`; to list checkpoints use `list_snapshots`. No mutating tool triggers this
-    implicitly — it is an explicit maintenance sweep.
+       When to use: reclaiming disk from old snapshots/frames. To roll back instead use
+       `restore_snapshot`; to list checkpoints use `list_snapshots`. No mutating tool triggers this
+       implicitly — it is an explicit maintenance sweep.
 
-    Key params: none beyond `doc_id`. Retains the last N snapshots and all within the keep-days
-    window (configurable), bounded by absolute hard caps on count and bytes; deletes the rest plus
-    orphaned Operation Records. In the SAME pass it prunes the doc root's loop/live render frames
-    (E8-06) by age + byte budget, never deleting a frame still referenced by a Live Operation
-    Record. The current working copy and original are never touched, so the restore chain stays
-    intact.
+       Key params: none beyond `doc_id`. Retains the last N snapshots and all within the keep-days
+       window (configurable), bounded by absolute hard caps on count and bytes; deletes the rest plus
+       orphaned Operation Records. In the SAME pass it prunes the doc root's loop/live render frames
+    by age + byte budget, never deleting a frame still referenced by a Live Operation
+       Record. The current working copy and original are never touched, so the restore chain stays
+       intact.
 
-    Return shape: `PruneResult` — `pruned_snapshot_ids`, `pruned_operation_ids`, and `live_frames`
-    (the frame pruning stats).
+       Return shape: `PruneResult` — `pruned_snapshot_ids`, `pruned_operation_ids`, and `live_frames`
+       (the frame pruning stats).
 
-    Example: `prune_snapshots(doc_id)`
+       Example: `prune_snapshots(doc_id)`
 
-    Risk class: low (deletes only disposable, superseded server state under a deterministic policy;
-    authoritative current state is never affected).
+       Risk class: low (deletes only disposable, superseded server state under a deterministic policy;
+       authoritative current state is never affected).
+
 
 #### restore_snapshot
 Risk class: medium
@@ -2234,8 +2239,7 @@ Description:
 
     Key params: `include_all_actions` (default True for back-compat) controls the large `actions`
     array — the host reports ~1000 ids but only `allowlisted`/`available` can ever execute, so pass
-    `False` to OMIT `actions` while keeping the accurate `action_count` (a much smaller payload,
-    E13-05).
+    `False` to OMIT `actions` while keeping the accurate `action_count` (a much smaller payload).
 
     Return shape: `ActionDiscovery` — `actions` (all host ids unless omitted), `action_count`,
     `allowlisted` (may ever execute), `available` (allowlisted AND present), `notes`. Side effect:
@@ -2459,7 +2463,7 @@ Description:
 
 #### compose_artwork
 Args: goal
-Description: On-ramp the E14 generative loop: create → draw → render(inline) → validate → export.
+Description: On-ramp the generative loop: create → draw → render(inline) → validate → export.
 
 Orients the agent to build new artwork toward `goal` from a blank canvas using the typed
 authoring tools, preview the inline raster, validate, then export. Guidance only — it executes
@@ -2501,7 +2505,7 @@ Description: Orient the agent on recoloring a document to a brand/theme palette.
 ## Resources
 
 #### inkscape://documents
-Description: Index of open documents and their per-document resource URIs (E11-10c discoverability).
+Description: Index of open documents and their per-document resource URIs (discoverability).
 
 The seven per-document resources above are registered as URI TEMPLATES (they carry a `{doc_id}`
 placeholder), so they appear under `resources/templates/list` but NOT under the plain
@@ -2514,7 +2518,7 @@ Host-path-free: only opaque document ids and their resource URIs are emitted —
 path. Risk class: low (read-only resource).
 
 #### inkscape://live/events
-Description: Latest live change state (E8-03): the current cheap state token + classified deltas.
+Description: Latest live change state: the current cheap state token + classified deltas.
 
 Polls the cheap state token once (a small revision marker + selection ids + coarse viewport —
 never the full document or a PNG; protocol v5), hashes + diffs it against the session's last
@@ -2527,7 +2531,7 @@ READ-ONLY — no document mutation, no Operation Record.
 Risk class: low (read-only perception).
 
 #### inkscape://live/operations
-Description: Recent Live Operation Records (E4-02): what each live mutation changed and how.
+Description: Recent Live Operation Records: what each live mutation changed and how.
 
 Makes live mutations observable — each record carries the transport, selection, affected ids,
 approval decision, before/after render paths, and status. Returns an empty log when there are
@@ -2550,7 +2554,7 @@ Returns a not-connected `LiveSession` when no session is up — never an error.
 Risk class: low (read-only).
 
 #### inkscape://live/view
-Description: Current live frame's structured metadata: the `LiveScene` (E8-02), without the PNG bytes.
+Description: Current live frame's structured metadata: the `LiveScene`, without the PNG bytes.
 
 Exposes the machine-readable scene — active-doc ref, selection ids + bboxes, viewport
 (zoom/center/visible region), canvas size, and a compact visible-object summary (reusing the
@@ -2562,7 +2566,7 @@ an error path). READ-ONLY — no document mutation, no Operation Record.
 Risk class: low (read-only perception).
 
 #### inkscape://prompts
-Description: Index of registered MCP prompts (name + one-line purpose + arguments) — E16-10e.
+Description: Index of registered MCP prompts (name + one-line purpose + arguments).
 
 Makes the shipped prompt library (`live_canvas_assist`, the export/recolor library, the
 authoring library) discoverable through the RESOURCE surface (`ListMcpResourcesTool`), which
@@ -2579,7 +2583,7 @@ Risk class: low (read-only resource).
 Description: Probed Inkscape/runtime capability matrix (version, actions, export formats, fonts, live).
 
 Returns the same cached matrix as the `list_capabilities` tool, including the authoritative
-MCP tool surface (`tool_count` + `tools`, from the live registry — E16-01). Use the
+MCP tool surface (`tool_count` + `tools`, from the live registry). Use the
 `diagnose_runtime` tool to force a fresh probe.
 
 Risk class: low (read-only).

@@ -1,4 +1,4 @@
-"""Runtime capability resource (E1-03) and curated intents resource (E14-08b).
+"""Runtime capability resource and curated intents resource.
 
 `runtime_capabilities` serves the same cached capability matrix as the `list_capabilities` tool via
 the shared cache in `inkscape_mcp.tools.system`, so the resource and the tool always agree for a
@@ -21,7 +21,7 @@ def runtime_capabilities() -> str:
     """Probed Inkscape/runtime capability matrix (version, actions, export formats, fonts, live).
 
     Returns the same cached matrix as the `list_capabilities` tool, including the authoritative
-    MCP tool surface (`tool_count` + `tools`, from the live registry — E16-01). Use the
+    MCP tool surface (`tool_count` + `tools`, from the live registry). Use the
     `diagnose_runtime` tool to force a fresh probe.
 
     Risk class: low (read-only).

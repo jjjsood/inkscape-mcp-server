@@ -1,8 +1,8 @@
-"""Path geometry engine (E6-01, ADR-005 — Inkscape ENGINE, not direct DOM).
+"""Path geometry engine (ADR-005 — Inkscape ENGINE, not direct DOM).
 
 Pure functions (no MCP decorators) that drive Inkscape Actions to perform DESTRUCTIVE path
 geometry on the working copy, and a thin DOM-replace bridge so the result flows through the shared
-E2-04 mutating pipeline (:func:`inkscape_mcp.edit.pipeline.apply_edit`) — keeping every path op
+mutating pipeline (:func:`inkscape_mcp.edit.pipeline.apply_edit`) — keeping every path op
 snapshotted, recorded, previewed, and reversible like any other edit.
 
 Why the engine and not lxml (ADR-005): boolean ops, simplification, stroke outlining, and path
@@ -98,7 +98,7 @@ _BINARY_OPS = frozenset({UNION, DIFFERENCE, INTERSECTION, EXCLUSION, COMBINE})
 #: single, documented surviving id (see :func:`_surviving_target_id`): the BOTTOM-most target — the
 #: one painted first, i.e. first in document order. Inkscape's ``path-union`` / ``path-difference``
 #: already keep the bottom id, but ``path-combine`` keeps the TOP id (last in document order); the
-#: engine normalizes that case so all merge ops survive the SAME (bottom) id. (E10-07 / E11-07.)
+#: engine normalizes that case so all merge ops survive the SAME (bottom) id. (.)
 _MERGE_OPS = frozenset({UNION, DIFFERENCE, INTERSECTION, EXCLUSION, COMBINE})
 
 
@@ -154,7 +154,7 @@ def _bottom_target_id(root: etree._Element, ids: list[str]) -> str | None:
     """Return the validated target id that appears FIRST in document order (the bottom element).
 
     SVG paints in document order, so the element earliest in the tree is the bottom-most. That is
-    the documented surviving id for a merge op (E10-07 standardizes combine/boolean on it). `ids`
+    the documented surviving id for a merge op (standardizes combine/boolean on it). `ids`
     are already validated to exist; returns ``None`` only if none are found (never expected).
     """
     wanted = set(ids)
@@ -209,7 +209,7 @@ def _outline_fill_from(elem: etree._Element | None) -> str:
 
     ``object-stroke-to-path`` turns a stroked outline into a FILLED path, but Inkscape's
     ``--export-plain-svg`` output drops the paint and leaves the result with no explicit ``fill``,
-    so it renders on the SVG default (black) instead of the original stroke colour (E13-04). The
+    so it renders on the SVG default (black) instead of the original stroke colour. The
     source element's effective stroke colour is the correct fill for the outline; fall back to
     ``#000000`` (the default it would otherwise rely on) when the source had no concrete stroke.
     """
@@ -230,7 +230,7 @@ def _restore_outline_fill(
     Scoped to the target `ids` only (the converted elements keep their id), so unrelated paths
     that legitimately rely on the default fill are never touched. For each target that survives as
     a ``path`` with no explicit ``fill``, set ``fill`` to the source element's stroke colour (read
-    from the pre-op tree `old_root`). E13-04.
+    from the pre-op tree `old_root`)..
     """
     for oid in ids:
         new_elem = find_by_id(new_root, oid)
@@ -248,7 +248,7 @@ def _is_empty_marker_container(elem: etree._Element) -> bool:
     When a stroked object carries no marker, ``object-stroke-to-path`` still emits an empty
     ``<g inkscape:label="markers">`` (or a bare empty ``<g>`` / ``<path>``) wrapping nothing — a
     no-op container the later ``svg_web_optimize`` pass strips. We drop it here so the conversion
-    leaves a clean tree in one call (E16-10c). A container is "empty" only when it has NO element
+    leaves a clean tree in one call. A container is "empty" only when it has NO element
     children AND, for a ``path``, no ``d`` geometry, so a real marker subtree is never removed.
     """
     if not isinstance(elem.tag, str):
@@ -270,7 +270,7 @@ def _drop_empty_markers(old_root: etree._Element, new_root: etree._Element, ids:
     Scoped to NEWLY-INTRODUCED empty containers only: an element id present in the engine output
     but absent from the pre-op tree, that is an empty ``<g>`` / geometry-less ``<path>`` and is NOT
     one of the converted target ids. This never touches a real (non-empty) marker subtree, nor any
-    element that already existed, so the only thing dropped is the no-op stub. E16-10c.
+    element that already existed, so the only thing dropped is the no-op stub..
     """
     before = all_ids(old_root)
     target_ids = set(ids)
@@ -337,7 +337,7 @@ def run_path_op(
 
     s = _settings(settings)
 
-    # E12-04: when the warm shell engine is enabled, run the op on the stateful worker (reloads the
+    #: when the warm shell engine is enabled, run the op on the stateful worker (reloads the
     # on-disk working copy first, so its document never diverges from disk) and return the result
     # bytes. ANY engine fault falls back to the per-call CLI below — correctness can never regress.
     if engine_mode_is_shell(s):
@@ -413,7 +413,7 @@ def apply_path_op(
     element whose id is standardized to the BOTTOM-most target (first in document order) — see
     :func:`_normalize_surviving_id`. When `result_holder` is supplied, that surviving id is written
     into it (``result_holder[:] = [surviving_id]``) so the tool layer can return it as
-    ``result_id`` / ``surviving_id`` without re-inspecting the document (E10-07 / E11-07).
+    ``result_id`` / ``surviving_id`` without re-inspecting the document.
     """
     root = tree.getroot()
     ids = validate_targets(root, object_ids, op)
@@ -433,10 +433,10 @@ def apply_path_op(
     if result_holder is not None and surviving_id is not None:
         result_holder[:] = [surviving_id]
 
-    # E13-04: stroke_to_path outlines the stroke into a FILLED path, but the engine's plain-SVG
+    #: stroke_to_path outlines the stroke into a FILLED path, but the engine's plain-SVG
     # output leaves no explicit fill, so write the source stroke colour as the result's fill rather
     # than letting it fall through to the SVG default black.
-    # E16-10c: it also leaves an empty marker container behind when the source had no marker — drop
+    #: it also leaves an empty marker container behind when the source had no marker — drop
     # that no-op stub here so the conversion lands a clean tree in one call (was stripped later by
     # svg_web_optimize).
     if op == STROKE_TO_PATH:

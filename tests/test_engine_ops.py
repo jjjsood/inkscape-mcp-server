@@ -1,4 +1,4 @@
-"""E12-03/E12-04: shell-command composition (`engine_export_document` / `engine_run_actions`).
+"""shell-command composition (`engine_export_document` / `engine_run_actions`).
 
 Run against the fake shell via an injected `EngineManager`, plus the config-gate (`engine_mode`).
 """

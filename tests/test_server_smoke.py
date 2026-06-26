@@ -12,12 +12,12 @@ def test_app_constructs() -> None:
 
 
 def test_register_tools_is_callable() -> None:
-    # No-op until E1, but must import + run without error.
+    # No-op until, but must import + run without error.
     register_tools()
 
 
 def test_register_tools_registers_live_canvas_assist_prompt() -> None:
-    # The E8-05 `live_canvas_assist` Prompt self-registers via register_tools (§4.1).
+    # The `live_canvas_assist` Prompt self-registers via register_tools (§4.1).
     register_tools()
     names = {p.name for p in asyncio.run(mcp.list_prompts())}
     assert "live_canvas_assist" in names

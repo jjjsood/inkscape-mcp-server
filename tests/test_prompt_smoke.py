@@ -1,6 +1,6 @@
-"""Prompt smoke tests over the in-memory MCP client (E9-05, architecture §4.1).
+"""Prompt smoke tests over the in-memory MCP client (architecture §4.1).
 
-The four export/recolor prompts (E5-07), ``live_canvas_assist`` (E8-05), and the two E15-04
+The four export/recolor prompts, ``live_canvas_assist``, and the two
 authoring prompts (``compose_artwork`` / ``restyle_artwork``) must RESOLVE and RENDER over an actual
 MCP client — not merely appear in ``list_prompts``. The stale server surfaced 0 of 5, so this proves
 discoverability *and* render via ``get_prompt``, and locks the count at 7.

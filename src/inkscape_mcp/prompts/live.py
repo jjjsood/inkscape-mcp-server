@@ -1,4 +1,4 @@
-"""Live-view loop Prompt (E8-05, architecture §4.1 — the `live_canvas_assist` entry point).
+"""Live-view loop Prompt (architecture §4.1 — the `live_canvas_assist` entry point).
 
 A Prompt orients the agent on HOW to run the live-view loop safely; it adds ZERO authority (ADR-006)
 — it issues no command and grants no capability, it merely describes the perceive→decide→act→observe

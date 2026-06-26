@@ -1,9 +1,9 @@
-"""DOM structural-edit tools (E16-08): `delete_object` — HIGH-risk, reversible.
+"""DOM structural-edit tools: `delete_object` — HIGH-risk, reversible.
 
 Thin MCP layer over the direct-DOM engine `make_delete_objects` in
 :mod:`inkscape_mcp.edit.text_object`. The edit routes through the shared, reversible edit pipeline
 (:func:`inkscape_mcp.edit.pipeline.apply_edit`), so it is uniformly snapshotted, recorded as an
-Operation Record, and linked to a before/after preview (ADR-004) — exactly like the E2 mutating
+Operation Record, and linked to a before/after preview (ADR-004) — exactly like the mutating
 tools. Editing is direct lxml on the DOM only (ADR-005); the tool is small and typed (no
 portmanteau) per ADR-002.
 
@@ -13,7 +13,7 @@ the op outright when the token is absent, so no snapshot / preview / write ever 
 unapproved delete (sec.12). The deletion is fully reversible via the pre-op snapshot
 (`restore_snapshot`).
 
-No-op hygiene (E10-05 / E11-13): when NONE of the supplied ids exist the engine leaves the tree
+No-op hygiene: when NONE of the supplied ids exist the engine leaves the tree
 byte-identical, so the pipeline reports ``changed=False`` and writes NO snapshot / Operation Record;
 the tool surfaces ``affected_ids=[]`` for that case. This layer maps engine / pipeline / policy
 exceptions to `ToolError` with stable, host-path-free messages (sec.12).
@@ -35,7 +35,7 @@ _logger = get_logger("tools.dom")
 
 
 class DeleteResult(EditResult):
-    """`EditResult` for `delete_object`, additively extended with the removed ids (E16-08).
+    """`EditResult` for `delete_object`, additively extended with the removed ids.
 
     All `EditResult` fields are preserved. `affected_ids` lists the object ids that were ACTUALLY
     removed (ids that did not exist in the document are silently skipped, so they never appear

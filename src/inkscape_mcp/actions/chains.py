@@ -1,4 +1,4 @@
-"""Controlled Action chains (E6-02): typed steps → validation → arg-list argv → engine.
+"""Controlled Action chains: typed steps → validation → arg-list argv → engine.
 
 An Action chain is an ORDERED LIST OF TYPED STEPS (:class:`ActionStep`), never a raw string. Each
 step names ONE Inkscape Action plus an optional list of already-typed argument tokens. Before a
@@ -10,7 +10,7 @@ chain can run it is validated against TWO independent gates:
 Validation produces a :class:`ActionChainPlan` with the EXACT resolved ``--actions`` argument and
 the normalized step list. A dry run returns that plan WITHOUT invoking Inkscape — the auditable
 preview of what would run. A real run assembles the same argv (arg-lists only, ``shell=False``) and
-executes it through the Inkscape engine over a document's working copy, routed through the E2-04
+executes it through the Inkscape engine over a document's working copy, routed through the
 mutating pipeline so the change is snapshotted, recorded (HIGH-risk + approval-gated), reversible.
 
 There is NO open-string Action passthrough here — every token is allowlisted AND present in the map
@@ -145,7 +145,7 @@ def _validate_step(
 def _malformed_arg_message(arg: str) -> str:
     """Build the `malformed_arg` message, with an actionable hint for comma-joined ids.
 
-    The single biggest foot-gun (E11-10(e) / S15) is passing a comma-joined multi-id token like
+    The single biggest foot-gun (S15) is passing a comma-joined multi-id token like
     ``"p_a,p_b"`` as ONE arg — a comma is a reserved argv delimiter, so the token is rejected. The
     correct multi-id form is SEPARATE tokens in `args` (e.g. ``args=["p_a", "p_b"]``); the engine
     joins them with commas itself. Detect that exact case and steer the caller to the right shape.
@@ -267,7 +267,7 @@ def _run_engine(working_path: Path, actions_argument: str, settings: Settings) -
     through the safe parser. A non-zero exit, timeout, missing/empty/oversized/unsafe output raises
     `ActionEngineError`.
     """
-    # E12-04: route the validated chain through the warm shell worker when enabled; ANY engine fault
+    #: route the validated chain through the warm shell worker when enabled; ANY engine fault
     # falls back to the per-call CLI below so correctness can never regress.
     if engine_mode_is_shell(settings):
         try:

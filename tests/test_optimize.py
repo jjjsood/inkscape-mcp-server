@@ -1,4 +1,4 @@
-"""Web-optimize tool + engine tests (E5-04 / ADR-004 / ADR-005).
+"""Web-optimize tool + engine tests (ADR-004 / ADR-005).
 
 Hermetic: the pipeline's preview rendering is monkeypatched so no Inkscape is invoked (the cleanup
 itself is pure lxml). Each test asserts the working copy is optimized, references are preserved (no
@@ -61,7 +61,7 @@ def _fake_render_preview(doc_id: str, width_px: int | None = None) -> RenderResu
     descriptor = "auto" if width_px is None else f"{width_px}px"
     produced = preview_dir / f"preview-{descriptor}.png"
     produced.write_bytes(b"\x89PNG\r\n\x1a\n")
-    # E11-01 one-location contract: artifact_path is workspace-ROOT-relative (matches the real
+    # one-location contract: artifact_path is workspace-ROOT-relative (matches the real
     # engine), so the pipeline's `root / artifact_path` join resolves correctly.
     rel = produced.relative_to(root).as_posix()
     return RenderResult(
@@ -212,7 +212,7 @@ def test_unknown_doc_id(doc: tuple[str, Path, Path]) -> None:
     assert "not found" in str(exc.value)
 
 
-# --- keep_ids allowlist (E10-07 O3 / E11-04) --------------------------------
+# --- keep_ids allowlist (O3) --------------------------------
 
 
 def test_keep_ids_preserves_otherwise_unreferenced_id(doc: tuple[str, Path, Path]) -> None:
@@ -232,7 +232,7 @@ def test_keep_ids_preserves_otherwise_unreferenced_id(doc: tuple[str, Path, Path
 
 def test_keep_ids_round_trip_retains_set_id(doc: tuple[str, Path, Path]) -> None:
     """Stand-in for a rename_object -> svg_web_optimize round-trip: a freshly set human id on an
-    otherwise-unreferenced element is retained when passed through keep_ids (E11-04)."""
+    otherwise-unreferenced element is retained when passed through keep_ids."""
     doc_id, root, _ = doc
     # Simulate a human/a11y id deliberately set on the unreferenced rect.
     working = sandbox.working_copy(root, doc_id)
@@ -262,7 +262,7 @@ def test_keep_ids_unknown_id_is_noop(doc: tuple[str, Path, Path]) -> None:
     assert result.changed is True
 
 
-# --- machine-diffable structured deltas (E11-08) ----------------------------
+# --- machine-diffable structured deltas ----------------------------
 
 
 def test_returns_structured_byte_deltas(doc: tuple[str, Path, Path]) -> None:
@@ -293,7 +293,7 @@ def test_removed_map_counts_each_cleanup(doc: tuple[str, Path, Path]) -> None:
 
 def test_removed_codes_cross_join_quality_opportunities(doc: tuple[str, Path, Path]) -> None:
     """The `removed` codes are exactly the `quality_report.opportunities` keys, so a budget-aware
-    agent can cross-join the two without a translation table (E11-08)."""
+    agent can cross-join the two without a translation table."""
     from inkscape_mcp.quality import quality_report
 
     doc_id, _root, _ = doc

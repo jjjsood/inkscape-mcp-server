@@ -1,8 +1,8 @@
-"""`LiveTransport` interface + shared models/errors (E3-01).
+"""`LiveTransport` interface + shared models/errors.
 
 The single semantic interface every live backend implements (architecture §4.4). It is
 transport-agnostic: the same tool surface works whether the host uses the extension-socket
-bridge (E3-02) or the DBus fast-path (E3-03). The surface is a FIXED set of read-only semantic
+bridge or the DBus fast-path. The surface is a FIXED set of read-only semantic
 methods — there is no method that accepts arbitrary code or a raw Inkscape Action string
 (ADR-003). Backends declare which `LiveCommand`s they support via `supported_commands`; an
 unsupported op raises `LiveCapabilityUnsupported` rather than faking a result.
@@ -69,14 +69,14 @@ class LiveSelection(BaseModel):
 
 
 class LiveSelectionInspection(BaseModel):
-    """Per-object detail for the selection, reusing the headless `ObjectInfo` shape (E3-05)."""
+    """Per-object detail for the selection, reusing the headless `ObjectInfo` shape."""
 
     objects: list[ObjectInfo] = Field(default_factory=list)
     count: int = Field(default=0)
 
 
 class LiveMutationResult(BaseModel):
-    """Outcome of one semantic live WRITE command (E4), as reported by the backend.
+    """Outcome of one semantic live WRITE command, as reported by the backend.
 
     Carries only object ids and a short human summary — never raw markup or host detail. A
     backend executes the change as an undo-friendly Inkscape step where it can and reports that
@@ -94,7 +94,7 @@ class LiveMutationResult(BaseModel):
 
 
 class LiveViewportResult(BaseModel):
-    """Outcome of a view-only `set_viewport` op (E8) — what the canvas now shows.
+    """Outcome of a view-only `set_viewport` op — what the canvas now shows.
 
     View-only: carries no document change, only the mode the backend applied. There is no markup
     or host detail here.
@@ -106,7 +106,7 @@ class LiveViewportResult(BaseModel):
 
 
 class RenderRegion(BaseModel):
-    """A validated render region in user units (E8): origin + positive extent.
+    """A validated render region in user units: origin + positive extent.
 
     Numerics are finite and bounded BEFORE they cross the transport (server-validated in
     ``live/edit.py``); the helper re-checks them defensively. View-only — no document mutation.
@@ -118,7 +118,7 @@ class RenderRegion(BaseModel):
     height: float = Field(gt=0, description="Region height in user units (>0).")
 
 
-# --- Structured perception models (E8-02) -----------------------------------
+# --- Structured perception models -----------------------------------
 
 
 class BBox(BaseModel):
@@ -167,7 +167,7 @@ class SceneCanvas(BaseModel):
 
 
 class LiveScene(BaseModel):
-    """Machine-readable snapshot of the live canvas paired with each frame (E8-02).
+    """Machine-readable snapshot of the live canvas paired with each frame.
 
     Carries the active-document identity, the selection (ids + bboxes), the viewport
     (zoom/center/visible region), the canvas size, and a compact summary of the visible objects.
@@ -195,11 +195,11 @@ class LiveScene(BaseModel):
     object_count: int = Field(default=0, description="Number of summarized visible objects.")
 
 
-# --- Change-detection models (E8-03) ----------------------------------------
+# --- Change-detection models ----------------------------------------
 
 
 class LiveStateToken(BaseModel):
-    """A CHEAP, server-hashed marker of the live state for change detection (E8-03).
+    """A CHEAP, server-hashed marker of the live state for change detection.
 
     Pulled over the fixed ``get_state_token`` command (protocol v5): a small revision marker plus
     the selection ids and a coarse viewport — NEVER the full document or a PNG, so polling it is
@@ -220,7 +220,7 @@ class LiveStateToken(BaseModel):
 
 
 class LiveChange(BaseModel):
-    """A classified delta between two `LiveStateToken`s (E8-03).
+    """A classified delta between two `LiveStateToken`s.
 
     More than one flag may fire at once (e.g. a selection change that also moved the viewport).
     ``changed`` is true when ANY component differs. Carries the new token so a caller can chain the
@@ -256,7 +256,7 @@ class TransportProbe(BaseModel):
         default=False,
         description=(
             "Whether driving this transport leaves the Inkscape GUI responsive (no modal freeze). "
-            "True only for the Linux DBus action path (E3-07); the modal socket bridge is False."
+            "True only for the Linux DBus action path; the modal socket bridge is False."
         ),
     )
     detail: str = Field(default="", description="Human-readable availability explanation.")
@@ -279,7 +279,7 @@ class LiveTransport(ABC):
     rank: ClassVar[int]
     #: The semantic commands this backend can serve (capability set for ranking/selection).
     supported_commands: ClassVar[frozenset[LiveCommand]]
-    #: Whether driving this transport leaves the Inkscape GUI responsive (E3-07). True only for the
+    #: Whether driving this transport leaves the Inkscape GUI responsive. True only for the
     #: Linux DBus action path, which runs ops in Inkscape's own GLib main loop; the modal
     #: effect-extension socket bridge freezes the GUI for the whole session, so it is False.
     no_freeze: ClassVar[bool] = False
@@ -321,12 +321,12 @@ class LiveTransport(ABC):
     def render_view(self, region: RenderRegion | None = None, scale: float | None = None) -> bytes:
         """Return a rasterized PNG of the live canvas (visual feedback).
 
-        With `region` (E8) the renderer clips to that user-unit bbox; with `scale` (>0) it
+        With `region` the renderer clips to that user-unit bbox; with `scale` (>0) it
         downscales/upscales the raster. Both are server-validated before they cross the boundary.
         When neither is given the whole canvas is rendered (backward-compatible).
         """
 
-    # --- Semantic WRITE surface (E4) -----------------------------------------
+    # --- Semantic WRITE surface -----------------------------------------
     #
     # Concrete defaults, NOT abstract: a backend that cannot mutate (e.g. DBus action-only)
     # inherits the "unsupported" behaviour, so adding a write command never forces every
@@ -351,7 +351,7 @@ class LiveTransport(ABC):
         """Return a rasterized PNG of just the current selection."""
         raise LiveCapabilityUnsupported("this live transport cannot export the selection")
 
-    # --- View-only surface (E8) ----------------------------------------------
+    # --- View-only surface ----------------------------------------------
     #
     # Concrete defaults like the WRITE surface, but VIEW-only: no document mutation, no Operation
     # Record. A backend that can drive the canvas viewport overrides `set_viewport` AND lists the
@@ -371,7 +371,7 @@ class LiveTransport(ABC):
         raise LiveCapabilityUnsupported("this live transport cannot control the viewport")
 
     def get_scene(self) -> LiveScene:
-        """Return the structured `LiveScene` for the current frame (E8-02; read-only perception).
+        """Return the structured `LiveScene` for the current frame (read-only perception).
 
         Active-doc ref, selection ids + bboxes, viewport (zoom/center/visible region), canvas size,
         and a compact ``ObjectInfo`` summary of visible objects. Concrete default like the rest of

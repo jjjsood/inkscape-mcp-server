@@ -1,4 +1,4 @@
-"""Structured live-scene perception (E8-02, ADR-006, low risk).
+"""Structured live-scene perception (ADR-006, low risk).
 
 The decisive "better than inkmcp" capability: every live frame is paired with a machine-readable
 ``LiveScene`` so the agent reasons over STRUCTURE, not pixels. The scene is pulled over the fixed

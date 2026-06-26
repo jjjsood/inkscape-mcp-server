@@ -1,6 +1,6 @@
-"""A fake `inkscape --shell` for engine tests (E12) — no real Inkscape required.
+"""A fake `inkscape --shell` for engine tests — no real Inkscape required.
 
-Mirrors the real shell's framing exactly (the E12-02 spike findings): a startup banner ending in the
+Mirrors the real shell's framing exactly (the spike findings): a startup banner ending in the
 bare ``"> "`` prompt, each command ECHOED back on its own line, any output lines, then a fresh
 ``"> "`` prompt with no trailing newline. Unknown actions print the real
 ``InkscapeApplication::parse_actions: could not find action for: <X>`` to STDERR. Export options

@@ -1,4 +1,4 @@
-"""Extension-socket backend tests (E3-02): rendezvous, loopback handshake, schema, install."""
+"""Extension-socket backend tests: rendezvous, loopback handshake, schema, install."""
 
 from __future__ import annotations
 

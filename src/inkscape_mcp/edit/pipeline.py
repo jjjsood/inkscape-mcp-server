@@ -1,6 +1,6 @@
-"""Shared mutating-edit pipeline (E2-04).
+"""Shared mutating-edit pipeline.
 
-A single wrapper, :func:`apply_edit`, that every E2 mutating tool (style / text / transform)
+A single wrapper, :func:`apply_edit`, that every mutating tool (style / text / transform)
 calls so each change is uniformly reversible and audited (ADR-004). For one edit it:
 
 1. opens an Operation Record (`proposed`, risk policy enforced),
@@ -165,7 +165,7 @@ def _render_op_preview(
         )
         return None
 
-    # `result.artifact_path` is relative to the workspace ROOT (E11-01 one-location contract:
+    # `result.artifact_path` is relative to the workspace ROOT (one-location contract:
     # it carries the `.inkscape-mcp/documents/<doc_id>/...` base), so resolve it against `root`,
     # NOT `workspace_dir` — joining to the per-doc dir would double the base and miss the file.
     produced = root / result.artifact_path
@@ -209,15 +209,15 @@ def apply_edit(
     approval_token: str | None = None,
     risk_class: RiskClass = RiskClass.MEDIUM,
 ) -> EditResult:
-    """Apply one in-memory DOM mutation as a fully recorded, reversible operation (E2-04).
+    """Apply one in-memory DOM mutation as a fully recorded, reversible operation.
 
     `mutate` receives the parsed working tree, edits it IN MEMORY, and returns a short human
     summary of what changed. It MUST raise `EditError` / `TargetNotFound` on bad input before
     relying on any side effect; such a failure transitions the freshly-opened record to
     `discarded` and re-raises, with nothing written to disk.
 
-    `risk_class` classes the operation for the policy gate (default MEDIUM for the E2 safe-edit
-    tools). HIGH-risk callers (e.g. the E6 path tools) pass `RiskClass.HIGH` together with an
+    `risk_class` classes the operation for the policy gate (default MEDIUM for the safe-edit
+    tools). HIGH-risk callers (e.g. the path tools) pass `RiskClass.HIGH` together with an
     `approval_token`; `new_operation` then refuses the op outright if the token is absent, so no
     snapshot/preview/write ever runs for an unapproved high-risk edit.
 

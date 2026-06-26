@@ -58,7 +58,7 @@ def parse_svg_string(text: str) -> etree._ElementTree:
     """Parse an SVG/XML STRING with the safe parser; raise `UnsafeXMLError` on failure.
 
     The string counterpart of :func:`parse_svg_bytes` for agent-composed SVG that arrives as a
-    Python `str` (E14-03 `set_document_svg` / `insert_svg_fragment`). It encodes to UTF-8 and runs
+    Python `str` (`set_document_svg` / `insert_svg_fragment`). It encodes to UTF-8 and runs
     the SAME normative hardened parser (XXE off, no network, no entity expansion, huge_tree off), so
     no string variant can ever bypass the §4 safety configuration. A leading XML declaration with an
     explicit encoding is tolerated (lxml rejects an encoding declaration on a `str`, so the encode
