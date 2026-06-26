@@ -1,4 +1,4 @@
-"""CLI render/export engine (E1-06).
+"""CLI render/export engine.
 
 Pure functions (no MCP decorators) that build Inkscape CLI argument lists, run them through
 `run_inkscape` (`shell=False`, arg lists only, per-process timeout enforced), write outputs
@@ -27,22 +27,22 @@ Reproducibility / naming (workspace model):
 - Previews (change-unlinked whole-doc render) land under ``artifacts/preview/`` named
   ``preview-[<name>-]<descriptor>-<stamp>-<rand>.png``. ``<descriptor>`` encodes the size
   (``<N>px`` when a width is given, else ``auto``); the trailing unique token makes successive
-  renders at the SAME width NON-clobbering (E11-12) so an agent can render a before and an after
+  renders at the SAME width NON-clobbering so an agent can render a before and an after
   without copying out of band. An optional caller ``name`` is folded into the stem.
 - User exports land under ``artifacts/exports/`` (or a caller-chosen, sandbox-validated
-  ``out_dir`` — E11-05) named ``<utc-timestamp>-[<prefix>-]<basename>-<descriptor>.<ext>`` per
+  ``out_dir``) named ``<utc-timestamp>-[<prefix>-]<basename>-<descriptor>.<ext>`` per
   §6. The descriptor encodes the reproducible parameters (size/format/object); ``<basename>`` is
   a sanitized stem of the document source; an optional ``name_prefix`` tags the stem. The
   timestamp makes successive exports non-clobbering while the descriptor keeps the parameter set
   reproducible and predictable.
 
-Caller-resolvable locations — ONE CONTRACT (E11-01): ``artifact_path`` and
+Caller-resolvable locations — ONE CONTRACT: ``artifact_path`` and
 ``workspace_relative_path`` carry the SAME value, always relative to the WORKSPACE ROOT (a managed
 output carries the ``.inkscape-mcp/documents/<doc_id>/...`` base; an ``out_dir`` output is its
 in-workspace relative path), so a caller opens the file by a single join to the workspace root with
 no ``find``/``stat`` for EVERY output. ``artifact_path`` is kept only for back-compat and now means
 exactly the same thing. Reported PNG ``width_px``/``height_px`` are the TRUE on-disk raster dims
-(read from the written file's IHDR), not a page/viewBox estimate (E10-04 / E11-02).
+(read from the written file's IHDR), not a page/viewBox estimate.
 
 SECURITY (sec.12): every argv element is a validated/typed value. Numeric params are coerced
 to int and formatted; the input path is the registry's sandbox-validated ``working_path``; the
@@ -123,7 +123,7 @@ class InvalidObjectId(Exception):
 class RenderResult(BaseModel):
     """Outcome of one render/export invocation.
 
-    ONE LOCATION CONTRACT (E11-01): `artifact_path` and `workspace_relative_path` carry the SAME
+    ONE LOCATION CONTRACT: `artifact_path` and `workspace_relative_path` carry the SAME
     value — the file relative to the WORKSPACE ROOT, never an absolute host path — so a caller opens
     it by a single join to the workspace root with no `find`/`stat`, for both managed and `out_dir`
     outputs. A managed output carries the `.inkscape-mcp/documents/<doc_id>/...` base;
@@ -136,20 +136,20 @@ class RenderResult(BaseModel):
     doc_id: str
     artifact_path: str
     # Defaults to empty only so a hand-built stub (test fakes) stays valid; every real engine
-    # result populates it via `_relative_paths` (E11-01).
+    # result populates it via `_relative_paths`.
     workspace_relative_path: str = ""
     format: str
     width_px: int | None
     height_px: int | None
     duration_s: float
-    #: STALENESS SIGNAL (E14-06a): True iff the WORKING COPY changed after this artifact was made,
+    #: STALENESS SIGNAL: True iff the WORKING COPY changed after this artifact was made,
     #: i.e. the artifact no longer reflects the current document and a re-render/export is needed.
     #: Computed at PRODUCE time by `compute_stale` (artifact mtime vs. working-copy mtime): a fresh
     #: artifact is rendered FROM the current working copy and lands with an mtime at/after it, so it
     #: is NOT stale (False). A previously produced artifact whose working copy was edited afterward
     #: reports True. Read-only — no file is ever modified.
     stale: bool = False
-    #: CONTENT-TRUTH (E16-07), computed at PRODUCE time from the just-written artifact:
+    #: CONTENT-TRUTH, computed at PRODUCE time from the just-written artifact:
     #: For a raster (PNG) output, `opaque_px` is the count of drawn (non-transparent) pixels and
     #: `all_blank` is True iff nothing was drawn; both are None for a vector output (no raster).
     #: For a PDF output, `is_vector` is True iff no raster image XObject is embedded and
@@ -169,7 +169,7 @@ class RenderResult(BaseModel):
     artifact_abspath: str | None = Field(default=None, exclude=True)
 
     def recompute_stale(self) -> bool:
-        """Re-evaluate `stale` from the current on-disk mtimes; return the updated value (E14-06a).
+        """Re-evaluate `stale` from the current on-disk mtimes; return the updated value.
 
         Lets a caller that held this result across a later working-copy edit/reload observe whether
         the artifact is now stale, without re-resolving the registry. Read-only: it only `os.stat`s
@@ -196,7 +196,7 @@ class FrameResult(RenderResult):
 def _mtime(path: Path) -> float | None:
     """Best-effort modification time of `path` in seconds, or None if it cannot be stat'd.
 
-    Read-only — never touches the file. Used to compute the E14-06 staleness signal by comparing a
+    Read-only — never touches the file. Used to compute the staleness signal by comparing a
     produced artifact's mtime to its source working copy's mtime; a missing/unstattable path yields
     None so the caller treats staleness as "unknown" (False) rather than raising.
     """
@@ -207,7 +207,7 @@ def _mtime(path: Path) -> float | None:
 
 
 def compute_stale(working_path: Path, artifact_path: Path) -> bool:
-    """True iff the working copy is NEWER than the produced artifact (E14-06).
+    """True iff the working copy is NEWER than the produced artifact.
 
     Pure + read-only (no file is modified, no new authority): `stat`s both paths and reports the
     artifact as STALE when the working copy's mtime is strictly greater than the artifact's — i.e.
@@ -318,7 +318,7 @@ def _output_name(entry: DocEntry, name_prefix: str | None, descriptor: str, ext:
     """Build a non-clobbering export filename ``<stamp>-[prefix-]<basename>-<descriptor>.<ext>``.
 
     The UTC timestamp keeps successive exports distinct; the sanitized `name_prefix` (when given)
-    lets a caller tag the output (E11-05). The descriptor keeps the parameter set reproducible.
+    lets a caller tag the output. The descriptor keeps the parameter set reproducible.
     """
     stamp = _utc_stamp()
     basename = _sanitize_basename(entry)
@@ -330,7 +330,7 @@ def _output_name(entry: DocEntry, name_prefix: str | None, descriptor: str, ext:
 def _relative_paths(entry: DocEntry, out: Path) -> tuple[str, str]:
     """Return `(artifact_path, workspace_relative_path)` for a produced artifact (POSIX, relative).
 
-    ONE LOCATION CONTRACT (E11-01): both elements are the SAME value — the file relative to the
+    ONE LOCATION CONTRACT: both elements are the SAME value — the file relative to the
     WORKSPACE ROOT (`entry.root`) — so an agent opens any artifact by a single join to the workspace
     root with no `find`/`stat`, for EVERY output (managed AND caller-chosen `out_dir`). A managed
     output carries the `.inkscape-mcp/documents/<doc_id>/...` base; an `out_dir` output is just its
@@ -349,7 +349,7 @@ def _relative_paths(entry: DocEntry, out: Path) -> tuple[str, str]:
         artifact_rel = None
     if artifact_rel is not None:
         # In-managed-dir: re-anchor the per-doc form to the workspace root via the single location
-        # helper (E11-01). Both fields carry this one root-relative value.
+        # helper. Both fields carry this one root-relative value.
         ws_rel = workspace_relative_path(entry, artifact_rel)
         return ws_rel, ws_rel
     # Caller-chosen out_dir outside the per-doc dir: anchor directly to the root. Both fields carry
@@ -379,7 +379,7 @@ def _emit(
     """Produce the artifact via the warm shell engine when enabled+eligible, else the per-call CLI.
 
     When `engine_mode == shell` AND `engine_eligible` (a whole-document PNG/SVG export), this first
-    tries the warm `inkscape --shell` worker (E12-03). ANY engine fault transparently falls back to
+    tries the warm `inkscape --shell` worker. ANY engine fault transparently falls back to
     the per-call CLI for this op, so the warm path can never regress correctness. `engine_width_px`
     is the requested raster width (None = intrinsic) the engine export should honor.
     """
@@ -485,7 +485,7 @@ def _finalize_output(
 ) -> RenderResult:
     """Enforce the output-size cap, read true raster dims, build resolvable paths, log + return.
 
-    Shared post-success tail for BOTH the per-call CLI and the warm engine path (E12-03), so an
+    Shared post-success tail for BOTH the per-call CLI and the warm engine path, so an
     artifact is finalized identically however it was produced. An oversized output is deleted before
     raising `LimitExceeded`.
     """
@@ -495,7 +495,7 @@ def _finalize_output(
         _safe_unlink(out)
         raise
 
-    # Report the TRUE on-disk raster dims for PNG (E10-04 / E11-02): read the written file's IHDR
+    # Report the TRUE on-disk raster dims for PNG: read the written file's IHDR
     # rather than the page/viewBox-derived target. For vector (PDF/SVG) there is no raster size.
     # If the IHDR read fails for any reason, fall back to the computed target dims.
     opaque_px: int | None = None
@@ -506,21 +506,21 @@ def _finalize_output(
         actual = _png_dimensions(out)
         if actual is not None:
             width_px, height_px = actual
-        # CONTENT-TRUTH (E16-07): count the drawn pixels so a caller can prove the render is not
+        # CONTENT-TRUTH: count the drawn pixels so a caller can prove the render is not
         # blank straight from the result. In-process via Pillow (a library, not a subprocess); a
         # decode fault leaves the fields None (unknown) rather than failing the export.
         raster = verify_raster(out)
         if raster is not None:
             opaque_px, all_blank = raster.opaque_px, raster.all_blank
     elif fmt == PDF:
-        # CONTENT-TRUTH (E16-07): certify the PDF is true vector (no raster XObjects, no embedded
+        # CONTENT-TRUTH: certify the PDF is true vector (no raster XObjects, no embedded
         # fonts). In-process byte scan; an unreadable file leaves the fields None (unknown).
         pdf_info = verify_pdf(out)
         if pdf_info is not None:
             is_vector, fonts_outlined = pdf_info.is_vector, pdf_info.fonts_outlined
 
     artifact_rel, ws_rel = _relative_paths(entry, out)
-    # STALENESS (E14-06a): compute the signal at PRODUCE time by comparing the just-written
+    # STALENESS: compute the signal at PRODUCE time by comparing the just-written
     # artifact's mtime to the working copy's. A freshly produced artifact was rendered FROM the
     # current working copy and lands with an mtime at/after it, so it is NOT stale. The source paths
     # are captured (server-internal only, excluded from the client-facing model) so a stored result
@@ -575,7 +575,7 @@ def _png_dimensions(path: Path) -> tuple[int, int] | None:
     """Return the TRUE (width, height) in px of a PNG by reading its IHDR (stdlib only).
 
     Reads only the first 24 bytes: the 8-byte signature, the IHDR length+type, then the two
-    big-endian uint32 width/height fields (E10-04 / E11-02 — report the on-disk raster size, not
+    big-endian uint32 width/height fields (report the on-disk raster size, not
     a page/viewBox-derived estimate). Returns None if the file is too short, lacks the PNG
     signature, or is not a well-formed IHDR — the caller then falls back to the computed target
     dims rather than misreporting.
@@ -592,7 +592,7 @@ def _png_dimensions(path: Path) -> tuple[int, int] | None:
 
 
 def _unique_token() -> str:
-    """A short, collision-resistant token for non-clobbering frame names (E11-12)."""
+    """A short, collision-resistant token for non-clobbering frame names."""
     return f"{_utc_stamp()}-{secrets.token_hex(3)}"
 
 
@@ -612,7 +612,7 @@ def _resolve_out_dir(out_dir: str | None, entry: DocEntry, settings: Settings) -
     """Resolve a caller-chosen `out_dir` to a sandbox-validated directory, or None for default.
 
     A relative `out_dir` anchors to the WORKSPACE ROOT (`entry.root`), NOT the process CWD
-    (E11-05). Creation is TOCTOU-safe (sec.12): the longest EXISTING prefix is resolved (symlinks
+. Creation is TOCTOU-safe (sec.12): the longest EXISTING prefix is resolved (symlinks
     followed) and `commonpath`-checked against the configured roots BEFORE any side-effect — an
     escape raises `SandboxViolation("path rejected: outside workspace")` with no directory created.
     Missing components are then created relative to a directory file descriptor opened on that
@@ -712,7 +712,7 @@ def render_preview(
     """Render a PNG preview of the whole document into `artifacts/preview/`.
 
     Enforces the pixel cap before invoking Inkscape. Successive calls at the same width do NOT
-    clobber (E11-12): when `name` is given it controls the frame stem (`preview-<name>-...`),
+    clobber: when `name` is given it controls the frame stem (`preview-<name>-...`),
     otherwise a unique token is minted per call so a before/after pair at one width yields two
     distinct files. Returns a resolvable artifact path.
     """
@@ -727,7 +727,7 @@ def render_preview(
     sandbox.ensure_doc_dirs(root, doc_id)
     preview_dir = sandbox.artifacts_dir(root, doc_id) / "preview"
     preview_dir.mkdir(parents=True, exist_ok=True)
-    # Unique per call so re-renders at the same width never overwrite (E11-12). An optional
+    # Unique per call so re-renders at the same width never overwrite. An optional
     # caller `name` is sanitized and folded into the stem; the unique token still guarantees
     # distinctness even if the same name is reused.
     parts = ["preview"]
@@ -769,7 +769,7 @@ _FRAME_NAME_RE = re.compile(r"^frame-(\d+)(?:-.*)?\.png$")
 def _next_frame_index(series_dir: Path) -> int:
     """Next 1-based frame index for `series_dir`, derived from the existing ``frame-NNN`` files.
 
-    Stateless (survives a server restart) and matches the non-clobber philosophy (E11-12): the
+    Stateless (survives a server restart) and matches the non-clobber philosophy: the
     counter is the max existing index + 1, never in-memory state. Returns 1 for an empty/new series.
     """
     highest = 0
@@ -833,7 +833,7 @@ def capture_frame(
         if not out.exists():
             break
         # A label-carrying frame can collide with a plain one at the same index; bump past it so a
-        # capture never overwrites an earlier frame (non-clobber, E11-12).
+        # capture never overwrites an earlier frame (non-clobber).
         idx += 1
 
     args = [
@@ -857,7 +857,7 @@ def capture_frame(
         engine_eligible=True,
     )
     # `model_dump()` drops the `exclude=True` produce-time source paths; carry them over explicitly
-    # so a `FrameResult` can still `recompute_stale()` later (E14-06a).
+    # so a `FrameResult` can still `recompute_stale()` later.
     return FrameResult(
         **base.model_dump(),
         series=safe_series,
@@ -939,7 +939,7 @@ def export_document(
     `fmt` must be one of {png, pdf, svg} (validated). PNG honors `width_px` and is pixel-capped
     before invocation; PDF/SVG are vector and ignore `width_px`. By default the artifact lands in
     the managed per-doc `artifacts/exports/` dir; an optional `out_dir` (relative paths anchored to
-    the workspace ROOT, then sandbox-validated) targets a caller-chosen directory (E11-05) and an
+    the workspace ROOT, then sandbox-validated) targets a caller-chosen directory and an
     optional `name_prefix` tags the filename stem. `_extra_args` are extra Inkscape flags appended
     verbatim — keyword-only, server-internal only (the print profile passes its print flags here),
     NEVER client-sourced: each is hard-validated to be an `--export-` flag before reaching argv.
@@ -1001,7 +1001,7 @@ def export_document(
             *extra,
         ]
 
-    # Whole-doc PNG/SVG are warm-engine-eligible (E12-03); PDF and any server-internal `_extra_args`
+    # Whole-doc PNG/SVG are warm-engine-eligible; PDF and any server-internal `_extra_args`
     # (the print profile's flags, which the shell export line does not replicate) stay per-call.
     engine_eligible = fmt in ENGINE_EXPORT_FORMATS and not extra
     return _emit(
@@ -1035,7 +1035,7 @@ def export_object(
     ever placed into `--export-id=`. Uses `--export-id-only` so Inkscape clips to the object's
     own bounding box. By default the artifact lands in the managed per-doc `artifacts/exports/`
     dir; an optional `out_dir` (relative paths anchored to the workspace ROOT, then
-    sandbox-validated) targets a caller-chosen directory (E11-05) and an optional `name_prefix`
+    sandbox-validated) targets a caller-chosen directory and an optional `name_prefix`
     tags the filename stem. Returns a resolvable artifact path.
     """
     s = _settings(settings)

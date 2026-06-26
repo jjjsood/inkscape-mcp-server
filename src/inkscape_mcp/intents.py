@@ -1,4 +1,4 @@
-"""Intent → tool discoverability map (E14-08).
+"""Intent → tool discoverability map.
 
 A curated, dependency-free mapping from natural-language *goals* to the concrete MCP tool name(s)
 that achieve them, plus a deterministic keyword matcher and an out-of-scope detector. Pure module —

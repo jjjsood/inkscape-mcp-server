@@ -1,4 +1,4 @@
-"""Export/recolor prompt-library tests (E5-07, architecture §4.1).
+"""Export/recolor prompt-library tests (architecture §4.1).
 
 The four prompts must be registered + discoverable on the MCP prompt surface, reference only shipped
 tools, and carry no authority (they are pure guidance strings).

@@ -1,4 +1,4 @@
-"""Live render cache + coalescing tests (E8-06; low risk, no mutation, no Operation Record).
+"""Live render cache + coalescing tests (low risk, no mutation, no Operation Record).
 
 Covers the bounded LRU cache, the revision-keyed freshness guarantee, frame coalescing within an
 injected-clock latency budget, fast-downscale vs full-res key distinctness, and that the cache is
@@ -150,7 +150,7 @@ def test_changed_revision_invalidates_cache(
     calls = _spy_render(transport)
 
     render_live_view(manager=mgr, settings=settings)
-    # The document changes → the E8-03 revision marker changes → a different cache key → re-render.
+    # The document changes → the revision marker changes → a different cache key → re-render.
     transport.state_revision = "rev-1"
     render_live_view(manager=mgr, settings=settings)
 

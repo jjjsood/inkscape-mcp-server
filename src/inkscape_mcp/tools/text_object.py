@@ -1,4 +1,4 @@
-"""Text / object edit tools (E2-02): ``replace_text`` / ``set_font`` / ``duplicate_object`` /
+"""Text / object edit tools: ``replace_text`` / ``set_font`` / ``duplicate_object`` /
 ``rename_object``.
 
 Thin MCP layer over the direct-DOM engines in :mod:`inkscape_mcp.edit.text_object`. Each tool
@@ -48,7 +48,7 @@ _logger = get_logger("tools.text_object")
 
 
 class FontCoverage(BaseModel):
-    """Per-target glyph-coverage outcome for a `set_font` family change (E16-04).
+    """Per-target glyph-coverage outcome for a `set_font` family change.
 
     `object_id` is the edited text object; `family` is the effective FIRST font-family now applied
     to it; `uncovered_chars` is the string of characters that family's OWN cmap cannot render (empty
@@ -64,7 +64,7 @@ class FontCoverage(BaseModel):
 
 
 class SetFontResult(EditResult):
-    """`EditResult` for `set_font`, additively extended with glyph-coverage at apply time (E16-04).
+    """`EditResult` for `set_font`, additively extended with glyph-coverage at apply time.
 
     All `EditResult` fields are preserved (back-compat). `coverage_ok` is False when ANY edited text
     object now names a family that cannot render its characters; `font_coverage` lists the
@@ -79,7 +79,7 @@ class SetFontResult(EditResult):
 
 
 def _coverage_for_targets(doc_id: str, object_ids: list[str]) -> tuple[bool, list[FontCoverage]]:
-    """Compute per-target glyph coverage from the POST-edit working copy (E16-04).
+    """Compute per-target glyph coverage from the POST-edit working copy.
 
     Re-reads the working tree, resolves each target's effective first `font-family` (cascade +
     inheritance, the SAME resolution validate uses), and tests its text against the family's OWN
@@ -229,7 +229,7 @@ def set_font(
 
     Return shape: `SetFontResult` — all `EditResult` fields (`operation_id`, `snapshot_id`,
     `changed`, before/after preview; the edit lands on the working copy only, reversible) PLUS glyph
-    coverage (E16-04): `coverage_ok` is False when a target now names a family that cannot render
+    coverage: `coverage_ok` is False when a target now names a family that cannot render
     its text, and `font_coverage` lists per object the `uncovered_chars` (read from the font's OWN
     cmap, never fontconfig substitution) and a `suggested_family` that covers them — so a
     non-covering font choice is checkable at apply time instead of silently shipping tofu.

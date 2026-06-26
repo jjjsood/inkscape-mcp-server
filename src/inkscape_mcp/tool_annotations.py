@@ -1,4 +1,4 @@
-"""Central MCP `ToolAnnotations` map (E17-01).
+"""Central MCP `ToolAnnotations` map.
 
 Single source of truth that derives every registered tool's machine-readable MCP
 `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`)
@@ -8,7 +8,7 @@ about read-vs-write, destructiveness, and idempotency without parsing docstring 
 
 Design (ADR-002, project risk classes):
 
-- `readOnlyHint` is derived from the explicit `READ_ONLY_TOOLS` set (E18-02), NOT from
+- `readOnlyHint` is derived from the explicit `READ_ONLY_TOOLS` set, NOT from
   `risk == "low"`: read-vs-write is decoupled from the risk tier, so a read-only tool that is not
   `low` (or a `low` tool that nonetheless mutates) is hinted correctly. For the current surface the
   set is exactly the `low`-risk tools, so the derivation is behaviour-preserving.
@@ -73,7 +73,7 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
 #: Curated allowlist of HIGH-risk tools whose effect is ADDITIVE (they only add structure: insert a
 #: fragment, apply a non-consuming edit to the live selection) and are therefore deliberately NOT in
 #: `DESTRUCTIVE_TOOLS`. Every `high`-risk tool must appear in EXACTLY ONE of `DESTRUCTIVE_TOOLS` or
-#: this set — the E18-01 drift-guard fails otherwise, forcing a conscious destructive-vs-additive
+#: this set — the drift-guard fails otherwise, forcing a conscious destructive-vs-additive
 #: classification for each new high-risk tool instead of a silent `destructiveHint=false` default.
 ADDITIVE_HIGH_TOOLS: frozenset[str] = frozenset(
     {
@@ -120,12 +120,12 @@ def _is_open_world(name: str) -> bool:
     return name in _HOST_PROBE_TOOLS or name.startswith("live_")
 
 
-#: Explicit source of truth for READ-ONLY-ness (E18-02). `readOnlyHint` is derived from membership
+#: Explicit source of truth for READ-ONLY-ness. `readOnlyHint` is derived from membership
 #: here — NOT from `risk == "low"` — so the read-vs-write axis is decoupled from the risk tier: a
 #: future read-only tool that is not `low`, or a `low` tool that nonetheless mutates, is hinted
 #: correctly by editing THIS set rather than mis-inheriting from its risk class. For the CURRENT
 #: surface this set is exactly the `low`-risk tools (read-only ⟺ low today), so the change is
-#: behaviour-preserving; the E18-02 drift-guard asserts `readOnlyHint` is unchanged per tool and
+#: behaviour-preserving; the drift-guard asserts `readOnlyHint` is unchanged per tool and
 #: that this set carries no stale names. Risk class stays a separate, independent axis.
 READ_ONLY_TOOLS: frozenset[str] = frozenset(
     {
@@ -179,7 +179,7 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
 
 
 def _is_read_only(name: str) -> bool:
-    """True iff `name` is classified read-only (E18-02) — independent of its risk tier."""
+    """True iff `name` is classified read-only — independent of its risk tier."""
     return name in READ_ONLY_TOOLS
 
 
@@ -298,12 +298,12 @@ def title_for(name: str) -> str:
 def annotations_for(name: str, risk: str) -> mcp_types.ToolAnnotations:
     """Build the `ToolAnnotations` for one tool from its name + parsed risk class.
 
-    `readOnlyHint` is derived from the explicit `READ_ONLY_TOOLS` set (E18-02) — independent of
+    `readOnlyHint` is derived from the explicit `READ_ONLY_TOOLS` set — independent of
     `risk`, which stays a separate axis (still parsed/passed for the risk vocabulary, not for the
     read-vs-write hint). The remaining hints come from the central sets above. All fields are static
     — no host path ever enters a title or hint (sec.12).
     """
-    _ = risk  # risk is a separate axis; readOnlyHint no longer derives from it (E18-02).
+    _ = risk  # risk is a separate axis; readOnlyHint no longer derives from it.
     title = title_for(name)
     return mcp_types.ToolAnnotations(
         title=title,

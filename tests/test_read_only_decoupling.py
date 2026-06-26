@@ -1,4 +1,4 @@
-"""`readOnlyHint` decoupling drift-guard (E18-02).
+"""`readOnlyHint` decoupling drift-guard.
 
 `readOnlyHint` is derived from the explicit `READ_ONLY_TOOLS` set, NOT from `risk == "low"`. This
 guard asserts:

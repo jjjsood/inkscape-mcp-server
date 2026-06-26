@@ -1,4 +1,4 @@
-"""Change detection + bounded change-wait (E8-03, ADR-006, low risk).
+"""Change detection + bounded change-wait (ADR-006, low risk).
 
 The mechanism that lets the live loop render ONLY when something actually changes — including the
 user's own GUI edits — instead of busy-rendering. Each poll pulls a CHEAP ``get_state_token`` over
@@ -10,7 +10,7 @@ viewport, NEVER the full document or a PNG. The server hashes those raw componen
 ``live_wait_for_change`` is a BOUNDED, cancelable poll: it sleeps a sane interval between cheap
 token reads up to a capped ``timeout_s`` and returns the instant a delta is detected, or a
 ``timed_out`` `LiveChange` when the budget elapses. It NEVER spins tightly and NEVER blocks
-unbounded (hard requirement — pairs with the E8-06 latency budget).
+unbounded (hard requirement — pairs with the latency budget).
 
 READ-ONLY: detecting a change mutates nothing in the live document and produces NO Operation
 Record (it mirrors ``render_live_view`` / ``get_scene``). All token components are coerced/bounded
@@ -193,7 +193,7 @@ def wait_for_change(
     sleep: Any = time.sleep,
     monotonic: Any = time.monotonic,
 ) -> LiveChange:
-    """Bounded, cancelable poll for the next live change (E8-03; read-only, no busy-loop).
+    """Bounded, cancelable poll for the next live change (read-only, no busy-loop).
 
     Reads the cheap token, returns immediately on a detected delta, otherwise sleeps
     ``poll_interval_s`` and retries until ``timeout_s`` elapses — then returns a ``timed_out``

@@ -1,4 +1,4 @@
-"""Versioned Action capability map + discovery (E6-02 / architecture §3.5).
+"""Versioned Action capability map + discovery (architecture §3.5).
 
 Records WHICH Inkscape Actions exist for a DETECTED Inkscape version, persisted append-style under
 ``<root>/.inkscape-mcp/action-maps/<version>.json`` (one file per version). The execution layer
@@ -39,7 +39,7 @@ _VERSION_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class ActionCapabilityMap(BaseModel):
-    """Version-keyed snapshot of the host's Action surface (E6-02).
+    """Version-keyed snapshot of the host's Action surface.
 
     `inkscape_version` is the raw probe version string (or `UNKNOWN_VERSION`); `actions` is the full
     set of Action ids the host reported via `inkscape --action-list`; `action_count` is its length.
@@ -256,7 +256,7 @@ def discover_extensions(
     allowlisted = sorted(s.extension_allowlist)
     notes = list(caps.notes)
     if not allowlisted:
-        # E10-10 S4: an empty allowlist is the default, not a probe failure — say so explicitly
+        # S4: an empty allowlist is the default, not a probe failure — say so explicitly
         # so an agent doesn't read `allowlisted: []` as "extensions unavailable".
         notes.append(
             "extension execution is opt-in and OFF by default: the allowlist is empty until an "

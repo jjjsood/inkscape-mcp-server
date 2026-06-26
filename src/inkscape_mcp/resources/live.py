@@ -1,4 +1,4 @@
-"""Live session resources (E3-06).
+"""Live session resources.
 
 Read-only MCP resources exposing live-session state and the current selection. They report
 cleanly when no live session is connected (a not-connected `LiveSession`, an empty selection)
@@ -47,7 +47,7 @@ def live_selection() -> str:
 
 @mcp.resource("inkscape://live/view", mime_type="application/json")
 def live_view() -> str:
-    """Current live frame's structured metadata: the `LiveScene` (E8-02), without the PNG bytes.
+    """Current live frame's structured metadata: the `LiveScene`, without the PNG bytes.
 
     Exposes the machine-readable scene — active-doc ref, selection ids + bboxes, viewport
     (zoom/center/visible region), canvas size, and a compact visible-object summary (reusing the
@@ -66,7 +66,7 @@ def live_view() -> str:
 
 @mcp.resource("inkscape://live/events", mime_type="application/json")
 def live_events() -> str:
-    """Latest live change state (E8-03): the current cheap state token + classified deltas.
+    """Latest live change state: the current cheap state token + classified deltas.
 
     Polls the cheap state token once (a small revision marker + selection ids + coarse viewport —
     never the full document or a PNG; protocol v5), hashes + diffs it against the session's last
@@ -86,7 +86,7 @@ def live_events() -> str:
 
 @mcp.resource("inkscape://live/operations", mime_type="application/json")
 def live_operations() -> str:
-    """Recent Live Operation Records (E4-02): what each live mutation changed and how.
+    """Recent Live Operation Records: what each live mutation changed and how.
 
     Makes live mutations observable — each record carries the transport, selection, affected ids,
     approval decision, before/after render paths, and status. Returns an empty log when there are

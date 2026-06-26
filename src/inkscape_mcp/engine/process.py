@@ -1,4 +1,4 @@
-"""One long-lived `inkscape --shell` worker (E12-01 / ADR-007).
+"""One long-lived `inkscape --shell` worker (ADR-007).
 
 `EngineProcess` wraps a single persistent `inkscape --shell` subprocess so the Inkscape-engine ops
 (render / export / path / boolean / action-chain) run against a WARM, stateful process instead of
@@ -7,7 +7,7 @@ worker the server spawns and supervises — Inkscape is built ``Gio::APPLICATION
 process is its own instance on its own document (arch §4.4); it never attaches to or drives the
 user's running GUI.
 
-Framing (the E12-02 spike finding, verified on Inkscape 1.4.3). The shell has no machine-readable
+Framing (the spike finding, verified on Inkscape 1.4.3). The shell has no machine-readable
 per-command delimiter; instead it ECHOES each command on its own line, prints any output lines, then
 emits a bare ``"> "`` prompt with NO trailing newline when it is ready for the next command. Real
 output lines always end in ``\\n``; the prompt is the only token that does not — so the response for
@@ -21,7 +21,7 @@ error.
 SECURITY (sec.12 / X1): the worker is spawned as an ARG LIST with ``shell=False`` (no shell string
 is ever built); the spawn argv is fixed (``[inkscape, "--shell"]``) — no client value in it. Every
 command written to the worker's stdin is built by the caller from validated/typed tokens (the same
-E6 allowlist + map + charset gates as the per-call path; this layer adds no new authority).
+allowlist + map + charset gates as the per-call path; this layer adds no new authority).
 Each command has a per-command timeout; on expiry (or any IO fault) the worker is killed so a
 hung engine can never block the server. The worker is reaped on idle-timeout and on shutdown.
 """
@@ -48,8 +48,8 @@ _logger = get_logger("engine.process")
 #: command's echo line always precedes it) or equals the lone banner prompt.
 PROMPT = "> "
 
-#: The plaintext stderr line Inkscape prints for an unknown/misspelled action (E12-02). Detected and
-#: surfaced as a clean :class:`EngineActionError` (mirrors the E6 "action_absent"
+#: The plaintext stderr line Inkscape prints for an unknown/misspelled action. Detected and
+#: surfaced as a clean :class:`EngineActionError` (mirrors the "action_absent"
 #: class) so a bad action never silently no-ops.
 _PARSE_ERROR_RE = re.compile(
     r"InkscapeApplication::parse_actions: could not find action for:\s*(?P<action>.+)"

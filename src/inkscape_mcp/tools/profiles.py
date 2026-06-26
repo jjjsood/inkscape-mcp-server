@@ -1,18 +1,18 @@
-"""Export-profile tools (E2-06): `export_web_profile`, `create_icon_set`, `export_print_profile`.
+"""Export-profile tools: `export_web_profile`, `create_icon_set`, `export_print_profile`.
 
 Thin MCP layer over the profile engine (`inkscape_mcp.render.profiles`), which itself composes the
-E1-06 CLI render/export engine. Inkscape engine per ADR-005. Following ADR-002, the three profiles
+CLI render/export engine. Inkscape engine per ADR-005. Following ADR-002, the three profiles
 are discrete, typed tools (NOT a single `profile: str` string-dispatch portmanteau).
 
 All three are risk class **low**: they write only to the per-document artifact / exports dir and
 never overwrite the original or the working copy, so no Operation Record or snapshot is required
-(same as the E1-06 export tools).
+(same as the export tools).
 
 Client-facing errors are raised as `ToolError` with stable, host-path-free messages (sec.12):
-unknown document id -> "document id not found"; a DISTINGUISHABLE icon/web size cause (E10-10 PF5)
+unknown document id -> "document id not found"; a DISTINGUISHABLE icon/web size cause (PF5)
 -> "icon size must be a positive integer" (<=0) vs "icon size exceeds the configured pixel cap"
 (over-cap); limit / process / render failures -> stable messages. Returned artifact paths follow ONE
-LOCATION CONTRACT (E11-01): `path` and `workspace_relative_path` carry the SAME value, always
+LOCATION CONTRACT: `path` and `workspace_relative_path` carry the SAME value, always
 relative to the WORKSPACE ROOT, openable by a single join to the root — never an absolute host path.
 """
 
@@ -48,7 +48,7 @@ _logger = get_logger("tools.profiles")
 class ArtifactRef(BaseModel):
     """A single produced artifact in a profile result.
 
-    ONE LOCATION CONTRACT (E11-01): `path` and `workspace_relative_path` carry the SAME value — the
+    ONE LOCATION CONTRACT: `path` and `workspace_relative_path` carry the SAME value — the
     file relative to the WORKSPACE ROOT (carries the `.inkscape-mcp/documents/<doc_id>/...` base) —
     so you open it by a single join to the workspace root with no `find`/`stat`. `path` is kept
     only for back-compat and now means exactly the same thing. `width_px`/`height_px` are the TRUE
@@ -56,7 +56,7 @@ class ArtifactRef(BaseModel):
     `requested_size_px` is set only for icon-set entries (the square size requested); `scale` is set
     only for responsive-web entries produced via `scales=` (the density multiplier, e.g. 2 for the
     2x). `requested_width_px` is set on every responsive-web PNG entry, including the `widths=` form
-    that has no density `scale`, so the requested width of an entry is always identifiable (E13-06).
+    that has no density `scale`, so the requested width of an entry is always identifiable.
     """
 
     path: str
@@ -67,7 +67,7 @@ class ArtifactRef(BaseModel):
     requested_size_px: int | None = None
     scale: int | None = None
     requested_width_px: int | None = None
-    #: CONTENT-TRUTH (E16-07), computed at produce time from the just-written artifact: raster
+    #: CONTENT-TRUTH, computed at produce time from the just-written artifact: raster
     #: (PNG) entries carry `opaque_px` (drawn non-transparent pixel count) + `all_blank`; PDF
     #: entries carry `is_vector` (no embedded raster image) + `fonts_outlined` (no embedded font —
     #: true vector when both hold). Each is None for entries it does not apply to / when skipped.
@@ -80,7 +80,7 @@ class ArtifactRef(BaseModel):
 class ProfileExportResult(BaseModel):
     """Result of a profile tool: the profile token, its ordered artifacts, and applied settings.
 
-    `applied_settings` records the print/profile-specific options applied (auditable; E11-11) —
+    `applied_settings` records the print/profile-specific options applied (auditable) —
     empty for profiles that apply none.
     """
 
@@ -96,7 +96,7 @@ def _map_failure(exc: Exception) -> ToolError:
         return ToolError("document id not found")
     if isinstance(exc, ProfileSizeError):
         # Surface the engine's stable, host-path-free message so the cause is DISTINGUISHABLE
-        # (E10-10 PF5): "...must be a positive integer" (<=0) vs "...exceeds the configured pixel
+        # (PF5): "...must be a positive integer" (<=0) vs "...exceeds the configured pixel
         # cap" (over-cap) — previously both collapsed to one "limit" message.
         return ToolError(str(exc))
     if isinstance(exc, SandboxViolation):
@@ -105,7 +105,7 @@ def _map_failure(exc: Exception) -> ToolError:
     if isinstance(exc, LimitExceeded):
         return ToolError("export exceeds the configured size or dimension limit")
     if isinstance(exc, ProcessError):
-        # CAPABILITY-ABSENT (E14-08a): the Inkscape engine could not be launched on this runtime.
+        # CAPABILITY-ABSENT: the Inkscape engine could not be launched on this runtime.
         # Name the discovery tool so the agent can inspect support rather than retry blindly.
         return ToolError(
             "render/export failed: the Inkscape engine is unavailable on this runtime; "
@@ -151,7 +151,7 @@ def export_web_profile(
     out_dir: str | None = None,
     name_prefix: str | None = None,
 ) -> ProfileExportResult:
-    """Export a web-oriented asset set: a responsive PNG set plus one plain SVG (E11-11).
+    """Export a web-oriented asset set: a responsive PNG set plus one plain SVG.
 
     When to use: producing a web-ready asset bundle. For a print PDF use `export_print_profile`; for
     a square icon set use `create_icon_set`; for a single export use `export_document`.
@@ -159,13 +159,13 @@ def export_web_profile(
     Key params: PNG widths resolve as — explicit `widths` (each a PNG); else density `scales`
     applied to `width_px` (e.g. [1,2,3] -> 1x/2x/3x); else `width_px`. Every PNG is pixel-capped
     before Inkscape runs and distinct on disk; responsive entries report their `scale`. `out_dir`
-    (E11-05/E16-03) writes the set into a caller-chosen dir so a `dist/` tree assembles with no
+ writes the set into a caller-chosen dir so a `dist/` tree assembles with no
     `Bash cp` — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
     (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix` tags each file.
 
     Return shape: `ProfileExportResult` — `profile`, `applied_settings`, and ordered `artifacts`
     (ascending width, then one plain SVG last); each carries a `workspace_relative_path` plus
-    content-truth fields (PNG: `opaque_px`/`all_blank`; E16-07).
+    content-truth fields (PNG: `opaque_px`/`all_blank`).
 
     Example: `export_web_profile(doc_id, scales=[1, 2, 3], out_dir="dist/web")`
 
@@ -213,13 +213,13 @@ def create_icon_set(
     Key params: `sizes` is the list of square px sizes (defaults to 16, 32, 48, 64, 128, 256). Each
     must be a positive integer no greater than the configured pixel cap; an out-of-range or
     non-positive size is rejected before Inkscape runs and no partial set is written. `out_dir`
-    (E11-05/E16-03) writes the set into a caller-chosen dir — a relative `out_dir` anchors to the
+ writes the set into a caller-chosen dir — a relative `out_dir` anchors to the
     workspace ROOT and is sandbox-checked (out-of-workspace rejected "path rejected: outside
     workspace"); `name_prefix` tags each file.
 
     Return shape: `ProfileExportResult` — `profile`, `applied_settings`, and `artifacts` (each
     carries its `requested_size_px`, a `workspace_relative_path`, and content-truth
-    `opaque_px`/`all_blank`; E16-07).
+    `opaque_px`/`all_blank`).
 
     Example: `create_icon_set(doc_id, sizes=[16, 32, 64], out_dir="dist/icons")`
 
@@ -259,13 +259,13 @@ def export_print_profile(
     Key params: applies real print-specific Inkscape settings (PDF version pinned to 1.4 + text
     outlined to paths) so output is press-safe and ALWAYS differs from a plain PDF export — even for
     text-free docs, since the plain export defaults to PDF 1.5 while this pins 1.4 (header
-    `%PDF-1.4`, a deterministic byte difference). `out_dir` (E11-05/E16-03) writes into a
+    `%PDF-1.4`, a deterministic byte difference). `out_dir` writes into a
     caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
     (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix` tags the file.
 
-    Return shape: `ProfileExportResult` — `profile`, the auditable `applied_settings` (E11-11), and
+    Return shape: `ProfileExportResult` — `profile`, the auditable `applied_settings`, and
     one PDF in `artifacts` with a `workspace_relative_path` plus content-truth `is_vector` /
-    `fonts_outlined` (true vector when both hold; E16-07).
+    `fonts_outlined` (true vector when both hold).
 
     Example: `export_print_profile(doc_id, out_dir="dist/print")`
 

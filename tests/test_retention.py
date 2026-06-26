@@ -1,4 +1,4 @@
-"""Snapshot retention / cleanup tests (E1 follow-up / workspace-model §6)."""
+"""Snapshot retention / cleanup tests (follow-up / workspace-model §6)."""
 
 from __future__ import annotations
 
@@ -241,7 +241,7 @@ def test_prune_tool_registered_on_mcp(doc: tuple[str, Path]) -> None:
     assert "prune_snapshots" in names
 
 
-# --- E8-06 live-frame retention (folded into the EXPLICIT sweep) -------------
+# --- live-frame retention (folded into the EXPLICIT sweep) -------------
 
 FRAME_BYTES = 1024
 

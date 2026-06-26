@@ -1,4 +1,4 @@
-"""Element-creation / defs / grouping tools (E14-01, E14-04).
+"""Element-creation / defs / grouping tools.
 
 Thin MCP layer over the direct-DOM engines in :mod:`inkscape_mcp.edit.create`. One small, typed
 tool per shape / def / grouping primitive (no portmanteau `add_element(tag, attrs)` per ADR-002 /
@@ -168,7 +168,7 @@ def _points_bbox(points: list[tuple[float, float]]) -> BBox | None:
     return BBox(x=min(xs), y=min(ys), width=max(xs) - min(xs), height=max(ys) - min(ys))
 
 
-# --- Shape primitives (E14-01) ----------------------------------------------
+# --- Shape primitives ----------------------------------------------
 
 
 @mcp.tool
@@ -193,7 +193,7 @@ def create_rect(
 
     Key params: `width` / `height` > 0; `rx` / `ry` optional corner radii; inserted into `parent_id`
     (must exist) or the document default parent (first layer, else root); `object_id` to pin the id.
-    Optional `fill` / `stroke` / `stroke_width` (E16-10b) paint the shape IN THIS CALL — validated
+    Optional `fill` / `stroke` / `stroke_width` paint the shape IN THIS CALL — validated
     exactly like `set_fill` / `set_stroke` (colour or `url(#id)`; CSS length) — so no mandatory
     second styling call (default None = unpainted, prior behaviour).
 
@@ -254,7 +254,7 @@ def create_circle(
     `create_rect`.
 
     Key params: `r` > 0; inserted into `parent_id` (must exist) or the document default parent;
-    `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` (E16-10b) paint it in
+    `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` paint it in
     this call (validated like `set_fill` / `set_stroke`; default None = unpainted).
 
     Return shape: `CreateResult` — `object_id` (new id), analytic `bbox`, plus the pipeline fields
@@ -312,7 +312,7 @@ def create_ellipse(
     `create_rect`.
 
     Key params: `rx` / `ry` > 0; inserted into `parent_id` (must exist) or the document default
-    parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` (E16-10b) paint
+    parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` paint
     it in this call (validated like `set_fill` / `set_stroke`; default None = unpainted).
 
     Return shape: `CreateResult` — `object_id` (new id), analytic `bbox`, plus the pipeline fields
@@ -370,7 +370,7 @@ def create_line(
     a closed shape use `create_polygon`.
 
     Key params: endpoints `(x1, y1)` / `(x2, y2)`; inserted into `parent_id` (must exist) or the
-    document default parent; `object_id` to pin the id. Optional `stroke` / `stroke_width` (E16-10b)
+    document default parent; `object_id` to pin the id. Optional `stroke` / `stroke_width`
     paint the segment in this call (a line is unfilled by nature, so no `fill`; validated like
     `set_stroke`; default None = unpainted).
 
@@ -426,7 +426,7 @@ def create_polygon(
     `create_polyline`; for curves use `create_path`.
 
     Key params: `points` ≥ 1 `(x, y)` pairs; inserted into `parent_id` (must exist) or the document
-    default parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` (E16-10b)
+    default parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width`
     paint it in this call (validated like `set_fill` / `set_stroke`; default None = unpainted).
 
     Return shape: `CreateResult` — `object_id` (new id), analytic `bbox` (extent of the points),
@@ -479,7 +479,7 @@ def create_polyline(
     single segment use `create_line`; for curves use `create_path`.
 
     Key params: `points` ≥ 1 `(x, y)` pairs; inserted into `parent_id` (must exist) or the document
-    default parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width` (E16-10b)
+    default parent; `object_id` to pin the id. Optional `fill` / `stroke` / `stroke_width`
     paint it in this call (validated like `set_fill` / `set_stroke`; default None = unpainted).
 
     Return shape: `CreateResult` — `object_id` (new id), analytic `bbox` (extent of the points),
@@ -535,7 +535,7 @@ def create_path(
     Key params: `d` validated against a strict charset (digits, whitespace, `,`, `.`, sign,
     exponent, SVG path command letters only) and length-bounded; geometry is NOT fully parsed; into
     `parent_id` (must exist) or the document default parent. Optional `fill` / `stroke` /
-    `stroke_width` (E16-10b) paint it in this call (validated like `set_fill` / `set_stroke`;
+    `stroke_width` paint it in this call (validated like `set_fill` / `set_stroke`;
     default None = unpainted).
 
     Return shape: `CreateResult` — `object_id` (new id), `bbox=None` (paths are not analytically
@@ -591,7 +591,7 @@ def create_text(
 
     Key params: `text` is length-bounded and rejects control characters other than tab / newline /
     carriage return (stored as a text node, no markup injection); inserted into `parent_id` (must
-    exist) or the document default parent. Optional `fill` / `stroke` / `stroke_width` (E16-10b)
+    exist) or the document default parent. Optional `fill` / `stroke` / `stroke_width`
     paint the glyphs in this call (validated like `set_fill` / `set_stroke`; default None =
     unpainted). For font family/size/weight use `set_font`.
 
@@ -631,7 +631,7 @@ def create_text(
     return result
 
 
-# --- defs / gradients (E14-04) ----------------------------------------------
+# --- defs / gradients ----------------------------------------------
 
 
 @mcp.tool
@@ -731,7 +731,7 @@ def add_radial_gradient(
     return result
 
 
-# --- grouping / symbols (E14-04) --------------------------------------------
+# --- grouping / symbols --------------------------------------------
 
 
 @mcp.tool

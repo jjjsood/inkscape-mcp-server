@@ -1,4 +1,4 @@
-"""Typed DOM-edit BATCH engine (E19-01).
+"""Typed DOM-edit BATCH engine.
 
 One typed, validated, ATOMIC batch of N direct-DOM edits applied through the SINGLE existing edit
 kernel (:func:`inkscape_mcp.edit.pipeline.apply_edit`). This closes the round-trip tax the
@@ -107,7 +107,7 @@ class _Edit(BaseModel):
         raise NotImplementedError
 
 
-# --- style (E2-01) ----------------------------------------------------------
+# --- style ----------------------------------------------------------
 
 
 class SetFillEdit(_Edit):
@@ -169,7 +169,7 @@ class ApplyPaletteEdit(_Edit):
         return apply_palette_mutate(self.mapping, self.scope_ids)
 
 
-# --- text / object (E2-02 / E16-08) -----------------------------------------
+# --- text / object -----------------------------------------
 
 
 class ReplaceTextEdit(_Edit):
@@ -231,7 +231,7 @@ class DeleteObjectEdit(_Edit):
         return make_delete_objects(self.object_ids)
 
 
-# --- simple transforms (E2-03) ----------------------------------------------
+# --- simple transforms ----------------------------------------------
 
 
 class MoveObjectEdit(_Edit):
@@ -340,7 +340,7 @@ class TileEdit(_Edit):
         return mutate
 
 
-# --- element creation (E14-01 / E14-04) -------------------------------------
+# --- element creation -------------------------------------
 
 
 class CreateRectEdit(_Edit):

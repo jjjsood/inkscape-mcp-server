@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate ``llms.txt`` + ``llms-full.txt`` from the LIVE MCP registry (E15-01).
+"""Generate ``llms.txt`` + ``llms-full.txt`` from the LIVE MCP registry.
 
 These two files are the agent-facing manifest of the server surface. Crucially they are
 GENERATED, not hand-maintained: the survey's reference implementation (sandraschi) keeps theirs by
@@ -19,7 +19,7 @@ What it writes (at the SERVER ROOT — the parent of this ``scripts/`` dir):
   resources sections; plus the same env/run config.
 
 Risk class is DERIVED, never hardcoded per-tool: it is parsed from the ``Risk class:`` line that the
-E15-02 6-part docstring template guarantees on every tool. Categories are derived from the tool's
+6-part docstring template guarantees on every tool. Categories are derived from the tool's
 defining module (``tool.fn.__module__``) via ``_MODULE_GROUPS``.
 
 Run inside ``inkscape-mcp-server/``::
@@ -192,10 +192,10 @@ async def _collect() -> dict[str, Any]:
     """Register the surface and return tools / prompts / resources / templates.
 
     The manifest documents the FULL tool catalog, so it is generated with both progressive-
-    disclosure flags (`live_enabled` / `raw_action_enabled`) forced ON, the E18-03 tool profile
-    forced to `full`, and the E20-03 tool-description mode forced to `full` — the committed
+    disclosure flags (`live_enabled` / `raw_action_enabled`) forced ON, the tool profile
+    forced to `full`, and the tool-description mode forced to `full` — the committed
     `llms.txt` / `llms-full.txt` always describe the complete surface with full descriptions,
-    independent of the operator env or the E17-02 / E18-03 / E20-03 runtime gating that NARROWS or
+    independent of the operator env or the runtime gating that NARROWS or
     SHORTENS what a default client sees.
     """
     import os

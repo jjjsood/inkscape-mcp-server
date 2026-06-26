@@ -1,4 +1,4 @@
-"""Intent → tool discoverability tool (E14-08): ``how_do_i``.
+"""Intent → tool discoverability tool: ``how_do_i``.
 
 Maps a natural-language goal to the concrete MCP tool name(s) that achieve it, and flags clearly
 out-of-scope goals (raster/pixel editing, arbitrary Actions/extensions/scripts, network fetch, code

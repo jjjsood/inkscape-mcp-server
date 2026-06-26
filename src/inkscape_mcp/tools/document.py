@@ -1,4 +1,4 @@
-"""Document tools (E1-04): `open_document` + `inspect_document`.
+"""Document tools: `open_document` + `inspect_document`.
 
 Thin MCP layer over the registry (open) and the reusable inspection engine
 (`inkscape_mcp.document.inspect`). Direct DOM only (ADR-005), read-only inspection.
@@ -55,7 +55,7 @@ class InspectDocumentResult(BaseModel):
 
     `objects` is the flat list of every id-bearing object (the same `ObjectRef` shape `find_objects`
     returns) so an agent can discover targetable ids — and their tag / bbox / paint / text — for the
-    id-taking edit tools without a second call. Added additively (E14-07)."""
+    id-taking edit tools without a second call. Added additively."""
 
     summary: DocSummary
     tree: DocTree

@@ -1,4 +1,4 @@
-"""Structured scene perception tests (E8-02): LiveScene assembly, frame tool, view resource.
+"""Structured scene perception tests: LiveScene assembly, frame tool, view resource.
 
 Covers: the `LiveScene` is assembled correctly from a faked transport scene payload; the
 `live_get_scene` frame tool returns BOTH a PNG path and the scene; the `inkscape://live/view`

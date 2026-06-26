@@ -1,4 +1,4 @@
-"""In-process export content-truth verifiers (E16-07).
+"""In-process export content-truth verifiers.
 
 Pure functions (no MCP decorators, no subprocess) that read a JUST-PRODUCED artifact off disk and
 certify what it actually contains, so an export can self-report content-truth rather than the caller
@@ -54,7 +54,7 @@ _FONT_MARKERS: tuple[bytes, ...] = (
 
 
 class PdfVectorInfo(BaseModel):
-    """Content-truth summary of a produced PDF (E16-07).
+    """Content-truth summary of a produced PDF.
 
     `is_vector` is True iff the PDF embeds NO raster image XObjects; `fonts_outlined` is True iff it
     embeds NO font objects (text was outlined to paths). A PDF that is BOTH is true vector — safe
@@ -67,7 +67,7 @@ class PdfVectorInfo(BaseModel):
 
 
 class RasterContentInfo(BaseModel):
-    """Content-truth summary of a produced raster (E16-07).
+    """Content-truth summary of a produced raster.
 
     `opaque_px` is the count of non-fully-transparent pixels actually drawn; `all_blank` is True iff
     nothing was drawn (a fully transparent raster, or — for an alpha-less raster — a single flat
@@ -80,7 +80,7 @@ class RasterContentInfo(BaseModel):
 
 
 def verify_pdf(path: Path) -> PdfVectorInfo | None:
-    """Scan a produced PDF in-process for raster-image and embedded-font markers (E16-07).
+    """Scan a produced PDF in-process for raster-image and embedded-font markers.
 
     Returns `PdfVectorInfo(is_vector, fonts_outlined)` — `is_vector` when no `/Subtype /Image`
     XObject is present, `fonts_outlined` when no `/Type /Font` / `/FontFile*` marker is present.
@@ -102,7 +102,7 @@ def verify_pdf(path: Path) -> PdfVectorInfo | None:
 
 
 def verify_raster(path: Path) -> RasterContentInfo | None:
-    """Count the drawn (non-transparent) pixels of a produced raster in-process via Pillow (E16-07).
+    """Count the drawn (non-transparent) pixels of a produced raster in-process via Pillow.
 
     Returns `RasterContentInfo(opaque_px, all_blank)`. With an alpha channel, `opaque_px` is the
     number of pixels whose alpha is non-zero and `all_blank` is True iff that count is zero. Without

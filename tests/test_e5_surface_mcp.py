@@ -1,8 +1,8 @@
-"""E5 surface verification over the live MCP client (E9-04).
+"""surface verification over the live MCP client.
 
-The three E5 tools (`svg_web_optimize`, `quality_report`, `export_batch`) were unit-tested at the
+The three tools (`svg_web_optimize`, `quality_report`, `export_batch`) were unit-tested at the
 function layer but never exercised THROUGH a FastMCP client — the previously-running server predated
-the E5 landing (`1f8c329`). These tests drive each tool over the in-memory `Client` (the same path a
+the landing (`1f8c329`). These tests drive each tool over the in-memory `Client` (the same path a
 real STDIO host uses) and assert end-to-end behaviour, not just that the call returns:
 
 1. all three appear in the live tool list (part of the 64),
@@ -19,7 +19,7 @@ Async is run via `asyncio.run(...)` inside sync test functions, matching the rep
 (see `test_resource_client.py`); no async plugin/config is added. The full tool/resource surface
 is registered once at import time so the client sees every tool.
 
-`svg_web_optimize` carries NO `@pytest.mark.inkscape`: the optimizer is pure-lxml DOM (E2-04) and
+`svg_web_optimize` carries NO `@pytest.mark.inkscape`: the optimizer is pure-lxml DOM and
 the pipeline's before/after preview is best-effort, so the test monkeypatches `render_preview` to
 stay Inkscape-free and deterministic (mirroring `test_optimize.py`) — the mutation/reversibility
 never depend on the binary. `export_batch`'s real-run test DOES shell out to Inkscape to produce
@@ -98,7 +98,7 @@ def _fake_render_preview(doc_id: str, width_px: int | None = None) -> RenderResu
     descriptor = "auto" if width_px is None else f"{width_px}px"
     produced = preview_dir / f"preview-{descriptor}.png"
     produced.write_bytes(b"\x89PNG\r\n\x1a\n")
-    # E11-01 one-location contract: artifact_path is workspace-ROOT-relative (matches the engine).
+    # one-location contract: artifact_path is workspace-ROOT-relative (matches the engine).
     rel = produced.relative_to(root).as_posix()
     return RenderResult(
         doc_id=doc_id,
@@ -148,7 +148,7 @@ def _locals(root: Any) -> set[str]:
 
 
 def _workspace_path(doc_id: str, rel: str) -> Path:
-    # E11-01 ONE LOCATION CONTRACT: returned artifact paths are relative to the workspace ROOT.
+    # ONE LOCATION CONTRACT: returned artifact paths are relative to the workspace ROOT.
     entry = get_registry().get(doc_id)
     return Path(entry.root) / rel
 
@@ -157,7 +157,7 @@ def _workspace_path(doc_id: str, rel: str) -> Path:
 
 
 def test_all_three_e5_tools_in_live_tool_list(doc: tuple[str, Path, Path]) -> None:
-    """The E5 trio is reachable over the client's `list_tools` (part of the 64)."""
+    """The trio is reachable over the client's `list_tools` (part of the 64)."""
 
     async def _run() -> set[str]:
         async with Client(mcp) as client:

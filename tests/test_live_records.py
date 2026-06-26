@@ -1,4 +1,4 @@
-"""Live Operation Record tests (E4-02): approval gate, persistence, listing, gate posture."""
+"""Live Operation Record tests: approval gate, persistence, listing, gate posture."""
 
 from __future__ import annotations
 
@@ -108,7 +108,7 @@ def test_unknown_live_operation_id_raises_keyerror(tmp_path: Path) -> None:
         get_live_operation("op_deadbeef", settings=_settings(tmp_path))
 
 
-# --- E10-03: host-path-free / opaque document paths in records --------------------
+# ---: host-path-free / opaque document paths in records --------------------
 
 
 def test_external_document_path_persisted_as_opaque_not_host_path(tmp_path: Path) -> None:

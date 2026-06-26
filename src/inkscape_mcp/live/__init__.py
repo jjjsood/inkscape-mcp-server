@@ -1,4 +1,4 @@
-"""Live-mode layer (E3 — Phase 3, Live read).
+"""Live-mode layer (Phase 3, Live read).
 
 Detect and read a *running* Inkscape instance cross-platform through a transport abstraction
 (architecture §4.4/§4.5). The portable backend is an extension-socket bridge (a shipped

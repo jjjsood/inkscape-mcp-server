@@ -1,4 +1,4 @@
-"""Constrained computed-edit path (E20-02): ``transform_objects``.
+"""Constrained computed-edit path: ``transform_objects``.
 
 A declarative SELECTOR → ONE TYPED OPERATION spec — Penpot-style bulk editing ("recolour every blue
 rect", "nudge every text") in ONE call, but WITHOUT a code escape hatch. It resolves a target SET
@@ -14,7 +14,7 @@ There is no second matcher and no second kernel — it is pure composition (ADR-
   WITHOUT its target ids — the matched ids are FANNED OUT into it. Each `TargetedOp` member expands
   to one or more `apply_edits` `TypedEdit` dicts (an op that takes `object_ids` becomes ONE edit
   covering the whole matched list; an op that takes a single `object_id` becomes N edits, one per
-  match), which are then fed through the SAME `build_batch` → `apply_edit` path E19-01 built;
+  match), which are then fed through the SAME `build_batch` → `apply_edit` path built;
 * so the whole transform lands as ONE snapshot + ONE Operation Record (the batch kernel does this
   per `apply_edit` call) and a single `restore_snapshot` reverts it; any per-edit failure rolls the
   WHOLE thing back atomically (validate-all-first, all-or-nothing — from the batch kernel);

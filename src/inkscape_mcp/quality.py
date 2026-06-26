@@ -1,9 +1,9 @@
-"""Machine-readable quality report engine (E5-05, read-only, ADR-005 direct DOM).
+"""Machine-readable quality report engine (read-only, ADR-005 direct DOM).
 
-Pure functions over the WORKING COPY of a registered document. Extends the E1-08 validation engine
+Pure functions over the WORKING COPY of a registered document. Extends the validation engine
 (`inkscape_mcp.validate`) rather than duplicating it: a `quality_report` wraps the
 `validate_document` findings and adds quantitative METRICS (object/node counts, embedded-raster
-weight, font coverage, viewBox health) plus OPTIMIZATION OPPORTUNITIES sourced from the E5-04
+weight, font coverage, viewBox health) plus OPTIMIZATION OPPORTUNITIES sourced from the
 optimizer (`inkscape_mcp.edit.optimize.analyze_optimizations`) so the opportunities it names are
 exactly what `svg_web_optimize` would strip.
 
@@ -115,7 +115,7 @@ class QualityMetrics(BaseModel):
 
 
 class OptimizationOpportunity(BaseModel):
-    """One optimization opportunity — consistent with what `svg_web_optimize` (E5-04) would strip.
+    """One optimization opportunity — consistent with what `svg_web_optimize` would strip.
 
     `code` is a stable machine identifier; `count` is how many items would be cleaned up; `message`
     is human-readable and host-path-free.
@@ -129,10 +129,10 @@ class OptimizationOpportunity(BaseModel):
 class QualityReport(BaseModel):
     """Structured, machine-readable quality report for one document.
 
-    Wraps the E1-08 validation result (`findings` + `ok` + tallies) and adds `metrics`,
+    Wraps the validation result (`findings` + `ok` + tallies) and adds `metrics`,
     optimization `opportunities`, and a rolled-up `score`. Not prose — every field is typed.
 
-    `score` is a 0-100 triage HEURISTIC (E13-08): 100 is a clean document; each validation error,
+    `score` is a 0-100 triage HEURISTIC: 100 is a clean document; each validation error,
     each warning, and each optimization opportunity subtracts a bounded penalty. It is deliberately
     a coarse summary for ranking/triage - the per-code `opportunities` and typed `findings` stay the
     authoritative, actionable detail (a low score never replaces reading them).
@@ -195,7 +195,7 @@ def _node_count(root: etree._Element) -> int:
     return sum(1 for node in root.iter() if isinstance(node.tag, str))
 
 
-#: Per-item penalties for the rolled-up quality `score` (E13-08). Errors weigh most (they make the
+#: Per-item penalties for the rolled-up quality `score`. Errors weigh most (they make the
 #: document invalid), warnings less, and each optimization opportunity a small bounded amount.
 _SCORE_ERROR_PENALTY = 15
 _SCORE_WARNING_PENALTY = 5

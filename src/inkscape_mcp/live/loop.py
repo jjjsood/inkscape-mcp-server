@@ -1,16 +1,16 @@
-"""Live view loop orchestrator (E8-05, ADR-006 — ZERO new authority).
+"""Live view loop orchestrator (ADR-006 — ZERO new authority).
 
 The flagship live-view step: it frames ONE perceive→decide→act→observe iteration as a single
 bounded, cancelable unit by COMPOSING existing capabilities. It adds orchestration, not authority.
 
-- PERCEIVE: capture the structured ``LiveScene`` (E8-02 `get_live_scene`) + a canvas frame.
+- PERCEIVE: capture the structured ``LiveScene`` (`get_live_scene`) + a canvas frame.
 - DECIDE: the AGENT decides — this module embeds no LLM. The decision arrives as a TYPED, semantic
-  act descriptor selecting ONE of the fixed E4 write ops (``apply`` / ``insert_svg`` / ``set_text``)
+  act descriptor selecting ONE of the fixed write ops (``apply`` / ``insert_svg`` / ``set_text``)
   plus its validated params and an ``approval_token``. No act ⇒ a perceive-only step.
-- ACT: routed through the E4 write engines via :func:`run_live_mutation` (E4-02) — HIGH risk +
+- ACT: routed through the write engines via :func:`run_live_mutation` — HIGH risk +
   ``approval_token`` + Live Operation Record + before/after frames. There is NO new mutation path,
-  no raw Action, no code string (ADR-002/003): the step's mutation path IS the E4 write path.
-- OBSERVE: after an act, capture an after-scene + a focused ``live_diff_view`` (E8-04) linked to the
+  no raw Action, no code string (ADR-002/003): the step's mutation path IS the write path.
+- OBSERVE: after an act, capture an after-scene + a focused ``live_diff_view`` linked to the
   Live Operation Record the act produced.
 
 BOUNDED + CANCELABLE BY CONSTRUCTION: a single step is inherently one iteration — there is no
@@ -19,7 +19,7 @@ server-side autonomous loop. The agent drives the loop by calling the step repea
 and cancelable at any point (the agent simply stops). This module exposes no multi-step runner.
 
 SAFETY (sec.12): the act op is selected from a FIXED enum; every param is validated by the existing
-E4 validators (colour/length/number/text/SVG safe-parse) BEFORE it crosses the transport; the
+validators (colour/length/number/text/SVG safe-parse) BEFORE it crosses the transport; the
 approval gate is enforced solely by ``run_live_mutation`` (not reimplemented here). Perceive-only
 steps mutate nothing and create no Operation Record. Errors are stable + host-path-free.
 """
@@ -59,7 +59,7 @@ _logger = get_logger("live.loop")
 class StepAction(StrEnum):
     """The FIXED set of semantic acts a loop step may perform (no raw Action/code path; ADR-003).
 
-    Each value maps 1:1 to an existing E4 semantic write engine; there is no escape hatch. An act
+    Each value maps 1:1 to an existing semantic write engine; there is no escape hatch. An act
     descriptor naming anything outside this enum is rejected before any transport contact.
     """
 
@@ -87,7 +87,7 @@ class LiveSessionStepResult(BaseModel):
         default=None, description="Live Operation Record id of the act (null when perceive-only)."
     )
     edit: LiveEditResult | None = Field(
-        default=None, description="The E4 mutation outcome (null when perceive-only)."
+        default=None, description="The mutation outcome (null when perceive-only)."
     )
     diff: LiveDiffResult | None = Field(
         default=None, description="Focused before/after diff linked to the record (act steps only)."
@@ -125,7 +125,7 @@ def _build_act(
     """Validate the act's params for the selected op and return its run_live_mutation wiring.
 
     Returns ``(tool_name, required_command, record_params, op)`` where ``op`` is the closure that
-    invokes the SAME E4 write engine the standalone live tool would. Raises a stable ``EditError``
+    invokes the SAME write engine the standalone live tool would. Raises a stable ``EditError``
     on any invalid/missing param. There is no branch that accepts a raw Action or code string.
     """
     if action is StepAction.APPLY:
@@ -181,7 +181,7 @@ def _build_act(
 def _observe(operation_id: str, after_scene: LiveScene) -> LiveDiffResult | None:
     """Capture the focused before/after diff for the act, linked to its record (best-effort).
 
-    Reuses E8-04 ``diff_live_operation`` against the SAME before/after frames the act already
+    Reuses ``diff_live_operation`` against the SAME before/after frames the act already
     persisted on its Live Operation Record. Best-effort: a diff failure (e.g. a frame was
     unavailable) never invalidates a successful, recorded mutation.
     """
@@ -213,13 +213,13 @@ def run_session_step(
     svg_fragment: str | None = None,
     text: str | None = None,
 ) -> LiveSessionStepResult:
-    """Run ONE perceive→decide→act→observe iteration (E8-05; the agent drives the loop).
+    """Run ONE perceive→decide→act→observe iteration (the agent drives the loop).
 
     PERCEIVE always runs (read-only scene + frame). When ``action`` is None the step is
     perceive-only (no mutation, no Operation Record). When an ``action`` is supplied, the ACT is
-    performed via the matching E4 write engine through :func:`run_live_mutation` (HIGH +
+    performed via the matching write engine through :func:`run_live_mutation` (HIGH +
     ``approval_token`` + Live Operation Record), then OBSERVE captures an after-scene + a focused
-    diff linked to that record. Zero new authority: the mutation path is exactly the E4 write path.
+    diff linked to that record. Zero new authority: the mutation path is exactly the write path.
     """
     before_scene, before_frame = _perceive()
 
@@ -249,7 +249,7 @@ def run_session_step(
         text=text,
     )
     # The approval gate + Live Operation Record + before/after capture all live in run_live_mutation
-    # (E4-02) — not reimplemented here. A HIGH-risk act without approval_token is refused there.
+    # — not reimplemented here. A HIGH-risk act without approval_token is refused there.
     edit: LiveEditResult = run_live_mutation(
         tool=tool,
         params=params,

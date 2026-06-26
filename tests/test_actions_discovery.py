@@ -1,4 +1,4 @@
-"""Action discovery + versioned capability-map tests (E6-02).
+"""Action discovery + versioned capability-map tests.
 
 Hermetic: every test feeds a synthetic `Capabilities` so no Inkscape is launched. Covers discovery
 returning the probed surface + allowlisted/available subsets, the version-keyed map persisting under
@@ -82,7 +82,7 @@ def test_discover_extensions_reports_empty_default_allowlist(tmp_path: Path) -> 
     d = discover_extensions(capabilities=_caps(["select-by-id"]), settings=s)
     # No extension is enabled for execution by default (MVP).
     assert d.allowlisted == []
-    # E10-10 S4: the empty default is explained in notes, not left as a bare `[]`.
+    # S4: the empty default is explained in notes, not left as a bare `[]`.
     assert any("opt-in" in n and "default" in n for n in d.notes)
 
 
@@ -173,7 +173,7 @@ def test_version_key_helper() -> None:
     assert cmap._version_key("../evil") == UNKNOWN_VERSION
 
 
-# --- E13-05: list_actions can omit the bulky full action array -------------------
+# ---: list_actions can omit the bulky full action array -------------------
 
 
 def test_list_actions_include_all_actions_toggle(monkeypatch: pytest.MonkeyPatch) -> None:

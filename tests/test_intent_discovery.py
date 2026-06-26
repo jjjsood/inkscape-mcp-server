@@ -1,4 +1,4 @@
-"""Intent → tool discoverability tests (E14-08).
+"""Intent → tool discoverability tests.
 
 Covers the `how_do_i` tool, the curated intent map, the out-of-scope detector, and the additive
 `intents` section on `list_capabilities`. The load-bearing test is `test_intent_map_*_real_tools`:
@@ -193,7 +193,7 @@ def test_match_intents_limit_is_respected() -> None:
     assert len(match_intents("export png pdf icon batch web optimize", limit=2)) <= 2
 
 
-# --- E14-08b: inkscape://runtime/intents resource (no-drift parity) ---------------------------
+# ---: inkscape://runtime/intents resource (no-drift parity) ---------------------------
 
 
 def _read_runtime_intents() -> str:

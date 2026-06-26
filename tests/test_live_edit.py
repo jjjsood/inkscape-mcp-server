@@ -1,4 +1,4 @@
-"""Live semantic edit tests (E4-01): write surface, governance, capability gating, syncability."""
+"""Live semantic edit tests: write surface, governance, capability gating, syncability."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def _connected(
     return mgr, settings
 
 
-# --- Validated parameter builders (reuse E2 semantics) ----------------------
+# --- Validated parameter builders (reuse semantics) ----------------------
 
 
 def test_build_style_validates_and_rejects_injection() -> None:
@@ -99,7 +99,7 @@ def test_validate_text_rejects_control_chars() -> None:
         validate_text("bad\x00null")
 
 
-# --- Orchestrator governance (E4-01 + E4-02) --------------------------------
+# --- Orchestrator governance (+) --------------------------------
 
 
 def test_run_live_mutation_records_applied_with_renders(
@@ -221,7 +221,7 @@ def test_export_live_selection_writes_png(tmp_path: Path, monkeypatch: pytest.Mo
     assert list_live_operations(settings=settings).count == 0
 
 
-# --- View-only validators + engine (E8-01) ----------------------------------
+# --- View-only validators + engine ----------------------------------
 
 
 def test_validate_viewport_per_mode() -> None:
@@ -356,7 +356,7 @@ def test_tool_export_selection_low_risk_no_approval(live_on: None) -> None:
     assert result.format == "png"
 
 
-# --- View tool layer (E8-01; low risk, no approval, no Operation Record) ------
+# --- View tool layer (low risk, no approval, no Operation Record) ------
 
 
 def test_tool_set_viewport_modes(live_on: None) -> None:

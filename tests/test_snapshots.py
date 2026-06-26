@@ -1,4 +1,4 @@
-"""Snapshot engine + tool tests (E1-07 / ADR-004)."""
+"""Snapshot engine + tool tests (ADR-004)."""
 
 from __future__ import annotations
 
@@ -120,7 +120,7 @@ def test_restore_reverts_working_copy_records_operation(
 def test_restore_returns_sha256_and_size_of_restored_content(
     doc: tuple[str, Path, Path],
 ) -> None:
-    # E11-10(d) / S11: restore returns restored_sha256 + restored_size_bytes so a caller can
+    # S11: restore returns restored_sha256 + restored_size_bytes so a caller can
     # assert recovery WITHOUT reading the working copy off disk.
     doc_id, root, _ = doc
 

@@ -1,4 +1,4 @@
-"""E12-05: shell-mode availability is reported by the probe + the active round-trip checker."""
+"""shell-mode availability is reported by the probe + the active round-trip checker."""
 
 from __future__ import annotations
 

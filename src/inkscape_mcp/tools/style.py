@@ -1,4 +1,4 @@
-"""Style tools (E2-01): `set_fill` / `set_stroke` / `set_opacity` / `replace_color` /
+"""Style tools: `set_fill` / `set_stroke` / `set_opacity` / `replace_color` /
 `apply_palette`.
 
 Thin MCP layer over the direct-DOM style engine (`inkscape_mcp.edit.style`). Each tool is small
@@ -246,7 +246,7 @@ def apply_palette(
 
     Key params: `mapping` maps each source colour to its replacement; every key AND value is
     strictly colour-validated UP FRONT — a typo'd or non-colour entry (e.g. `notacolor`) is rejected
-    with a `ToolError` BEFORE any mutation, op record, or snapshot is created (E10-02). Each reuses
+    with a `ToolError` BEFORE any mutation, op record, or snapshot is created. Each reuses
     the `replace_color` matching logic. `scope_ids`, if given, confines all replacements to those
     elements' subtrees.
 
@@ -263,7 +263,7 @@ def apply_palette(
     """
     try:
         # Validation runs in the mutate builder, BEFORE apply_edit opens an op record — an invalid
-        # colour key/value raises here and no snapshot/record/write is ever created (E10-02).
+        # colour key/value raises here and no snapshot/record/write is ever created.
         mutate = apply_palette_mutate(mapping, scope_ids)
         result = apply_edit(
             doc_id,

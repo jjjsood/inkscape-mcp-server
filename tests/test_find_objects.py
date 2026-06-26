@@ -1,4 +1,4 @@
-"""find_objects engine + tool tests (E14-07), plus the inspect_document addressable object list."""
+"""find_objects engine + tool tests, plus the inspect_document addressable object list."""
 
 from __future__ import annotations
 
@@ -157,7 +157,7 @@ def test_inspect_document_exposes_object_list(
     assert by_id["p1"].bbox is None
 
 
-# --- E14-07b: CSS-cascade / <style>-rule / inherited paint matching ----------
+# ---: CSS-cascade / <style>-rule / inherited paint matching ----------
 
 # A document whose paint comes from a <style> rule (element / class / id selectors) and from
 # inheritance off an ancestor <g>, NOT from inline style / presentation attrs on the leaf.
@@ -230,7 +230,7 @@ def test_reported_fill_stays_per_element_token(css_doc_id: str) -> None:
     assert ownpaint.fill == "#abcdef"
 
 
-# --- E14-07a: opt-in geometry-accurate (engine) bbox -------------------------
+# ---: opt-in geometry-accurate (engine) bbox -------------------------
 
 # A path inside a translated group: neither has an analytic attribute bbox, so the default
 # attribute path yields bbox=None — the engine box is needed to locate/match them.

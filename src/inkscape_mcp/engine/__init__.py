@@ -1,4 +1,4 @@
-"""Headless `inkscape --shell` engine layer (E12 / ADR-007).
+"""Headless `inkscape --shell` engine layer (ADR-007).
 
 A warm, supervised, opt-in alternative transport for the Inkscape-engine ops (render / export /
 path / boolean / action-chain): one long-lived `inkscape --shell` worker per document instead of a

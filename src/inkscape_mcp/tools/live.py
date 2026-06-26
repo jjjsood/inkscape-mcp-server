@@ -1,4 +1,4 @@
-"""Live tools (E3-04/05/06) — detect, connect, read, render, sync a running Inkscape.
+"""Live tools (05/06) — detect, connect, read, render, sync a running Inkscape.
 
 Thin `@mcp.tool` layer over the live package (`inkscape_mcp.live.*`). Every tool is constrained to
 the fixed semantic surface — no arbitrary code, no raw Action strings (ADR-003). The live gate is
@@ -102,7 +102,7 @@ class HelperInstallResult(BaseModel):
     """Outcome of `live_install_helper`: where the helper landed and which files were written.
 
     `extensions_dir` is presented in a `~`-relative (non-absolute) form so the result is friendly
-    and never carries a full home path (E10-10/L5).
+    and never carries a full home path (L5).
     """
 
     installed_files: list[str]
@@ -112,7 +112,7 @@ class HelperInstallResult(BaseModel):
 
 
 class SocketArmResult(BaseModel):
-    """Outcome of `live_arm_socket` (E16-10f): whether the socket helper is armed and serving.
+    """Outcome of `live_arm_socket`: whether the socket helper is armed and serving.
 
     `armed` is True iff a live Inkscape is now advertising the extension-socket rendezvous (the FULL
     perceive/compose command set is reachable). `helper_installed` reflects whether the helper files
@@ -128,7 +128,7 @@ class SocketArmResult(BaseModel):
 
 
 class LiveSceneFrame(BaseModel):
-    """One captured live frame (E8-02): the rendered PNG paired with the structured `LiveScene`.
+    """One captured live frame: the rendered PNG paired with the structured `LiveScene`.
 
     The decisive "better than inkmcp" capture: a frame is never just pixels — it always carries the
     machine-readable scene (selection ids + bboxes, viewport, canvas size, visible-object summary)
@@ -147,7 +147,7 @@ def _validate_frame_params(
     scale: float | None,
     fast: bool,
 ) -> tuple[object | None, float | None]:
-    """Validate the shared region/scale/fast frame params (E8-01 + E8-06).
+    """Validate the shared region/scale/fast frame params (+).
 
     Returns the validated ``(region, scale)``. All four region parts are required together.
     ``fast`` applies the documented loop downscale (`FAST_RENDER_SCALE`) when no explicit ``scale``
@@ -169,7 +169,7 @@ def _validate_frame_params(
 
 
 def _present_extensions_dir(extensions_dir: Path) -> str:
-    """Render the Inkscape extensions dir in a `~`-relative (non-absolute) form (E10-10/L5).
+    """Render the Inkscape extensions dir in a `~`-relative (non-absolute) form (L5).
 
     The helper lands under the running user's own Inkscape data dir (which they control), but the
     raw value is an absolute host path. Collapse the home prefix to `~` so the returned location is
@@ -188,7 +188,7 @@ def _present_extensions_dir(extensions_dir: Path) -> str:
 
 
 def _no_extensions_dir_message() -> str:
-    """Stable, host-path-free message when the Inkscape extensions dir is undeterminable (E14-08a).
+    """Stable, host-path-free message when the Inkscape extensions dir is undeterminable.
 
     This is a capability ABSENCE (no Inkscape data dir on this runtime), so it names the discovery
     tools so the agent can inspect what this runtime supports rather than retry blindly.
@@ -208,21 +208,21 @@ def _map_live_error(exc: Exception) -> ToolError:
         # Validation message, built from typed parameters — already safe (no host path).
         return ToolError(str(exc))
     if isinstance(exc, LiveDisabled):
-        # CAPABILITY-ABSENT (E14-08a): live mode is gated off — name the config switch (already
+        # CAPABILITY-ABSENT: live mode is gated off — name the config switch (already
         # present) AND the probe tool so the agent can confirm readiness.
         return ToolError(
             "live mode is disabled (set INKSCAPE_MCP_LIVE_ENABLED=1 to enable); "
             "call check_live_support to inspect live readiness"
         )
     if isinstance(exc, LiveNotAvailable):
-        # CAPABILITY-ABSENT (E14-08a): no live session — name the connect + probe tools so the
+        # CAPABILITY-ABSENT: no live session — name the connect + probe tools so the
         # agent establishes one rather than retrying blindly.
         return ToolError(
             "no live session available; call live_connect to connect "
             "(or check_live_support to probe what this host supports)"
         )
     if isinstance(exc, LiveCapabilityUnsupported):
-        # CAPABILITY-ABSENT (E14-08a): the active transport lacks this op — name the probe tool so
+        # CAPABILITY-ABSENT: the active transport lacks this op — name the probe tool so
         # the agent can pick a transport that supports it.
         return ToolError(
             "the active live transport does not support this operation; "
@@ -288,8 +288,7 @@ def live_connect(prefer: str = "read") -> LiveSession:
 
     Key params: `prefer` selects the profile. `read` (default) is the best READ-capable transport
     (extension-socket primary; full selection/inspect surface) but is MODAL on the socket bridge —
-    the GUI freezes for the session. `no_freeze` drives the GUI WITHOUT freezing (Linux DBus path,
-    E3-07): the export-based active-doc read, `live_render_view`, `live_set_viewport`, and
+    the GUI freezes for the session. `no_freeze` drives the GUI WITHOUT freezing (Linux DBus path): the export-based active-doc read, `live_render_view`, `live_set_viewport`, and
     `live_apply_to_selection` are no-freeze; selection-id reads (`live_get_selection` /
     `live_inspect_selection`) and `live_insert_svg` / `live_set_selected_text` are NOT available
     over DBus and stay modal. Requires the master gate (`INKSCAPE_MCP_LIVE_ENABLED`). With no
@@ -361,7 +360,7 @@ def live_install_helper() -> HelperInstallResult:
     the master gate (live is opt-in). Touches no workspace document.
 
     Return shape: `HelperInstallResult` — `installed_files` and `extensions_dir` (presented
-    `~`-relative, never an absolute host path; E10-10/L5).
+    `~`-relative, never an absolute host path/L5).
 
     Example: `live_install_helper()`
 
@@ -369,7 +368,7 @@ def live_install_helper() -> HelperInstallResult:
     """
     s = get_settings()
     if not s.live_enabled:
-        # CAPABILITY-ABSENT (E14-08a): name the config switch AND the probe tool.
+        # CAPABILITY-ABSENT: name the config switch AND the probe tool.
         raise ToolError(
             "live mode is disabled (set INKSCAPE_MCP_LIVE_ENABLED=1 to enable); "
             "call check_live_support to inspect live readiness"
@@ -393,7 +392,7 @@ def live_install_helper() -> HelperInstallResult:
         raise ToolError("could not install the live helper extension") from exc
     log_tool_call(_logger, tool="live_install_helper")
     # Return a `~`-relative (or otherwise non-absolute) form rather than an absolute host path so
-    # the result is friendlier and never leaks a full home path (E10-10/L5).
+    # the result is friendlier and never leaks a full home path (L5).
     return HelperInstallResult(
         installed_files=installed, extensions_dir=_present_extensions_dir(extensions_dir)
     )
@@ -404,7 +403,7 @@ def live_arm_socket() -> SocketArmResult:
     """Auto-arm the extension-socket helper so a programmatic launch gets the FULL live surface.
 
     When to use: bringing up the FULL perceive/compose live command set without a human
-    Extensions-menu click (E16-10f) — a programmatic launch otherwise yields only DBus's reduced
+    Extensions-menu click — a programmatic launch otherwise yields only DBus's reduced
     action set. After this returns `armed`, call `live_connect` (the socket bridge is then the best
     transport). To install the helper files first use `live_install_helper`; to probe readiness use
     `check_live_support`.
@@ -571,7 +570,7 @@ def live_render_view(
     explicit `scale` always wins. Every numeric is finite-checked and bounded server-side before it
     crosses the transport; the frame comes from the transport renderer, never an OS screenshot
     (deterministic, cross-platform — ADR-006). Served from a per-session cache keyed on
-    `(doc_revision, viewport, scale)` (E8-06) so a stale frame is never returned after a change.
+    `(doc_revision, viewport, scale)` so a stale frame is never returned after a change.
 
     Return shape: `LiveRenderResult` — a workspace-relative PNG path plus render metadata.
 
@@ -601,16 +600,16 @@ def live_get_scene(
     scale: float | None = None,
     fast: bool = False,
 ) -> LiveSceneFrame:
-    """Capture one live frame as a PNG PLUS a structured, machine-readable `LiveScene` (E8-02).
+    """Capture one live frame as a PNG PLUS a structured, machine-readable `LiveScene`.
 
     When to use: the core perception step — the agent reasons over STRUCTURE, not pixels. For
     pixels-only use `live_render_view`; for one loop iteration use `live_session_step`.
 
     Key params: region/scale/fast work exactly as `live_render_view` (all four region parts at once,
     user units, w/h > 0; optional `scale` > 0; `fast=True` for the downscaled loop preview, explicit
-    `scale` wins). Frame rendered through the transport (E8-01), never an OS screenshot
+    `scale` wins). Frame rendered through the transport, never an OS screenshot
     (deterministic, cross-platform — ADR-006); served from the per-session cache keyed on
-    `(doc_revision, viewport, scale)` (E8-06). Scene pulled over the fixed `get_scene` command — no
+    `(doc_revision, viewport, scale)`. Scene pulled over the fixed `get_scene` command — no
     code or raw Action path (ADR-003). Requires an established session. READ-ONLY (no Operation
     Record, no approval).
 
@@ -647,7 +646,7 @@ def live_wait_for_change(
     timeout_s: Annotated[float, Field(ge=0.0, le=60.0)] = DEFAULT_WAIT_TIMEOUT_S,
     poll_interval_s: Annotated[float, Field(gt=0.0, le=60.0)] = DEFAULT_POLL_INTERVAL_S,
 ) -> LiveChange:
-    """Block until the live state changes, or the bounded timeout elapses (E8-03; read-only).
+    """Block until the live state changes, or the bounded timeout elapses (read-only).
 
     When to use: between `live_session_step` iterations so the loop reacts to the user's own GUI
     edits instead of busy-rendering. To then re-perceive use `live_get_scene`.
@@ -760,7 +759,7 @@ def live_sync_to_workspace(dest_path: str) -> LiveSyncResult:
     return result
 
 
-# --- E4 live WRITE surface (semantic-only, approval-gated) -------------------
+# --- live WRITE surface (semantic-only, approval-gated) -------------------
 
 
 @mcp.tool
@@ -781,7 +780,7 @@ def live_apply_to_selection(
     `live_insert_svg`; to edit text use `live_set_selected_text`; for headless edits use `set_fill`
     / `move_object` / etc.
 
-    Key params: reuses the headless E2 safe-edit semantics — `fill`/`stroke` colour-validated,
+    Key params: reuses the headless safe-edit semantics — `fill`/`stroke` colour-validated,
     `stroke_width` a CSS length, `opacity` in [0, 1], transform composed from `dx`/`dy` (both
     required together), `scale` (positive), `rotate` (degrees); at least one input required.
     Semantic-only — no arbitrary code, no raw Action (ADR-003). Mutating a running user session is
@@ -917,7 +916,7 @@ def live_export_selection() -> LiveExportResult:
 
 @mcp.tool
 def live_diff_view(operation_id: str) -> LiveDiffResult:
-    """Produce a FOCUSED, annotated before/after visual diff of a live operation (E8-04).
+    """Produce a FOCUSED, annotated before/after visual diff of a live operation.
 
     When to use: visualizing what one live mutation changed. To produce a mutation to diff use
     `live_apply_to_selection` / `live_insert_svg` / `live_set_selected_text` (or
@@ -981,7 +980,7 @@ def live_session_step(
     svg_fragment: str | None = None,
     text: str | None = None,
 ) -> LiveSessionStepResult:
-    """Run ONE perceive→decide→act→observe iteration of the live-view loop (E8-05).
+    """Run ONE perceive→decide→act→observe iteration of the live-view loop.
 
     When to use: the flagship loop step — call it repeatedly to drive a live edit loop (use
     `live_wait_for_change` between steps to react to the user's edits). It COMPOSES the existing
@@ -999,7 +998,7 @@ def live_session_step(
     `approval_token`. Requires a session.
 
     Return shape: `LiveSessionStepResult` — always the PERCEIVE scene + frame; after an act also the
-    `operation_id`, a focused `live_diff_view` artifact (E8-04), and the after scene/frame.
+    `operation_id`, a focused `live_diff_view` artifact, and the after scene/frame.
 
     Example: `live_session_step(action="apply", approval_token="ok", fill="#3366cc")`
 

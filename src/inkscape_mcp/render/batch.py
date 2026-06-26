@@ -1,6 +1,6 @@
-"""Batch-export engine (E5-06).
+"""Batch-export engine.
 
-Pure functions (no MCP decorators) that compose the E1-06 CLI render/export engine
+Pure functions (no MCP decorators) that compose the CLI render/export engine
 (`inkscape_mcp.render.cli`) into a single bounded, dry-run-by-default batch run. A batch is a list
 of TYPED export specs (NOT a string / portmanteau — ADR-002); the engine adds only the bounds that
 keep a batch primitive from becoming an unbounded export hole:
@@ -15,7 +15,7 @@ All exports delegate to `export_document` / `export_object`, which already enfor
 limits (pixel cap before invocation, output-size cap after), the per-process timeout, and
 arg-lists-only invocation (`shell=False`) per sec.12 — this module adds no new authority. Object ids
 are charset-validated and existence-checked here (fail-fast) before any spec runs. Returned artifact
-paths follow ONE LOCATION CONTRACT (E11-01): `artifact_path` and `workspace_relative_path` carry the
+paths follow ONE LOCATION CONTRACT: `artifact_path` and `workspace_relative_path` carry the
 SAME value, always relative to the WORKSPACE ROOT; originals / working copies are never overwritten.
 """
 
@@ -79,7 +79,7 @@ class ExportSpec(BaseModel):
 class BatchItem(BaseModel):
     """The plan/outcome for one spec.
 
-    ONE LOCATION CONTRACT (E11-01): `artifact_path` and `workspace_relative_path` carry the SAME
+    ONE LOCATION CONTRACT: `artifact_path` and `workspace_relative_path` carry the SAME
     value — the file relative to the WORKSPACE ROOT, openable by a single join to the root with no
     `find`/`stat` — and are set only on a real (non-dry) run. `artifact_path` is kept only for
     back-compat and now means exactly the same thing.
@@ -174,10 +174,10 @@ def export_batch(
     output's size, and sums it. `byte_budget` defaults to the per-document artifact byte budget and
     is clamped DOWN to it (a caller may only tighten the bound, never widen it). On a dry run,
     returns the plan (no writes). On a real run, refuses cleanly if the projected total exceeds the
-    budget, otherwise runs each export through the E1-06 engine — aborting if the actual cumulative
+    budget, otherwise runs each export through the engine — aborting if the actual cumulative
     output crosses the budget mid-run — and returns resolvable artifact paths plus the actual total
     size. An optional `out_dir` (relative paths anchored to the workspace ROOT, then
-    sandbox-validated) and `name_prefix` are forwarded to every export (E11-05).
+    sandbox-validated) and `name_prefix` are forwarded to every export.
 
     Raises `BatchError` for a bad/oversized/over-budget batch, `DocumentNotFound` for an unknown id,
     `SandboxViolation` for an out-of-workspace `out_dir`, and re-raises the engine's `RenderError` /
@@ -204,7 +204,7 @@ def export_batch(
         raise DocumentNotFound("document id not found") from None
 
     # Validate a caller-chosen out_dir UP FRONT (even on a dry run) so an out-of-workspace target
-    # is rejected with "path rejected: outside workspace" before any planning/writes (E11-05).
+    # is rejected with "path rejected: outside workspace" before any planning/writes.
     if out_dir is not None:
         _resolve_out_dir(out_dir, entry, s)
 
@@ -264,7 +264,7 @@ def export_batch(
             f"({projected_total} > {budget} bytes)"
         )
 
-    # Real run: every spec is already validated; export each through the E1-06 engine. The first
+    # Real run: every spec is already validated; export each through the engine. The first
     # export validates `out_dir` (raising SandboxViolation before any write if it escapes the
     # sandbox); the same params are forwarded to every spec.
     items: list[BatchItem] = []

@@ -1,4 +1,4 @@
-"""Adopt agent-composed SVG into a tracked working copy (E14-03, ADR-004/005, sec.12).
+"""Adopt agent-composed SVG into a tracked working copy (ADR-004/005, sec.12).
 
 Two ``mutate(tree) -> str`` builders plus the SVG-string safe-parse + STRICT allowlist scrubber:
 
@@ -354,7 +354,7 @@ def build_blank_svg(
     viewbox: str | None = None,
     background: str | None = None,
 ) -> bytes:
-    """Build a blank, `validate_document`-clean SVG document as UTF-8 bytes (E14-02).
+    """Build a blank, `validate_document`-clean SVG document as UTF-8 bytes.
 
     `width` / `height` are the page size in user units (both must be finite and > 0). `viewbox` is
     an optional explicit `viewBox` ("minx miny w h", four numbers); when omitted a `0 0 W H`

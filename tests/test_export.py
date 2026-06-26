@@ -1,4 +1,4 @@
-"""Export-tool tests (E1-06): render_preview / export_document / export_object.
+"""Export-tool tests: render_preview / export_document / export_object.
 
 Inkscape-dependent tests are marked `@pytest.mark.inkscape` and actually run the local binary
 (it IS available on this host). The registration test needs no Inkscape.
@@ -31,7 +31,7 @@ from inkscape_mcp.tools.export import export_object as _export_object_tool
 from inkscape_mcp.tools.export import render_preview as _render_preview_tool
 
 
-# E14-05: render/export now default to INLINE (returning a `ToolResult` that carries the structured
+#: render/export now default to INLINE (returning a `ToolResult` that carries the structured
 # payload in `structured_content` plus the PNG as an image content block). These shims unwrap that
 # envelope back to the bare structured model so the existing structured-shape assertions below keep
 # exercising the same fields; the inline/ToolResult behaviour itself is covered by the dedicated
@@ -92,7 +92,7 @@ def doc_id(root: Path) -> str:
 def _root_join(doc_id: str, ws_rel: str) -> Path:
     """Join a returned path (`artifact_path` or `workspace_relative_path`) to the workspace ROOT.
 
-    ONE LOCATION CONTRACT (E11-01): both fields are root-relative and identical, so an agent opens
+    ONE LOCATION CONTRACT: both fields are root-relative and identical, so an agent opens
     any artifact by a single plain join to the workspace ROOT — no `find`/`stat` of the real file.
     """
     entry = get_registry().get(doc_id)
@@ -136,7 +136,7 @@ def test_render_preview_produces_png(doc_id: str) -> None:
     assert result.width_px == 200
     # height follows the 100x80 aspect ratio
     assert result.height_px == 160
-    # ONE LOCATION CONTRACT (E11-01): artifact_path is root-relative (carries the doc base), not
+    # ONE LOCATION CONTRACT: artifact_path is root-relative (carries the doc base), not
     # absolute, and identical to workspace_relative_path.
     assert not result.artifact_path.startswith("/")
     assert result.artifact_path.startswith(f".inkscape-mcp/documents/{doc_id}/")
@@ -147,7 +147,7 @@ def test_render_preview_produces_png(doc_id: str) -> None:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_render_preview_workspace_relative_path_resolves(doc_id: str) -> None:
-    # E11-01: the workspace_relative_path opens by a plain join to the workspace ROOT — no
+    #: the workspace_relative_path opens by a plain join to the workspace ROOT — no
     # find/stat — and carries the documented `.inkscape-mcp/documents/<doc_id>/...` base.
     result = render_preview(doc_id, width_px=120)
     assert not result.workspace_relative_path.startswith("/")
@@ -160,7 +160,7 @@ def test_render_preview_workspace_relative_path_resolves(doc_id: str) -> None:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_render_preview_non_clobbering(doc_id: str) -> None:
-    # E11-12: two previews at the SAME width must NOT clobber — distinct, both still on disk.
+    #: two previews at the SAME width must NOT clobber — distinct, both still on disk.
     a = render_preview(doc_id, width_px=128)
     b = render_preview(doc_id, width_px=128)
     assert a.workspace_relative_path != b.workspace_relative_path
@@ -171,7 +171,7 @@ def test_render_preview_non_clobbering(doc_id: str) -> None:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_render_preview_name_tag_in_filename(doc_id: str) -> None:
-    # E11-12: an optional caller name controls the output stem and is still non-clobbering.
+    #: an optional caller name controls the output stem and is still non-clobbering.
     result = render_preview(doc_id, width_px=64, name="before")
     assert "before" in result.workspace_relative_path
     assert _root_join(doc_id, result.workspace_relative_path).exists()
@@ -180,7 +180,7 @@ def test_render_preview_name_tag_in_filename(doc_id: str) -> None:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_render_preview_true_raster_dims(doc_id: str) -> None:
-    # E11-02: reported dims equal the on-disk IHDR dims (non-square 1200-wide export).
+    #: reported dims equal the on-disk IHDR dims (non-square 1200-wide export).
     result = render_preview(doc_id, width_px=1200)
     out = _root_join(doc_id, result.workspace_relative_path)
     w, h = _png_dims(out)
@@ -198,14 +198,14 @@ def test_export_document_png(doc_id: str) -> None:
     out = _root_join(doc_id, result.artifact_path)
     assert out.exists()
     assert out.read_bytes()[:4] == PNG_MAGIC
-    # ONE LOCATION CONTRACT (E11-01): artifact_path is the root-relative path (with the doc base).
+    # ONE LOCATION CONTRACT: artifact_path is the root-relative path (with the doc base).
     assert result.artifact_path.startswith(f".inkscape-mcp/documents/{doc_id}/")
     assert "artifacts/exports/" in result.artifact_path
     assert result.width_px == 150
 
 
 # A non-square (1200x630, an OG-image aspect) document so a 1200-wide PNG export is exactly
-# 1200x630 — used to assert reported dims == true on-disk raster dims (E11-02).
+# 1200x630 — used to assert reported dims == true on-disk raster dims.
 SVG_OG = b"""<?xml version="1.0"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <rect id="bg" x="0" y="0" width="1200" height="630" fill="#102030"/>
@@ -224,7 +224,7 @@ def og_doc_id(root: Path) -> str:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_export_document_true_raster_dims_non_square(og_doc_id: str) -> None:
-    # E11-02 / E10-04: a 1200-wide export of a 1200x630 doc is 1200x630 on disk; reported dims must
+    # /: a 1200-wide export of a 1200x630 doc is 1200x630 on disk; reported dims must
     # equal the IHDR, NOT a page/viewBox-halved 600 (the S17 finding).
     result = export_document(og_doc_id, "png", width_px=1200)
     out = _root_join(og_doc_id, result.workspace_relative_path)
@@ -236,13 +236,13 @@ def test_export_document_true_raster_dims_non_square(og_doc_id: str) -> None:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_export_document_workspace_relative_path_resolves(doc_id: str) -> None:
-    # E11-01: resolvable by a plain join to the workspace ROOT; carries the documented base.
+    #: resolvable by a plain join to the workspace ROOT; carries the documented base.
     result = export_document(doc_id, "png", width_px=64)
     assert result.workspace_relative_path.startswith(f".inkscape-mcp/documents/{doc_id}/")
     assert _root_join(doc_id, result.workspace_relative_path).read_bytes()[:4] == PNG_MAGIC
 
 
-# --- E11-01: ONE LOCATION CONTRACT (artifact_path == workspace_relative_path) ------------------
+# ---: ONE LOCATION CONTRACT (artifact_path == workspace_relative_path) ------------------
 
 
 @pytest.mark.inkscape
@@ -273,7 +273,7 @@ def test_out_dir_export_unified_location_contract(root: Path, doc_id: str) -> No
     assert _root_join(doc_id, result.workspace_relative_path).read_bytes()[:4] == PNG_MAGIC
 
 
-# --- out_dir (E11-05) --------------------------------------------------------
+# --- out_dir --------------------------------------------------------
 
 
 @pytest.mark.inkscape
@@ -291,7 +291,7 @@ def test_export_document_out_dir_in_workspace(root: Path, doc_id: str) -> None:
 
 
 def test_export_document_out_dir_outside_workspace_rejected(root: Path, doc_id: str) -> None:
-    # E11-05 / sec.12: an out_dir escaping the workspace is rejected with the stable sandbox
+    # sec.12: an out_dir escaping the workspace is rejected with the stable sandbox
     # message and NO host path — rejected before any Inkscape invocation.
     with pytest.raises(ToolError) as exc:
         export_document(doc_id, "png", width_px=48, out_dir="../escape")
@@ -316,7 +316,7 @@ def test_out_dir_escape_creates_no_directory_outside_workspace(root: Path, doc_i
 
 
 def test_out_dir_symlinked_component_escape_rejected(root: Path, doc_id: str) -> None:
-    # sec.12 (E10-01 class, HIGH): a pre-existing symlink ON the out_dir path that points OUTSIDE
+    # sec.12 (class, HIGH): a pre-existing symlink ON the out_dir path that points OUTSIDE
     # the workspace is rejected BEFORE any directory is created, and nothing lands at the link
     # target — closing the symlink-redirect TOCTOU on caller-chosen export dirs.
     outside = root.parent / "sym_target"
@@ -368,14 +368,14 @@ def test_export_document_pdf_has_pdf_magic(doc_id: str) -> None:
     assert result.height_px is None
 
 
-# --- E16-07: export self-certifies content truth ----------------------------
+# ---: export self-certifies content truth ----------------------------
 
 
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_export_document_png_reports_opaque_pixels(doc_id: str) -> None:
     # A real PNG export drew pixels, so it reports a non-zero opaque-pixel count and is not blank
-    # (E16-07). The vector-only fields stay None for a raster.
+    #. The vector-only fields stay None for a raster.
     result = export_document(doc_id, "png", width_px=64)
     assert result.opaque_px is not None
     assert result.opaque_px > 0
@@ -388,7 +388,7 @@ def test_export_document_png_reports_opaque_pixels(doc_id: str) -> None:
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_export_document_pdf_reports_vector_truth(doc_id: str) -> None:
     # A plain PDF export of a shapes-only document embeds no raster image, so it self-certifies
-    # is_vector=True; the raster fields stay None (E16-07).
+    # is_vector=True; the raster fields stay None.
     result = export_document(doc_id, "pdf")
     assert result.is_vector is True
     assert result.fonts_outlined is not None
@@ -399,7 +399,7 @@ def test_export_document_pdf_reports_vector_truth(doc_id: str) -> None:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_render_preview_reports_opaque_pixels(doc_id: str) -> None:
-    # A real preview render drew pixels (E16-07).
+    # A real preview render drew pixels.
     result = render_preview(doc_id, width_px=64)
     assert result.opaque_px is not None
     assert result.opaque_px > 0
@@ -410,7 +410,7 @@ def test_render_preview_reports_opaque_pixels(doc_id: str) -> None:
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_render_preview_blank_document_reports_all_blank(root: Path) -> None:
     # A transparent (empty) canvas renders to a fully transparent PNG, so the preview self-reports
-    # all_blank=True / opaque_px=0 — the "render actually drew something" check (E16-07).
+    # all_blank=True / opaque_px=0 — the "render actually drew something" check.
     blank = root / "blank.svg"
     blank.write_bytes(
         b'<?xml version="1.0"?>\n'
@@ -438,15 +438,15 @@ def test_export_document_rejects_unknown_format(doc_id: str) -> None:
     with pytest.raises(ToolError) as exc:
         export_document(doc_id, "gif")
     assert "unsupported export format" in str(exc.value)
-    # E14-08a: a capability-absent (unsupported format) error names the discovery tool.
+    #: a capability-absent (unsupported format) error names the discovery tool.
     assert "list_capabilities" in str(exc.value)
 
 
-# --- E14-08a capability-absent errors name discovery / alternative tools ------
+# --- capability-absent errors name discovery / alternative tools ------
 
 
 def test_map_failure_missing_engine_names_list_capabilities() -> None:
-    # E14-08a: when the Inkscape engine cannot be launched (ProcessError; e.g. no binary on this
+    #: when the Inkscape engine cannot be launched (ProcessError; e.g. no binary on this
     # runtime) the client-facing error NAMES list_capabilities and carries no host path (sec.12).
     from inkscape_mcp.tools.export import _map_failure
     from inkscape_mcp.workspace.subprocess_exec import ProcessError
@@ -475,7 +475,7 @@ def test_export_object_valid_id(doc_id: str) -> None:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_export_object_true_clipped_dims(doc_id: str) -> None:
-    # E10-04: the "dot" circle r=20 has a 40x40 bbox; clipped + scaled to width 36 yields a 36x36
+    #: the "dot" circle r=20 has a 40x40 bbox; clipped + scaled to width 36 yields a 36x36
     # raster. Reported dims must equal the on-disk IHDR (NOT the 100x80 document/page size).
     result = export_object(doc_id, "dot", "png", width_px=36)
     out = _root_join(doc_id, result.workspace_relative_path)
@@ -691,7 +691,7 @@ def test_list_frames_orders_by_index(doc_id: str) -> None:
         assert frame.artifact_path == frame.workspace_relative_path
 
 
-# --- E14-05 inline raster ----------------------------------------------------
+# --- inline raster ----------------------------------------------------
 
 
 def _image_blocks(result: ToolResult) -> list[object]:
@@ -702,7 +702,7 @@ def _image_blocks(result: ToolResult) -> list[object]:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_render_preview_inline_default_returns_image(doc_id: str) -> None:
-    # E14-05: default inline=True returns a ToolResult carrying the structured payload AND the PNG
+    #: default inline=True returns a ToolResult carrying the structured payload AND the PNG
     # as an MCP image content block, so the agent sees the render without a second Read.
     result = _render_preview_tool(doc_id, width_px=120)
     assert isinstance(result, ToolResult)
@@ -719,7 +719,7 @@ def test_render_preview_inline_default_returns_image(doc_id: str) -> None:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_render_preview_inline_false_returns_bare_model(doc_id: str) -> None:
-    # E14-05 opt-out: inline=False returns the bare structured model, no image content block.
+    # opt-out: inline=False returns the bare structured model, no image content block.
     result = _render_preview_tool(doc_id, width_px=120, inline=False)
     assert isinstance(result, PreviewResult)
     assert result.format == "png"
@@ -728,7 +728,7 @@ def test_render_preview_inline_false_returns_bare_model(doc_id: str) -> None:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_render_preview_inline_over_threshold_skips_embed(doc_id: str) -> None:
-    # E14-05 gate: an artifact larger than max_output_bytes is NOT embedded (file still produced),
+    # gate: an artifact larger than max_output_bytes is NOT embedded (file still produced),
     # so the bare structured model is returned.
     result = _render_preview_tool(doc_id, width_px=120, max_output_bytes=1)
     assert isinstance(result, PreviewResult)
@@ -748,14 +748,14 @@ def test_export_document_png_inline_default_returns_image(doc_id: str) -> None:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_export_document_pdf_never_inlined(doc_id: str) -> None:
-    # E14-05: vector outputs (PDF/SVG) are never embedded as an image content block — bare model.
+    #: vector outputs (PDF/SVG) are never embedded as an image content block — bare model.
     result = _export_document_tool(doc_id, "pdf")
     assert isinstance(result, ExportResult)
     assert result.format == "pdf"
     assert _root_join(doc_id, result.workspace_relative_path).read_bytes()[:4] == PDF_MAGIC
 
 
-# --- E14-06a real staleness tracking -----------------------------------------
+# --- real staleness tracking -----------------------------------------
 
 
 def test_compute_stale_pure_helper(tmp_path: Path) -> None:
@@ -786,7 +786,7 @@ def test_compute_stale_pure_helper(tmp_path: Path) -> None:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_export_fresh_artifact_not_stale(doc_id: str) -> None:
-    # E14-06a: a freshly produced artifact reflects the current working copy => stale is False.
+    #: a freshly produced artifact reflects the current working copy => stale is False.
     result = export_document(doc_id, "png", width_px=64)
     assert result.stale is False
 
@@ -794,7 +794,7 @@ def test_export_fresh_artifact_not_stale(doc_id: str) -> None:
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_export_result_recompute_stale_flips_after_edit(doc_id: str) -> None:
-    # E14-06a: an artifact produced BEFORE a later working-copy edit reports stale=True once the
+    #: an artifact produced BEFORE a later working-copy edit reports stale=True once the
     # working copy's mtime is advanced past the artifact's. We drive the real engine function (so
     # the produce-time source paths are captured) and then simulate a later edit via os.utime.
     import os

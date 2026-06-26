@@ -1,6 +1,6 @@
-"""Runtime capability probe engine (E1-03).
+"""Runtime capability probe engine.
 
-Runtime detection notes for E1. Every probe runs via
+Runtime detection notes for. Every probe runs via
 the foundation subprocess wrapper (arg lists only, bounded timeout) and DEGRADES GRACEFULLY:
 a missing ``inkscape`` / ``inkex`` / ``gdbus`` / ``fc-list`` yields null/false fields plus a
 note, never an exception. **Detect at runtime; never assume 1.4.3.**
@@ -38,7 +38,7 @@ _EXPORT_TYPE_RE = re.compile(r"--export-type\S*.*?\[([^\]]+)\]", re.DOTALL)
 
 
 class ToolInfo(BaseModel):
-    """One entry in the authoritative `Capabilities.tools` list (E16-01).
+    """One entry in the authoritative `Capabilities.tools` list.
 
     Sourced from the LIVE FastMCP registry (`mcp.list_tools()`), so the index can never describe a
     tool that is not registered or miss one that is. Carries the tool's name plus its one-line
@@ -61,7 +61,7 @@ class Capabilities(BaseModel):
     `outputSchema` of the `diagnose_runtime` / `list_capabilities` tools and the
     `inkscape://runtime/capabilities` resource.
 
-    The `tool_count` + `tools` fields (E16-01) are NOT probed from Inkscape: they are the
+    The `tool_count` + `tools` fields are NOT probed from Inkscape: they are the
     authoritative MCP tool surface, populated from the live FastMCP registry by the
     `inkscape_mcp.tools.system` layer (`with_registry_tools`) before the matrix is served, so the
     one count agrees with `mcp.list_tools()` and `llms.txt` and agents stop deriving it four ways.
@@ -107,7 +107,7 @@ class Capabilities(BaseModel):
     shell_mode_available: bool = Field(
         default=False,
         description=(
-            "Whether `inkscape --shell` (the headless shell engine, E12/ADR-007) can run here. "
+            "Whether `inkscape --shell` (the headless shell engine/ADR-007) can run here. "
             "True when an Inkscape binary is present (shell mode ships on all supported 1.x). "
             "Whether the warm engine is USED is the separate INKSCAPE_MCP_ENGINE_MODE gate."
         ),
@@ -153,7 +153,7 @@ class Capabilities(BaseModel):
     intents: list[IntentMatch] = Field(
         default_factory=intents_summary,
         description=(
-            "Curated natural-language goal → tool(s) map (E14-08): each entry is "
+            "Curated natural-language goal → tool(s) map: each entry is "
             "{goal_pattern, tools, how_to, group}. The same data the read-only `how_do_i` tool "
             "matches against; surfaced here so an agent can browse the whole map. Guidance only — "
             "executes nothing, no raw-action hatch (ADR-003). Host-independent (not probed)."
@@ -163,7 +163,7 @@ class Capabilities(BaseModel):
     tool_count: int = Field(
         default=0,
         description=(
-            "Authoritative number of registered `@mcp.tool`s (E16-01). Equals `len(tools)` and the "
+            "Authoritative number of registered `@mcp.tool`s. Equals `len(tools)` and the "
             "live `mcp.list_tools()` count — one unambiguous number so agents stop deriving it. "
             "Populated from the live FastMCP registry, not probed from Inkscape."
         ),
@@ -171,7 +171,7 @@ class Capabilities(BaseModel):
     tools: list[ToolInfo] = Field(
         default_factory=list,
         description=(
-            "The authoritative MCP tool surface (E16-01): each entry is {name, purpose, risk}, "
+            "The authoritative MCP tool surface: each entry is {name, purpose, risk}, "
             "sourced from the live FastMCP registry. Counts only `@mcp.tool`s (not resources or "
             "prompts). Populated by the tools/system layer before serving; empty on a raw probe."
         ),

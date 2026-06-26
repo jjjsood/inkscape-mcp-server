@@ -1,4 +1,4 @@
-"""Fixed-schema wire protocol tests (E3-02): framing, size caps, handshake, schema validation."""
+"""Fixed-schema wire protocol tests: framing, size caps, handshake, schema validation."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ from inkscape_mcp.live.protocol import (
 
 def test_command_surface_is_fixed_and_has_no_code_passthrough() -> None:
     # The entire command surface is a fixed enum — no "eval"/"action"/"exec"/"run" member.
-    # v2 adds the E4 semantic WRITE commands; v3 adds the E8 view-only command; v4 adds the E8
-    # structured-perception read command; v5 adds the E8 cheap change-detection read command. Each
+    # v2 adds the semantic WRITE commands; v3 adds the view-only command; v4 adds the
+    # structured-perception read command; v5 adds the cheap change-detection read command. Each
     # carries only typed params, never code.
     names = {c.value for c in LiveCommand}
     assert names == {
@@ -48,7 +48,7 @@ def test_command_surface_is_fixed_and_has_no_code_passthrough() -> None:
 
 
 def test_protocol_version_is_five() -> None:
-    # E8-03 bumped the wire schema to v5 (cheap change-detection read); client refuses a mismatch.
+    # bumped the wire schema to v5 (cheap change-detection read); client refuses a mismatch.
     assert PROTOCOL_VERSION == 5
 
 

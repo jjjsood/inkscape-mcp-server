@@ -1,4 +1,4 @@
-"""Export/recolor prompt library (E5-07, architecture §4.1).
+"""Export/recolor prompt library (architecture §4.1).
 
 Four `@mcp.prompt` entries that orient the agent on the shipped export/recolor tool surface:
 `prepare_web_export`, `prepare_icon_set`, `prepare_print_export`, `theme_recoloring`. A Prompt adds

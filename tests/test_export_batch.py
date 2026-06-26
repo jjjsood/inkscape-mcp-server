@@ -1,4 +1,4 @@
-"""Batch-export tool + engine tests (E5-06).
+"""Batch-export tool + engine tests.
 
 The dry-run / cap / budget / validation tests need NO Inkscape (no writes; everything is checked
 before any invocation). The real-run test that actually produces artifacts is marked
@@ -48,7 +48,7 @@ def doc_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
 def _root_join(doc_id: str, ws_rel: str) -> Path:
     """Join a returned path (`artifact_path` or `workspace_relative_path`) to the workspace ROOT.
 
-    ONE LOCATION CONTRACT (E11-01): both fields are root-relative and identical, so a single plain
+    ONE LOCATION CONTRACT: both fields are root-relative and identical, so a single plain
     join to the workspace ROOT opens any artifact — no `find`/`stat`.
     """
     entry = get_registry().get(doc_id)
@@ -171,7 +171,7 @@ def test_real_run_exports_each_spec(doc_id: str) -> None:
     for item in result.items:
         assert item.status == "exported"
         assert item.artifact_path is not None
-        # ONE LOCATION CONTRACT (E11-01): artifact_path == workspace_relative_path, root-relative.
+        # ONE LOCATION CONTRACT: artifact_path == workspace_relative_path, root-relative.
         assert not item.artifact_path.startswith("/")
         assert item.artifact_path == item.workspace_relative_path
         out = _root_join(doc_id, item.artifact_path)
@@ -181,7 +181,7 @@ def test_real_run_exports_each_spec(doc_id: str) -> None:
     assert png_out.read_bytes()[:4] == PNG_MAGIC
 
 
-# --- E11-01: each batch item carries a resolvable location -------------------
+# ---: each batch item carries a resolvable location -------------------
 
 
 @pytest.mark.inkscape
@@ -191,7 +191,7 @@ def test_real_run_items_resolvable_by_root_join(doc_id: str) -> None:
     result = export_batch(doc_id, specs, dry_run=False)
     for item in result.items:
         assert item.workspace_relative_path is not None
-        # ONE LOCATION CONTRACT (E11-01): artifact_path == workspace_relative_path, both open via a
+        # ONE LOCATION CONTRACT: artifact_path == workspace_relative_path, both open via a
         # single join to the workspace ROOT.
         assert item.artifact_path == item.workspace_relative_path
         assert item.workspace_relative_path.startswith(f".inkscape-mcp/documents/{doc_id}/")
@@ -199,7 +199,7 @@ def test_real_run_items_resolvable_by_root_join(doc_id: str) -> None:
         assert _root_join(doc_id, item.artifact_path or "").exists()
 
 
-# --- E11-05: out_dir sandbox check + back-compat -----------------------------
+# ---: out_dir sandbox check + back-compat -----------------------------
 
 
 @pytest.mark.inkscape
@@ -216,7 +216,7 @@ def test_real_run_out_dir_in_workspace(doc_id: str) -> None:
     )
     item = result.items[0]
     assert item.workspace_relative_path is not None
-    # ONE LOCATION CONTRACT (E11-01): for an out_dir output too, both fields are the same
+    # ONE LOCATION CONTRACT: for an out_dir output too, both fields are the same
     # in-workspace relative path and open via a single root join.
     assert item.artifact_path == item.workspace_relative_path
     assert item.workspace_relative_path.startswith("batchout/")
@@ -225,7 +225,7 @@ def test_real_run_out_dir_in_workspace(doc_id: str) -> None:
 
 
 def test_out_dir_outside_workspace_rejected(doc_id: str) -> None:
-    # E11-05 / sec.12: rejected up front (even though dry_run default would write nothing) with the
+    # sec.12: rejected up front (even though dry_run default would write nothing) with the
     # stable sandbox message and no host path.
     with pytest.raises(ToolError) as exc:
         export_batch(doc_id, [ExportSpec(format="png", width_px=16)], out_dir="../escape")
@@ -240,7 +240,7 @@ def test_out_dir_omitted_back_compat(doc_id: str) -> None:
     assert "artifacts/exports/" in (result.items[0].artifact_path or "")
 
 
-# --- E14-08a: capability-absent batch errors name discovery tools -------------
+# ---: capability-absent batch errors name discovery tools -------------
 
 
 def test_batch_map_failure_missing_engine_names_list_capabilities() -> None:
@@ -253,7 +253,7 @@ def test_batch_map_failure_missing_engine_names_list_capabilities() -> None:
 
 
 def test_batch_unsupported_format_names_list_capabilities() -> None:
-    # E14-08a: a spec with an unsupported format is refused with a message naming list_capabilities.
+    #: a spec with an unsupported format is refused with a message naming list_capabilities.
     from inkscape_mcp.config import get_settings
     from inkscape_mcp.render.batch import BatchError, ExportSpec, _validate_spec
 

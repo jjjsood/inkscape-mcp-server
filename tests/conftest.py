@@ -1,4 +1,4 @@
-"""Shared E3 live-mode test doubles: an in-memory `FakeTransport` and a real loopback mock helper.
+"""Shared live-mode test doubles: an in-memory `FakeTransport` and a real loopback mock helper.
 
 The mock helper binds an actual ``127.0.0.1`` socket and speaks the fixed ``protocol.py`` schema,
 so the real `ExtensionSocketTransport` client is exercised end-to-end without a running Inkscape.
@@ -57,9 +57,8 @@ from inkscape_mcp.live.transport import (
 #: ``PytestUnknownMarkWarning``. Live tests use in-memory fakes (below) and run everywhere.
 _INKSCAPE_ON_PATH = shutil.which("inkscape") is not None
 
-# E17-02: the suite's DEFAULT surface is the FULL surface. Progressive disclosure (E17-02) NARROWS
-# `tools/list` when `live_enabled` / `raw_action_enabled` are off; many drift-guard tests (E16-01
-# count, E17-01 annotations, llms.txt) register the surface at import and assert against the WHOLE
+#: the suite's DEFAULT surface is the FULL surface. Progressive disclosure NARROWS
+# `tools/list` when `live_enabled` / `raw_action_enabled` are off; many drift-guard tests (count, annotations, llms.txt) register the surface at import and assert against the WHOLE
 # catalog. Forcing both flags ON here — before any test module imports `register_tools` — makes the
 # default surface the full 97 tools (today's behaviour). Tests that exercise the EXCLUSION path set
 # the flags off explicitly + clear the settings cache + re-run `register_tools()`.
@@ -117,7 +116,7 @@ class FakeTransport(LiveTransport):
         self.last_render: tuple[RenderRegion | None, float | None] | None = None
         #: Last viewport request seen, so view tests can assert the mode/params.
         self.last_viewport: dict[str, object] | None = None
-        #: Mutable RAW state-token components (E8-03). Change tests mutate these and assert the
+        #: Mutable RAW state-token components. Change tests mutate these and assert the
         #: right delta flag fires; the server hashes them via `token_from_result` on each read.
         self.state_revision: str = "rev-0"
         self.state_selection: list[str] = ["r1"]

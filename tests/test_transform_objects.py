@@ -1,4 +1,4 @@
-"""Constrained computed-edit path tests (E20-02): ``transform_objects``.
+"""Constrained computed-edit path tests: ``transform_objects``.
 
 Proves the binding acceptance criteria:
 

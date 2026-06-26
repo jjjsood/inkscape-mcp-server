@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-platform STDIO boot smoke for the ``inkscape-mcp`` entry point (E7-02 / E7-01).
+"""Cross-platform STDIO boot smoke for the ``inkscape-mcp`` entry point.
 
 Launches the installed console script (or any command passed as argv), immediately closes its
 stdin (EOF), and asserts it shuts down cleanly within a timeout — proving the package imports

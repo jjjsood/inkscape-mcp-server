@@ -1,11 +1,11 @@
-"""Shell-command composition for the warm engine (E12-03 / E12-04 / ADR-007).
+"""Shell-command composition for the warm engine (/ ADR-007).
 
 The single place where engine ops are expressed as `inkscape --shell` command lines. Each function
 runs through the :class:`EngineManager` (warm, serialized, freshness-checked worker) and raises an
 :class:`EngineError` on any fault so the caller can fall back to the per-call CLI — correctness can
 never regress.
 
-Sticky-state discipline (the E12-02 spike finding): the shell keeps export options across commands
+Sticky-state discipline (the spike finding): the shell keeps export options across commands
 (``file-open`` does NOT reset them), so every export here sets its FULL option set explicitly,
 including ``export-width:0`` to neutralize a sticky width — making each export deterministic and
 byte-equivalent to the per-call CLI regardless of what ran before (verified on 1.4.3). Only
@@ -15,7 +15,7 @@ WHOLE-DOCUMENT PNG/SVG go through the warm worker; object/PDF exports keep the p
 SECURITY (sec.12): paths sent to the worker are server-controlled (registry working copy / a
 server-minted temp file). A path carrying a shell-grammar metacharacter (``;`` separates actions,
 newline desyncs framing) is REFUSED here and the caller falls back to the per-call CLI (whose argv
-handles any path). Action tokens are validated by the caller (E6 allowlist + map + charset)
+handles any path). Action tokens are validated by the caller (allowlist + map + charset)
 before they reach this layer; this transport adds no new authority.
 """
 

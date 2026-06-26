@@ -1,4 +1,4 @@
-"""Change-detection + event-stream tests (E8-03).
+"""Change-detection + event-stream tests.
 
 Covers the cheap state-token computation + stability, delta classification per component, the
 bounded + cancelable `live_wait_for_change` tool (returns promptly on change, `timed_out` on no

@@ -1,4 +1,4 @@
-"""Tool-layer tests (E1-04): open_document / inspect_document on the shared mcp app."""
+"""Tool-layer tests: open_document / inspect_document on the shared mcp app."""
 
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ def test_tools_registered_on_mcp(root: Path) -> None:
     assert "inspect_document" in names
 
 
-# --- E16-02: open_document accepts a workspace-relative path (anchored to the root) --------
+# ---: open_document accepts a workspace-relative path (anchored to the root) --------
 
 
 def test_open_relative_path_anchors_to_workspace_root(

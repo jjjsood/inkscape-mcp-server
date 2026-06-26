@@ -1,4 +1,4 @@
-"""Typed DOM-edit BATCH tool (E19-01): ``apply_edits`` — N typed edits, one atomic operation.
+"""Typed DOM-edit BATCH tool: ``apply_edits`` — N typed edits, one atomic operation.
 
 Thin MCP layer over the batch engine in :mod:`inkscape_mcp.edit.batch`. It submits an ordered list
 of TYPED edits (a discriminated union over the existing direct-DOM ops — NOT free text, NOT a

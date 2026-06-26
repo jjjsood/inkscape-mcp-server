@@ -1,4 +1,4 @@
-"""Snapshot engine + restore (E1-07 / ADR-004 reversibility).
+"""Snapshot engine + restore (ADR-004 reversibility).
 
 Pure functions (no MCP decorators) that implement the reversibility primitives of the workspace
 model: snapshot naming/index and the ADR-004 restore chain. A snapshot is a full
@@ -90,7 +90,7 @@ class RestoreResult(BaseModel):
 
     `restored_sha256` and `restored_size_bytes` are the SHA-256 hex digest and byte length of the
     working copy AS IT NOW STANDS after the restore, so an agent can assert recovery succeeded
-    without reading the working file off disk (E11-10(d) / S11).
+    without reading the working file off disk (S11).
     """
 
     doc_id: str
@@ -295,7 +295,7 @@ def restore_snapshot(
     shutil.copyfile(source, working)
 
     # Hash + size the restored working copy so a caller can assert recovery without disk access
-    # (E11-10(d) / S11). Read from the just-written working copy — the authoritative restored state.
+    # (S11). Read from the just-written working copy — the authoritative restored state.
     restored_bytes = working.read_bytes()
     restored_sha256 = hashlib.sha256(restored_bytes).hexdigest()
     restored_size_bytes = len(restored_bytes)

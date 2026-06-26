@@ -1,11 +1,11 @@
-"""Structured logging (E1-09 / architecture §5).
+"""Structured logging (architecture §5).
 
 Logs are JSON-lines on STDERR. They MUST NOT go to stdout: stdout is the MCP STDIO protocol
 channel and any stray write there corrupts the wire. `configure_logging()` is idempotent and
 installs a single stderr handler that serializes each record (plus any structured extra
 fields) as one JSON object per line.
 
-Event emitters cover the E1-09 event classes — each writes a record with an `event` field:
+Event emitters cover the event classes — each writes a record with an `event` field:
 tool_call, policy_decision, file_io, process_exec, export, preview, error, approval.
 """
 
@@ -45,7 +45,7 @@ _RESERVED_LOGRECORD_KEYS = frozenset(
     }
 )
 
-# Valid E1-09 event classes.
+# Valid event classes.
 EVENT_TOOL_CALL = "tool_call"
 EVENT_POLICY_DECISION = "policy_decision"
 EVENT_FILE_IO = "file_io"

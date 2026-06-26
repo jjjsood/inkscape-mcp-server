@@ -35,7 +35,7 @@ def check_input_bytes_size(data: bytes, settings: Settings | None = None) -> int
     """Enforce `max_input_bytes` on IN-MEMORY SVG bytes (no file to stat).
 
     The byte-string counterpart of :func:`check_input_size` for content that never lands on disk
-    first (E14-02 `create_document`, E14-03 `set_document_svg`/`insert_svg_fragment` adopt an SVG
+    first (`create_document`, `set_document_svg`/`insert_svg_fragment` adopt an SVG
     string). Returns the size in bytes. Raises `LimitExceeded` if it exceeds the cap.
     """
     s = _settings(settings)

@@ -35,8 +35,8 @@ ENV_ARTIFACT_KEEP_DAYS = "INKSCAPE_MCP_ARTIFACT_KEEP_DAYS"
 ENV_ARTIFACT_MAX_BYTES = "INKSCAPE_MCP_ARTIFACT_MAX_BYTES"
 ENV_ARTIFACT_MAX_BYTES_PER_DOC = "INKSCAPE_MCP_ARTIFACT_MAX_BYTES_PER_DOC"
 
-# Live-view render cache + loop-frame retention knobs (E8-06). The cache is a bounded LRU; the
-# loop-frame retention caps fold into the EXPLICIT E1-10 sweep (never an implicit mutating-tool side
+# Live-view render cache + loop-frame retention knobs. The cache is a bounded LRU; the
+# loop-frame retention caps fold into the EXPLICIT sweep (never an implicit mutating-tool side
 # effect). Each value is floored in `Settings`/`live/cache.py` so a degenerate config can never turn
 # a bound into "unbounded" growth.
 ENV_LIVE_CACHE_MAX_ENTRIES = "INKSCAPE_MCP_LIVE_CACHE_MAX_ENTRIES"
@@ -45,13 +45,13 @@ ENV_LIVE_COALESCE_BUDGET_MS = "INKSCAPE_MCP_LIVE_COALESCE_BUDGET_MS"
 ENV_LIVE_FRAME_KEEP_DAYS = "INKSCAPE_MCP_LIVE_FRAME_KEEP_DAYS"
 ENV_LIVE_FRAME_MAX_BYTES = "INKSCAPE_MCP_LIVE_FRAME_MAX_BYTES"
 
-#: Master live-mode gate (E3 / X1). Live mode is ON by default (operator-chosen); set this to a
+#: Master live-mode gate (X1). Live mode is ON by default (operator-chosen); set this to a
 #: falsy value (`0`/`false`/`no`/`off`) to opt OUT. When off, `live_connect` refuses cleanly and
 #: headless is unaffected. This is the hard operator switch; `live_connect` / `live_disconnect` are
 #: the per-session runtime toggle on top of it.
 ENV_LIVE_ENABLED = "INKSCAPE_MCP_LIVE_ENABLED"
 
-#: Headless shell engine gate (E12 / ADR-007). Selects the engine transport for the Inkscape-engine
+#: Headless shell engine gate (ADR-007). Selects the engine transport for the Inkscape-engine
 #: ops (render/export/path/boolean/action-chain): `per_call` spawns a fresh `inkscape …` per call
 #: (the default, always-correct baseline); `shell` routes those ops through one warm, long-lived
 #: `inkscape --shell` worker per document, with an AUTOMATIC per-call fallback on any fault so it
@@ -59,11 +59,11 @@ ENV_LIVE_ENABLED = "INKSCAPE_MCP_LIVE_ENABLED"
 #: to `per_call`. This is a private headless worker, NOT a channel to the user's live GUI (§4.4).
 ENV_ENGINE_MODE = "INKSCAPE_MCP_ENGINE_MODE"
 
-#: Max concurrent warm `inkscape --shell` worker processes the `EngineManager` keeps alive (E12-01).
+#: Max concurrent warm `inkscape --shell` worker processes the `EngineManager` keeps alive.
 #: LRU-evicted above this cap. Floored at 1 so a degenerate value can never disable the bound.
 ENV_ENGINE_MAX_PROCESSES = "INKSCAPE_MCP_ENGINE_MAX_PROCESSES"
 
-#: Idle timeout (seconds) after which an unused warm shell worker is shut down (E12-01). Floored at
+#: Idle timeout (seconds) after which an unused warm shell worker is shut down. Floored at
 #: 1.0s. The manager reaps a worker idle longer than this before reusing the slot.
 ENV_ENGINE_IDLE_TIMEOUT_S = "INKSCAPE_MCP_ENGINE_IDLE_TIMEOUT_S"
 
@@ -71,7 +71,7 @@ ENV_ENGINE_IDLE_TIMEOUT_S = "INKSCAPE_MCP_ENGINE_IDLE_TIMEOUT_S"
 ENGINE_MODE_PER_CALL = "per_call"
 ENGINE_MODE_SHELL = "shell"
 
-#: Tool-disclosure PROFILE gate (E18-03). Opt-in knob that NARROWS the visible `tools/list` to a
+#: Tool-disclosure PROFILE gate. Opt-in knob that NARROWS the visible `tools/list` to a
 #: curated essential core, cutting the per-turn model-context cost of the default ~85-tool surface.
 #: `full` (default) keeps the flag-allowed surface unchanged; `core` narrows to the essential
 #: authoring set (open/inspect/find/create/style/transform/export/snapshot). Parsed via
@@ -84,8 +84,8 @@ ENV_TOOL_PROFILE = "INKSCAPE_MCP_TOOL_PROFILE"
 TOOL_PROFILE_FULL = "full"
 TOOL_PROFILE_CORE = "core"
 
-#: Tool-DESCRIPTION mode (E20-03). Orthogonal to `tool_profile`: the profile trims tool COUNT, this
-#: trims description LENGTH. `full` (default) serves the complete E15-02 6-part docstring as each
+#: Tool-DESCRIPTION mode. Orthogonal to `tool_profile`: the profile trims tool COUNT, this
+#: trims description LENGTH. `full` (default) serves the complete 6-part docstring as each
 #: tool's `tools/list` description; `short` serves a DERIVED short form (the first "what it does"
 #: line + the `Risk class:` line) to cut the heavy per-turn `tools/list` token cost (~86% of the
 #: description bytes). The short form is always DERIVED from the canonical docstring — never a
@@ -97,7 +97,7 @@ ENV_TOOL_DESC = "INKSCAPE_MCP_TOOL_DESC"
 TOOL_DESC_FULL = "full"
 TOOL_DESC_SHORT = "short"
 
-#: Advanced-mode gate for the optional raw-action tool (E6-03 / ADR-003 / sec.12). OFF by default —
+#: Advanced-mode gate for the optional raw-action tool (ADR-003 / sec.12). OFF by default —
 #: the `run_raw_action` escape hatch is refused entirely unless an operator sets this to a truthy
 #: value (`1`/`true`/`yes`/`on`). It is the explicit opt-in for the single, HIGH-risk,
 #: allowlist-and-map-gated raw Inkscape Action runner deferred from the MVP. Never client-supplied;
@@ -105,7 +105,7 @@ TOOL_DESC_SHORT = "short"
 #: still has to be allowlisted AND present in the version-keyed capability map AND charset-safe.
 ENV_RAW_ACTION_ENABLED = "INKSCAPE_MCP_RAW_ACTION_ENABLED"
 
-#: Action/extension execution allowlists (E6-02 / ADR-003 / sec.12). These are the SERVER-SIDE,
+#: Action/extension execution allowlists (ADR-003 / sec.12). These are the SERVER-SIDE,
 #: operator-controlled sets of Inkscape Action ids (resp. extension ids) that may ever execute via a
 #: validated Action chain. They are NEVER client-supplied — a model can only request items already
 #: in this set, and only those that also exist in the version-keyed capability map. Each var is an
@@ -114,9 +114,9 @@ ENV_RAW_ACTION_ENABLED = "INKSCAPE_MCP_RAW_ACTION_ENABLED"
 ENV_ACTION_ALLOWLIST = "INKSCAPE_MCP_ACTION_ALLOWLIST"
 ENV_EXTENSION_ALLOWLIST = "INKSCAPE_MCP_EXTENSION_ALLOWLIST"
 
-#: Built-in default Action allowlist (E6-02). A conservative, non-destructive set of selection +
+#: Built-in default Action allowlist. A conservative, non-destructive set of selection +
 #: structure + path Actions known to exist on the targeted Inkscape line. Destructive geometry has
-#: its own dedicated typed tools (E6-01); this set is the controlled chain surface E6-03 builds on.
+#: its own dedicated typed tools; this set is the controlled chain surface builds on.
 #: `select-by-id` is REQUIRED as the chain's targeting primitive. Everything outside this set (and
 #: the operator additions) is refused — there is no arbitrary-Action passthrough here.
 DEFAULT_ACTION_ALLOWLIST: tuple[str, ...] = (
@@ -134,7 +134,7 @@ DEFAULT_ACTION_ALLOWLIST: tuple[str, ...] = (
     "path-simplify",
 )
 
-#: Built-in default extension allowlist (E6-02). Empty by default — no `inkex` extension is enabled
+#: Built-in default extension allowlist. Empty by default — no `inkex` extension is enabled
 #: for execution until an operator opts one in. Discovery is read-only and unaffected by this set.
 DEFAULT_EXTENSION_ALLOWLIST: tuple[str, ...] = ()
 
@@ -167,30 +167,30 @@ class Settings(BaseModel):
     artifact_max_bytes: int = 2 * 1024**3
     artifact_max_bytes_per_doc: int = 512 * 1024**2
 
-    #: Live-view render cache bounds (E8-06). The per-session frame cache holds at most
+    #: Live-view render cache bounds. The per-session frame cache holds at most
     #: `live_cache_max_entries` frames and `live_cache_max_bytes` total; eviction drops the
     #: least-recently-used. Both are floored in `live/cache.py` so a degenerate value can never
-    #: disable the bound. The cache key includes the E8-03 document-revision digest, so a stale
+    #: disable the bound. The cache key includes the document-revision digest, so a stale
     #: frame can never be served after the document changes.
     live_cache_max_entries: int = 64
     live_cache_max_bytes: int = 256 * 1024**2
 
-    #: Coalescing latency budget (ms) for the live render cache (E8-06). Within this window a
+    #: Coalescing latency budget (ms) for the live render cache. Within this window a
     #: repeated IDENTICAL-key render request returns the just-cached frame instead of launching
     #: another render, so a burst of same-state requests cannot thrash the renderer. `0` = off.
     live_coalesce_budget_ms: float = 200.0
 
-    #: Loop-frame retention caps (E8-06). Rasterized live frames accumulate under the root-scoped
-    #: live artifacts dir; the EXPLICIT E1-10 sweep (`sweep_all_roots` / `prune_snapshots`) prunes
+    #: Loop-frame retention caps. Rasterized live frames accumulate under the root-scoped
+    #: live artifacts dir; the EXPLICIT sweep (`sweep_all_roots` / `prune_snapshots`) prunes
     #: them by age (`live_frame_keep_days`) and total bytes (`live_frame_max_bytes`, newest kept).
     #: NEVER pruned implicitly by a mutating tool (project hard rule).
     live_frame_keep_days: int = 7
     live_frame_max_bytes: int = 512 * 1024**2
 
-    #: Master live-mode gate (E3 / X1). Default ON (operator-chosen) — headless never depends on it.
+    #: Master live-mode gate (X1). Default ON (operator-chosen) — headless never depends on it.
     live_enabled: bool = True
 
-    #: Headless shell engine settings (E12 / ADR-007). `engine_mode` is `per_call` (default) or
+    #: Headless shell engine settings (ADR-007). `engine_mode` is `per_call` (default) or
     #: `shell`; `engine_max_processes` caps warm workers (LRU-evicted); `engine_idle_timeout_s`
     #: reaps idle workers. `shell` always carries an automatic per-call fallback, so a misconfig
     #: degrades to the always-correct baseline rather than failing.
@@ -198,22 +198,22 @@ class Settings(BaseModel):
     engine_max_processes: int = 2
     engine_idle_timeout_s: float = 300.0
 
-    #: Tool-disclosure profile (E18-03). `full` (default) leaves the flag-allowed surface unchanged;
+    #: Tool-disclosure profile. `full` (default) leaves the flag-allowed surface unchanged;
     #: `core` narrows `tools/list` to the curated essential set. Floored to `full` on any stray
     #: value; gating may ONLY narrow within the flag-allowed surface (sec.12 / ADR-003).
     tool_profile: str = TOOL_PROFILE_FULL
 
-    #: Tool-description mode (E20-03). `full` (default) serves the complete docstring as each tool's
+    #: Tool-description mode. `full` (default) serves the complete docstring as each tool's
     #: `tools/list` description; `short` serves a derived short form (summary + risk line) to cut
     #: per-turn token cost. Floored to `full` on any stray value. Orthogonal to `tool_profile`.
     tool_desc: str = TOOL_DESC_FULL
 
-    #: Advanced-mode gate for the optional raw-action tool (E6-03 / ADR-003). Default OFF — the
+    #: Advanced-mode gate for the optional raw-action tool (ADR-003). Default OFF — the
     #: `run_raw_action` escape hatch refuses entirely unless an operator opts in. Enabling it does
     #: not widen the allowlist or relax the version-map/charset/HIGH+approval checks.
     raw_action_enabled: bool = False
 
-    #: Server-side Action/extension execution allowlists (E6-02). Frozen, operator-controlled,
+    #: Server-side Action/extension execution allowlists. Frozen, operator-controlled,
     #: never client-supplied. Default to the built-in DEFAULT_*_ALLOWLIST; env additions are merged
     #: in `get_settings`. The execution layer refuses any Action/extension not in these sets.
     action_allowlist: frozenset[str] = frozenset(DEFAULT_ACTION_ALLOWLIST)

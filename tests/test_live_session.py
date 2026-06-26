@@ -1,4 +1,4 @@
-"""Live session manager tests (E3-04): master gate, connect/disconnect, gate default-on/opt-out."""
+"""Live session manager tests: master gate, connect/disconnect, gate default-on/opt-out."""
 
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ def test_disconnect_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         mgr.require_transport()
 
 
-# --- E10-03: live op state is scoped + cleared on the session boundary --------------
+# ---: live op state is scoped + cleared on the session boundary --------------
 
 
 def test_connect_clears_stale_prior_session_op_records(
@@ -132,7 +132,7 @@ def test_disconnect_clears_session_op_records(
     assert list_live_operations(settings=s).count == 0
 
 
-# --- E10-10 R10: available_transports reconciliation --------------------------------
+# --- R10: available_transports reconciliation --------------------------------
 
 
 def test_available_transports_includes_extension_socket_when_installed(

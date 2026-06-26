@@ -76,7 +76,7 @@ class Registry:
 
         A relative `source_path` is anchored to `workspace_roots[0]` (the document root, NOT the
         process CWD) before validation — matching the sibling write APIs `save_document_as` /
-        `live_sync_to_workspace` and the E11-01 one-location contract (E16-02). An absolute path is
+        `live_sync_to_workspace` and the one-location contract. An absolute path is
         passed through unchanged. The anchor only chooses the base; `resolve_read_path` remains the
         sole containment + symlink authority, so a relative `../`-escape, an absolute path outside
         the workspace, or a symlink whose target leaves the sandbox is still rejected with
@@ -128,7 +128,7 @@ class Registry:
         return entry
 
     def create_document(self, svg_bytes: bytes) -> DocEntry:
-        """Register a freshly SEEDED document from in-memory SVG bytes (E14-02).
+        """Register a freshly SEEDED document from in-memory SVG bytes.
 
         Unlike :meth:`open_document` there is NO external source file: the supplied `svg_bytes`
         (a server-generated blank SVG, already safe-parsed by the caller) are written byte-for-byte
@@ -182,7 +182,7 @@ class Registry:
         return entry
 
     def reload(self, doc_id: str) -> DocEntry:
-        """Refresh a working copy FROM ITS SOURCE under the SAME `doc_id` (E14-06).
+        """Refresh a working copy FROM ITS SOURCE under the SAME `doc_id`.
 
         Re-copies `original.svg` over `working/document.svg`, discarding any working-copy edits and
         returning the document to its source bytes. For an OPENED document the stored `source_path`

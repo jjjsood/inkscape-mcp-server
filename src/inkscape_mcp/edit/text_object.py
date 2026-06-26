@@ -1,6 +1,6 @@
-"""Direct-DOM text / object edit engines (E2-02, ADR-005).
+"""Direct-DOM text / object edit engines (ADR-005).
 
-Pure ``mutate(tree) -> str`` functions for the four E2-02 tools: ``replace_text``,
+Pure ``mutate(tree) -> str`` functions for the four tools: ``replace_text``,
 ``set_font``, ``duplicate_object``, and ``rename_object``. Each edits the parsed working tree
 IN MEMORY and returns a short human summary of what changed; none carries an ``@mcp.tool``
 decorator. They are wired into the shared, reversible edit pipeline (`apply_edit`) by the thin
@@ -209,13 +209,13 @@ def make_rename_object(
 
 
 def make_delete_objects(object_ids: list[str]) -> MutateFn:
-    """Build a ``mutate`` closure that removes objects by id from the DOM (E16-08).
+    """Build a ``mutate`` closure that removes objects by id from the DOM.
 
     Each id in ``object_ids`` (≥ 1 required, else :class:`EditError`) is looked up and detached from
     its parent. The document root itself cannot be deleted (it has no parent); attempting to delete
     it raises :class:`EditError`.
 
-    NO-MATCH / no-op hygiene (E10-05 / E11-13): ids that are NOT present in the document are simply
+    NO-MATCH / no-op hygiene: ids that are NOT present in the document are simply
     SKIPPED — a missing id is not an error here (unlike the single-target edits) because deleting an
     already-absent object is a successful no-op. When NONE of the supplied ids exist the tree is
     left untouched, the canonical bytes are byte-identical, and the shared edit pipeline

@@ -1,6 +1,6 @@
-"""`apply_edits` op-coverage drift-guard (E20-01).
+"""`apply_edits` op-coverage drift-guard.
 
-`apply_edits` (E19-01) is a discriminated union (:data:`inkscape_mcp.edit.batch.TypedEdit`) over the
+`apply_edits` is a discriminated union (:data:`inkscape_mcp.edit.batch.TypedEdit`) over the
 typed single-document DOM ops. That union is hand-maintained: when a NEW pure-DOM single-doc edit
 tool is added, nobody is forced to add the matching batch member, so `apply_edits` silently lags the
 single-edit surface. This guard makes that divergence a RED test instead of a silent gap.

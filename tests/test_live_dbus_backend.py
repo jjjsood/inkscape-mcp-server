@@ -1,4 +1,4 @@
-"""DBus backend tests (E3-03 + E3-07): Linux-only availability + the no-freeze action path.
+"""DBus backend tests (+): Linux-only availability + the no-freeze action path.
 
 The backend drives ``org.gtk.Actions`` via the ``gdbus`` CLI. These tests replace that CLI with a
 fake ``run_process`` so the whole no-freeze surface (export-to-file reads, viewport, style/transform
@@ -170,7 +170,7 @@ def test_probe_unavailable_when_list_fails(
     assert "no" in probe.detail
 
 
-# --- export-to-file structured read (E3-07 workaround) ---------------------
+# --- export-to-file structured read (workaround) ---------------------
 
 
 def test_get_document_svg_via_export(settings: object, monkeypatch: pytest.MonkeyPatch) -> None:

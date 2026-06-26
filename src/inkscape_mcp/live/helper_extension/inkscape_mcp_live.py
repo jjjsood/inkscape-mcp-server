@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""inkscape-mcp live helper extension (E3-02) — runs INSIDE Inkscape.
+"""inkscape-mcp live helper extension — runs INSIDE Inkscape.
 
 Fixed-purpose `inkex` extension that bridges a running Inkscape document to the inkscape-mcp
 server over a LOOPBACK-ONLY socket using a fixed, versioned semantic command schema. It exposes
@@ -50,12 +50,12 @@ CMD_GET_SELECTION = "get_selection"
 CMD_INSPECT_SELECTION = "inspect_selection"
 CMD_GET_DOCUMENT_SVG = "get_document_svg"
 CMD_RENDER_VIEW = "render_view"
-# E4 semantic WRITE commands (mutating; the server approval-gates each before sending).
+# semantic WRITE commands (mutating; the server approval-gates each before sending).
 CMD_APPLY_TO_SELECTION = "apply_to_selection"
 CMD_INSERT_SVG = "insert_svg"
 CMD_SET_SELECTED_TEXT = "set_selected_text"
 CMD_EXPORT_SELECTION = "export_selection"
-# E8 view-only commands (non-mutating; the server treats these as low risk, no Operation Record).
+# view-only commands (non-mutating; the server treats these as low risk, no Operation Record).
 CMD_SET_VIEWPORT = "set_viewport"
 CMD_GET_SCENE = "get_scene"  # structured perception: canvas + selection bboxes + visible objects
 CMD_GET_STATE_TOKEN = "get_state_token"  # CHEAP change marker: revision + selection + viewport
@@ -398,7 +398,7 @@ class InkscapeMcpLive(inkex.EffectExtension):  # type: ignore[misc]
         return {"mode": mode, "applied": True}
 
     def _get_scene(self) -> dict[str, Any]:
-        """Build the structured scene (E8-02): selection bboxes + canvas + visible-object summary.
+        """Build the structured scene: selection bboxes + canvas + visible-object summary.
 
         VIEW-ONLY perception: this reads the document snapshot Inkscape handed this run and never
         mutates it. The viewport is reported as null — an `inkex` effect extension runs on a
@@ -431,7 +431,7 @@ class InkscapeMcpLive(inkex.EffectExtension):  # type: ignore[misc]
         }
 
     def _get_state_token(self) -> dict[str, Any]:
-        """Build the CHEAP change-detection marker (E8-03): revision + selection + viewport.
+        """Build the CHEAP change-detection marker: revision + selection + viewport.
 
         Deliberately cheap: NO PNG render and NO full-document payload crosses the wire for a poll —
         the server hashes these small components itself. The ``revision`` is a content hash of the
@@ -507,7 +507,7 @@ class InkscapeMcpLive(inkex.EffectExtension):  # type: ignore[misc]
         except ValueError:
             return None
 
-    # --- Write implementations (E4; server has already validated every value) ---
+    # --- Write implementations (server has already validated every value) ---
 
     def _selected_elements(self) -> list[Any]:
         wanted = set(self._selection_ids())

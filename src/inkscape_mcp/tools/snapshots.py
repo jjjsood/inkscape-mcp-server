@@ -1,4 +1,4 @@
-"""Snapshot tools (E1-07): `create_snapshot` / `list_snapshots` / `restore_snapshot`.
+"""Snapshot tools: `create_snapshot` / `list_snapshots` / `restore_snapshot`.
 
 Thin MCP layer over the reusable snapshot engine (`inkscape_mcp.snapshots`). The engine does
 all path safety, indexing, and the ADR-004 restore chain; this layer only maps engine
@@ -139,7 +139,7 @@ def prune_snapshots(doc_id: str) -> PruneResult:
     Key params: none beyond `doc_id`. Retains the last N snapshots and all within the keep-days
     window (configurable), bounded by absolute hard caps on count and bytes; deletes the rest plus
     orphaned Operation Records. In the SAME pass it prunes the doc root's loop/live render frames
-    (E8-06) by age + byte budget, never deleting a frame still referenced by a Live Operation
+ by age + byte budget, never deleting a frame still referenced by a Live Operation
     Record. The current working copy and original are never touched, so the restore chain stays
     intact.
 

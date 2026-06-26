@@ -1,13 +1,13 @@
-"""Read-only SVG validation engine (E1-08, ADR-005 direct DOM).
+"""Read-only SVG validation engine (ADR-005 direct DOM).
 
-Pure functions over the WORKING COPY of a registered document. Builds on the E1-04
+Pure functions over the WORKING COPY of a registered document. Builds on the
 inspection engine (`inkscape_mcp.document.inspect`) for fonts / assets / viewBox data and
 on the foundation subprocess wrapper (`inkscape_mcp.workspace.subprocess_exec`) to query
 installed fonts via `fc-list`. No MCP decorators here; the tool layer
 (`inkscape_mcp.tools.validate`) wraps `validate_document` and maps errors to `ToolError`.
 
-READ-ONLY by contract (sec.12, task E1-08): nothing here mutates the working copy or the
-original. No repair / auto-fix in E1 (deferred to E2).
+READ-ONLY by contract (sec.12, ): nothing here mutates the working copy or the
+original. No repair / auto-fix in (deferred to).
 
 Findings carry a STABLE machine `code`, a `severity` (`error` | `warning` | `info`), a
 human-readable `message` that NEVER contains a host path, and an optional `locator` (the id,
@@ -329,7 +329,7 @@ def _check_doctype(root: etree._Element, findings: list[Finding]) -> None:
     entities or fetches anything, so an external entity such as
     ``<!ENTITY xxe SYSTEM "file:///etc/hostname">`` is inert, but `validate_document` previously
     reported `ok:true, findings:[]`, giving an agent zero signal a malicious DOCTYPE was present
-    (E13-02). This emits an EXTERNAL-ENTITY warning per declared external entity (SYSTEM/PUBLIC, a
+. This emits an EXTERNAL-ENTITY warning per declared external entity (SYSTEM/PUBLIC, a
     classic XXE vector) and a `doctype_present` info finding for any DOCTYPE at all (rare in SVG).
     It changes NOTHING and never reduces `ok` below an `error`: the parse is already safe; the point
     is visibility.
@@ -379,7 +379,7 @@ def _check_doctype(root: etree._Element, findings: list[Finding]) -> None:
         )
 
 
-# --- glyph coverage (E16-04) ------------------------------------------------
+# --- glyph coverage ------------------------------------------------
 
 # Text-bearing SVG element local names. A glyph-coverage check only makes sense for elements that
 # actually carry rendered text content.
@@ -423,7 +423,7 @@ def _check_glyph_coverage(root: etree._Element, findings: list[Finding]) -> None
     fontconfig substitution — see :mod:`inkscape_mcp.fonts.coverage`), and report any character the
     family does not cover plus a cmap-verified covering family suggestion. The render may "look
     right" via fontconfig auto-substitution while the SAVED SVG still names the non-covering family,
-    so this is the correctness signal an agent needs (E16-04). Degrades to silence when coverage is
+    so this is the correctness signal an agent needs. Degrades to silence when coverage is
     unknown (family not installed — owned by `missing_font` — or fontconfig unavailable) and never
     fires for fully-covered text, whitespace, or generic keywords.
     """
@@ -527,22 +527,22 @@ def _check_viewbox(doc_id: str, findings: list[Finding]) -> None:
 def validate_document(doc_id: str, registry: Registry | None = None) -> ValidationReport:
     """Run all read-only checks over a document and return a structured report.
 
-    Checks: missing fonts, glyph coverage (E16-04 — per text element, a `missing_glyphs` warning
+    Checks: missing fonts, glyph coverage (per text element, a `missing_glyphs` warning
     when the declared family's OWN cmap cannot render the text, computed independently of fontconfig
     auto-substitution, with a cmap-verified covering-family suggestion), external assets, large
     embedded rasters, id problems (duplicate ids and dangling `#id` references), viewBox presence /
-    sanity, and DOCTYPE/external-entity presence (E13-02 — the entity is never expanded by the safe
+    sanity, and DOCTYPE/external-entity presence (the entity is never expanded by the safe
     parser, but a hostile DOCTYPE is surfaced as a finding so it is observable rather than silently
     neutralized). Resolves `doc_id`
     via the registry; raises `DocumentNotFound` for an unknown id and `InspectionError` if the
     working copy cannot be parsed safely (the tool layer maps both to `ToolError`).
 
-    Validate vs. quality split (E10-06 V2): `validate_document` reports CORRECTNESS problems —
+    Validate vs. quality split (V2): `validate_document` reports CORRECTNESS problems —
     things that are wrong or risky (broken references, duplicate ids, an invalid viewBox, an
     uninstalled font, an external/oversized asset). It deliberately does NOT flag "cruft" /
     optimization opportunities (editor-only metadata, unused `<defs>`, unreferenced ids, empty
     groups, reducible coordinate precision): those are not defects, they are clean-up suggestions
-    and live in `quality_report` as `opportunities` (sourced from the E5-04 optimizer, exactly what
+    and live in `quality_report` as `opportunities` (sourced from the optimizer, exactly what
     `svg_web_optimize` would strip). Keeping cruft out of validation means `ValidationReport.ok`
     stays a true correctness gate rather than a style opinion. Use `quality_report` for the cruft
     signal.

@@ -1,4 +1,4 @@
-"""Font glyph-coverage engine (E16-04, read-only).
+"""Font glyph-coverage engine (read-only).
 
 Answers, per text element, whether a DECLARED font family can actually render the characters it
 is applied to — computed from the font file's OWN cmap, never from fontconfig auto-substitution.

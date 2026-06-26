@@ -1,4 +1,4 @@
-"""E16-10 assorted authoring / live ergonomics: six independent sub-items (a-f).
+"""assorted authoring / live ergonomics: six independent sub-items (a-f).
 
 Each test group locks one sub-item:
 
@@ -8,7 +8,7 @@ Each test group locks one sub-item:
 - (d) `resize_canvas(bleed=…)` paints the bled strip in one call.
 - (e) registered prompts are listed/readable via the `inkscape://prompts` resource surface.
 - (f) `live_arm_socket` installs + arms the socket helper; the GUI launch leg is gated/skipped on
-      a headless host with a clear marker (E10-09 Tier-B style), so only the launch/helper path and
+      a headless host with a clear marker (Tier-B style), so only the launch/helper path and
       the headless guard are asserted here.
 
 Async is run via `asyncio.run(...)` inside sync test functions (repo convention).
@@ -395,7 +395,7 @@ def test_live_arm_socket_reuses_existing_session(
 def test_arm_socket_helper_headless_skips_gui_launch(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """E10-09 Tier-B: the GUI launch leg is gated on a display; headless raises a clear error.
+    """Tier-B: the GUI launch leg is gated on a display; headless raises a clear error.
 
     This documents what's covered (helper install + launch-arg path + headless guard) vs deferred
     (the actual GUI socket arm, which cannot be verified headless on this host).

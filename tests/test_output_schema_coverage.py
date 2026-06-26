@@ -1,4 +1,4 @@
-"""Drift-guard test for `outputSchema` / structured-content coverage (E17-03).
+"""Drift-guard test for `outputSchema` / structured-content coverage.
 
 Every registered `@mcp.tool` must return a typed pydantic model so FastMCP emits a non-null
 `outputSchema` on the wire tool — structured content the client can validate. A bare
@@ -27,7 +27,7 @@ def _tools() -> list:
 
 
 def test_every_tool_emits_non_null_output_schema() -> None:
-    """No registered tool may carry a null/absent `outputSchema` on its wire form (E17-03)."""
+    """No registered tool may carry a null/absent `outputSchema` on its wire form."""
     tools = _tools()
     assert tools, "no tools registered — register_tools() did not wire the surface"
 
@@ -39,7 +39,7 @@ def test_every_tool_emits_non_null_output_schema() -> None:
 
 
 def test_every_output_schema_is_an_object() -> None:
-    """MCP requires `outputSchema` to describe an object type; assert it for every tool (E17-03)."""
+    """MCP requires `outputSchema` to describe an object type; assert it for every tool."""
     offenders = []
     for tool in _tools():
         schema = tool.to_mcp_tool().outputSchema

@@ -1,4 +1,4 @@
-"""Transform tool + engine tests (E2-03 / ADR-002 / ADR-004 / ADR-005).
+"""Transform tool + engine tests (ADR-002 / ADR-004 / ADR-005).
 
 Hermetic: `render_preview` is monkeypatched in the pipeline module so no test invokes Inkscape.
 The fake writes a tiny deterministic PNG into `artifacts/preview/preview-auto.png` and returns a
@@ -110,7 +110,7 @@ def fake_render(monkeypatch: pytest.MonkeyPatch) -> None:
         preview_dir.mkdir(parents=True, exist_ok=True)
         out = preview_dir / "preview-auto.png"
         out.write_bytes(PNG_BYTES)
-        # E11-01 one-location contract: artifact_path is workspace-ROOT-relative (matches the real
+        # one-location contract: artifact_path is workspace-ROOT-relative (matches the real
         # engine), so the pipeline's `root / artifact_path` join resolves correctly.
         rel = out.relative_to(root).as_posix()
         return RenderResult(
@@ -274,7 +274,7 @@ def test_normalize_viewbox_idempotent_when_valid(doc: tuple[str, Path, Path]) ->
     assert "already normalized" in (result.summary or "")
 
 
-# --- honest `changed` flag (E10-05) ----------------------------------------
+# --- honest `changed` flag ----------------------------------------
 
 
 def test_normalize_viewbox_already_normal_reports_changed_false(
@@ -333,7 +333,7 @@ def test_move_object_real_change_reports_changed_true(doc: tuple[str, Path, Path
     assert result.changed is True
 
 
-# --- resize_canvas adjust_viewbox (E11-03) ---------------------------------
+# --- resize_canvas adjust_viewbox ---------------------------------
 
 
 def test_resize_canvas_adjust_viewbox_retargets(doc: tuple[str, Path, Path]) -> None:
@@ -365,7 +365,7 @@ def test_resize_canvas_adjust_viewbox_reversible(doc: tuple[str, Path, Path]) ->
     assert working.read_bytes() == pre
 
 
-# --- fit_to_content (E11-03, Inkscape engine) ------------------------------
+# --- fit_to_content (Inkscape engine) ------------------------------
 
 
 @pytest.mark.inkscape
@@ -418,7 +418,7 @@ def test_fit_to_content_is_idempotent_second_call_is_noop(
     assert _op_count(root, doc_id) == ops_after_first
 
 
-# --- tile (E11-10 b) --------------------------------------------------------
+# --- tile (b) --------------------------------------------------------
 
 
 def test_tile_produces_grid_in_one_reversible_call(doc: tuple[str, Path, Path]) -> None:

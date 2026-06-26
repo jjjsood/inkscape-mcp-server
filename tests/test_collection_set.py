@@ -1,4 +1,4 @@
-"""Cross-document / collection layer tests (E16-05).
+"""Cross-document / collection layer tests.
 
 Covers the four collection tools:
 

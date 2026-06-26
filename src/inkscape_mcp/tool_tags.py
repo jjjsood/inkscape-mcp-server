@@ -1,4 +1,4 @@
-"""Central tool-tag map + flag-driven progressive disclosure (E17-02).
+"""Central tool-tag map + flag-driven progressive disclosure.
 
 Single source of truth for the DOMAIN and RISK tags carried by every registered `@mcp.tool`, and
 the boot-time pass that drives PROGRESSIVE DISCLOSURE from the EXISTING config flags by EXCLUDING
@@ -10,7 +10,7 @@ Design (mirrors `tool_annotations.py`, ADR-002 / project risk classes):
 - DOMAIN tag (exactly one per tool): `create` / `edit` / `transform` / `paths` / `export` / `live` /
   `actions` / `system` / `quality`. Derived from the tool's defining MODULE — one residual domain
   (`edit`) catches the structural-edit / document / discovery modules that have no dedicated bucket.
-- RISK tag (exactly one per tool): the SAME risk vocabulary E17-01 uses, parsed from the docstring
+- RISK tag (exactly one per tool): the SAME risk vocabulary uses, parsed from the docstring
   `Risk class:` line via `tools.system._risk_class` (`low` / `medium` / `high` / `restricted`, or
   `unknown` if absent). There is exactly ONE risk vocabulary in the codebase — no second source.
 
@@ -19,7 +19,7 @@ Gating (security-critical, sec.12 / ADR-003):
 - `live_enabled` OFF  → exclude every `live`-tagged tool.
 - advanced-mode OFF (`raw_action_enabled` false) → exclude the ADR-003 hatch group: `run_raw_action`
   plus every `paths`- and `actions`-tagged tool.
-- `tool_profile == "core"` (E18-03) → exclude every tool OUTSIDE the curated `_CORE_MODULES` set, an
+- `tool_profile == "core"` → exclude every tool OUTSIDE the curated `_CORE_MODULES` set, an
   opt-in minimal profile that cuts the default per-turn model-context cost. STRICT SUBSET only.
 - Gating may ONLY NARROW the surface. With the flags at their widest the FULL surface returns; a
   tool the flags would hide can never be made visible via tags. Implemented with FastMCP
@@ -73,7 +73,7 @@ _MODULE_DOMAIN: dict[str, str] = {
 #: The canonical set of domain tags (one per tool). Exposed for tests + docs.
 DOMAIN_TAGS: frozenset[str] = frozenset(_MODULE_DOMAIN.values())
 
-#: The canonical set of risk tags (one per tool); mirrors the E17-01 risk vocabulary.
+#: The canonical set of risk tags (one per tool); mirrors the risk vocabulary.
 RISK_TAGS: frozenset[str] = frozenset({"low", "medium", "high", "restricted", "unknown"})
 
 #: Domain tags whose tools form the ADR-003 advanced-mode hatch group (`run_raw_action` lives in
@@ -86,7 +86,7 @@ _ADVANCED_DOMAIN_TAGS: frozenset[str] = frozenset({"paths", "actions"})
 #: the `actions` domain tag — naming it explicitly keeps the intent legible.
 _ADVANCED_TOOL_NAMES: frozenset[str] = frozenset({"run_raw_action"})
 
-#: Defining-MODULE leaves whose tools form the curated `core` disclosure profile (E18-03): the
+#: Defining-MODULE leaves whose tools form the curated `core` disclosure profile: the
 #: essential authoring workflow — open/inspect/create document (`document`), find (`find`),
 #: create-* shapes/gradients/groups (`create`), style (`style`), transform (`transform`), export
 #: (`export`), snapshot (`snapshots`). Keyed by module leaf (not domain tag) because the residual
@@ -153,7 +153,7 @@ def _disable(app: FastMCP, *, names: set[str] | None = None, tags: set[str] | No
 
 
 def _non_core_tool_names(app: FastMCP) -> set[str]:
-    """Names of every registered Tool whose defining module is OUTSIDE `_CORE_MODULES` (E18-03)."""
+    """Names of every registered Tool whose defining module is OUTSIDE `_CORE_MODULES`."""
     from fastmcp.tools import Tool
 
     return {
@@ -172,7 +172,7 @@ def apply_disclosure(app: FastMCP) -> None:
 
     - `live_enabled` off  → `disable(tags={"live"})`.
     - advanced-mode off   → `disable(tags={"paths", "actions"})` + `disable` of `run_raw_action`.
-    - `tool_profile == "core"` → `disable(names=…)` of every tool OUTSIDE `_CORE_MODULES` (E18-03).
+    - `tool_profile == "core"` → `disable(names=…)` of every tool OUTSIDE `_CORE_MODULES`.
 
     With all flags at their widest (live on, advanced on, profile `full`), NO disable transform is
     added — the FULL surface returns. Gating can ONLY narrow: it appends `disable` transforms; it
@@ -197,6 +197,6 @@ def apply_disclosure(app: FastMCP) -> None:
 
 
 def apply_tags_and_disclosure(app: FastMCP) -> None:
-    """Tag every tool, then apply flag-driven disclosure — the single boot entry point (E17-02)."""
+    """Tag every tool, then apply flag-driven disclosure — the single boot entry point."""
     apply_tags(app)
     apply_disclosure(app)

@@ -1,9 +1,9 @@
-"""Authoring/compose Prompt library (E15-04, architecture §4.1).
+"""Authoring/compose Prompt library (architecture §4.1).
 
-Two `@mcp.prompt` entries that on-ramp the E14 generative surface:
+Two `@mcp.prompt` entries that on-ramp the generative surface:
 
 * ``compose_artwork(goal)`` — orients the agent on the create → draw → render(see inline) →
-  validate → export loop using the real E14 authoring tools.
+  validate → export loop using the real authoring tools.
 * ``restyle_artwork(goal)`` — orients the agent on the OBJECT-TARGETED restyle loop:
   ``find_objects`` to address, then per-object ``set_fill`` / ``set_stroke`` (complementing the
   document-wide ``theme_recoloring`` prompt, not duplicating it).
@@ -36,7 +36,7 @@ def _clean_goal(goal: str) -> str:
 
 @mcp.prompt
 def compose_artwork(goal: str) -> str:
-    """On-ramp the E14 generative loop: create → draw → render(inline) → validate → export.
+    """On-ramp the generative loop: create → draw → render(inline) → validate → export.
 
     Orients the agent to build new artwork toward `goal` from a blank canvas using the typed
     authoring tools, preview the inline raster, validate, then export. Guidance only — it executes

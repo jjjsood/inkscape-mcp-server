@@ -1,4 +1,4 @@
-"""Path geometry tool + engine tests (E6-01 / ADR-002 / ADR-004 / ADR-005 / sec.12).
+"""Path geometry tool + engine tests (ADR-002 / ADR-004 / ADR-005 / sec.12).
 
 Hermetic: both Inkscape touch points are monkeypatched so no test launches Inkscape —
 `render_preview` in the pipeline (before/after frames) and `run_inkscape` in the path engine (the
@@ -102,7 +102,7 @@ def fake_render(monkeypatch: pytest.MonkeyPatch) -> None:
         preview_dir.mkdir(parents=True, exist_ok=True)
         out = preview_dir / "preview-auto.png"
         out.write_bytes(PNG_BYTES)
-        # E11-01 one-location contract: artifact_path is workspace-ROOT-relative (matches the real
+        # one-location contract: artifact_path is workspace-ROOT-relative (matches the real
         # engine), so the pipeline's `root / artifact_path` join resolves correctly.
         rel = out.relative_to(root).as_posix()
         return RenderResult(
@@ -407,7 +407,7 @@ def test_unknown_doc_id_maps_to_toolerror(doc: tuple[str, Path, Path]) -> None:
     assert "document id not found" in str(exc.value)
 
 
-# --- id survival / result_id (E10-07 P7-vs-P4 / E11-07) ---------------------
+# --- id survival / result_id (P7-vs-P4) ---------------------
 
 
 def test_boolean_union_returns_bottom_result_id(doc: tuple[str, Path, Path]) -> None:
@@ -426,7 +426,7 @@ def test_boolean_difference_returns_bottom_result_id(doc: tuple[str, Path, Path]
 def test_combine_matches_boolean_bottom_id_rule(doc: tuple[str, Path, Path]) -> None:
     doc_id, root, _ = doc
     # Inkscape's path-combine keeps the TOP id (p2); the engine normalizes the result back to the
-    # bottom id (p1) so combine and the boolean ops survive the SAME id (E10-07 P7-vs-P4).
+    # bottom id (p1) so combine and the boolean ops survive the SAME id (P7-vs-P4).
     result = combine_paths(doc_id, ["p1", "p2"], dry_run=False, approval_token=TOKEN)
     assert result.result_id == "p1"
     optimized = _working_root(root, doc_id)
@@ -442,7 +442,7 @@ def test_combine_matches_boolean_bottom_id_rule(doc: tuple[str, Path, Path]) -> 
 def test_combine_and_union_survive_identical_id(doc: tuple[str, Path, Path]) -> None:
     doc_id, _root, _ = doc
     # Both merge ops apply the SAME bottom-most-id rule on the same pristine inputs (dry-runs keep
-    # the document intact, so the second op sees both targets too). E10-07 standardizes them.
+    # the document intact, so the second op sees both targets too). standardizes them.
     union = boolean_union(doc_id, ["p1", "p2"], dry_run=True)
     combine = combine_paths(doc_id, ["p1", "p2"], dry_run=True)
     assert union.result_id == "p1"
@@ -461,7 +461,7 @@ def test_result_id_chains_into_next_boolean_without_reinspect(doc: tuple[str, Pa
     first = boolean_union(doc_id, ["p1", "p2"], dry_run=False, approval_token=TOKEN)
     assert first.result_id == "p1"
     # The returned id is immediately present in the post-op document, so a chained boolean can
-    # target it WITHOUT a re-inspect round-trip (E11-07): validate_targets resolves it against the
+    # target it WITHOUT a re-inspect round-trip: validate_targets resolves it against the
     # mutated working copy. Add a fresh sibling and chain a second union on the returned id.
     working = sandbox.working_copy(root, doc_id)
     tree = etree.parse(str(working))
@@ -497,7 +497,7 @@ def test_non_merge_ops_have_no_result_id(doc: tuple[str, Path, Path]) -> None:
         restore_snapshot(doc_id, result.snapshot_id)
 
 
-# --- cleanup_paths overlap decision (E10-07 P10) ----------------------------
+# --- cleanup_paths overlap decision (P10) ----------------------------
 
 
 def test_cleanup_paths_aliases_simplify_same_action(doc: tuple[str, Path, Path]) -> None:
@@ -530,7 +530,7 @@ def test_tools_registered_on_mcp(doc: tuple[str, Path, Path]) -> None:
     } <= names
 
 
-# --- E13-04: stroke_to_path writes an explicit fill (source stroke colour, not the default) ----
+# ---: stroke_to_path writes an explicit fill (source stroke colour, not the default) ----
 
 
 def _effective_fill(elem: etree._Element) -> str:
@@ -541,7 +541,7 @@ def _effective_fill(elem: etree._Element) -> str:
 def test_stroke_to_path_sets_explicit_fill_from_source_stroke(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """E13-04: the outlined result gets an EXPLICIT fill equal to the source stroke colour, so it
+    """the outlined result gets an EXPLICIT fill equal to the source stroke colour, so it
     no longer depends on the implicit SVG default black."""
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -629,11 +629,11 @@ def test_stroke_to_path_explicit_fill_defaults_black_without_source_stroke(
     assert _effective_fill(s1) == "#000000"
 
 
-# --- E14-08a: capability-absent path-op error names list_capabilities ---------
+# ---: capability-absent path-op error names list_capabilities ---------
 
 
 def test_path_op_error_message_engine_unavailable_names_list_capabilities() -> None:
-    # E14-08a: a PathOpError signalling the engine is absent maps to a message naming the discovery
+    #: a PathOpError signalling the engine is absent maps to a message naming the discovery
     # tool; any other PathOpError keeps its own already-safe message unchanged.
     from inkscape_mcp.edit.paths import PathOpError
     from inkscape_mcp.tools.paths import _path_op_error_message

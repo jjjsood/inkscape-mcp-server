@@ -1,4 +1,4 @@
-"""Short-form tool-description mode (E20-03).
+"""Short-form tool-description mode.
 
 `INKSCAPE_MCP_TOOL_DESC=short` swaps each tool's wire `tools/list` description for a DERIVED short
 form (summary + risk line) to cut per-turn context cost. These tests prove:

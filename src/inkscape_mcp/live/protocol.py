@@ -1,4 +1,4 @@
-"""Fixed wire schema for the extension-socket bridge (E3-02).
+"""Fixed wire schema for the extension-socket bridge.
 
 The schema is the security boundary for the socket transport: it is a FIXED, VERSIONED set of
 semantic commands (`LiveCommand`) — there is no command that carries arbitrary code or a raw
@@ -21,11 +21,11 @@ from enum import StrEnum
 from typing import Any
 
 #: Wire-schema version. Bump on ANY change to the command set or message shape; the client
-#: refuses to talk to a helper advertising a different major version. v2 adds the E4 semantic
+#: refuses to talk to a helper advertising a different major version. v2 adds the semantic
 #: WRITE commands (apply-to-selection / insert-svg / set-selected-text / export-selection). v3
-#: adds the E8 view-only commands (set-viewport) and extends render_view with an optional
-#: region/scale. v4 adds the E8 structured-perception command (get_scene: viewport + canvas +
-#: selection bboxes + a visible-object summary). v5 adds the E8 CHEAP change-detection command
+#: adds the view-only commands (set-viewport) and extends render_view with an optional
+#: region/scale. v4 adds the structured-perception command (get_scene: viewport + canvas +
+#: selection bboxes + a visible-object summary). v5 adds the CHEAP change-detection command
 #: (get_state_token: a small revision marker + selection ids + viewport — never the full doc/PNG —
 #: that the server hashes to detect deltas without busy-rendering) — all fixed semantic verbs, still
 #: no code/raw-Action member (ADR-003).
@@ -42,9 +42,9 @@ LOOPBACK_HOST = "127.0.0.1"
 class LiveCommand(StrEnum):
     """The complete, fixed semantic command surface. No member permits code/Action passthrough.
 
-    The WRITE members (E4) carry only typed, server-validated semantic parameters — a style
+    The WRITE members carry only typed, server-validated semantic parameters — a style
     property map, a composed SVG ``transform`` string, an SVG fragment, or a text string — never
-    a raw Inkscape Action string or executable code (ADR-003). The VIEW members (E8) carry only
+    a raw Inkscape Action string or executable code (ADR-003). The VIEW members carry only
     typed, bounded numerics (a viewport mode + zoom/center/delta, or a render region/scale) and the
     READ-only ``get_scene`` / ``get_state_token`` which return typed structured perception
     (no parameters, no code). ``get_state_token`` is the CHEAP change-detection marker: a small
@@ -57,15 +57,15 @@ class LiveCommand(StrEnum):
     GET_SELECTION = "get_selection"  # current selection object ids
     INSPECT_SELECTION = "inspect_selection"  # per-object detail for the selection
     GET_DOCUMENT_SVG = "get_document_svg"  # serialized SVG of the active document (for sync)
-    RENDER_VIEW = "render_view"  # rasterized canvas (base64 PNG); optional region/scale (E8)
-    # --- E4 semantic WRITE surface (mutating; each is approval-gated server-side) ---
+    RENDER_VIEW = "render_view"  # rasterized canvas (base64 PNG); optional region/scale
+    # --- semantic WRITE surface (mutating; each is approval-gated server-side) ---
     APPLY_TO_SELECTION = "apply_to_selection"  # set validated style + transform on the selection
     INSERT_SVG = "insert_svg"  # insert a safe-parsed SVG fragment into the document
     SET_SELECTED_TEXT = "set_selected_text"  # replace the selected text object's content
     EXPORT_SELECTION = "export_selection"  # rasterize just the current selection (base64 PNG)
-    # --- E8 view-only surface (non-mutating; low risk, no Operation Record) ---
+    # --- view-only surface (non-mutating; low risk, no Operation Record) ---
     SET_VIEWPORT = "set_viewport"  # zoom / pan / fit-to-selection / fit-to-page (no doc mutation)
-    GET_SCENE = "get_scene"  # structured perception: viewport+canvas+selection bboxes+objects (E8)
+    GET_SCENE = "get_scene"  # structured perception: viewport+canvas+selection bboxes+objects
     GET_STATE_TOKEN = "get_state_token"  # noqa: S105 - command id, not a secret; cheap change marker
 
 

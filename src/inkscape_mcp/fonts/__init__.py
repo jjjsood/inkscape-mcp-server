@@ -1,4 +1,4 @@
-"""Font glyph-coverage diagnosis (E16-04).
+"""Font glyph-coverage diagnosis.
 
 Reusable, read-only engine that answers "can this font family actually render these
 characters?" from the FONT'S OWN cmap — never from fontconfig auto-substitution. Consumed by the

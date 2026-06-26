@@ -1,10 +1,10 @@
-"""Reusable SVG inspection engine (E1-04, ADR-005 direct DOM).
+"""Reusable SVG inspection engine (ADR-005 direct DOM).
 
 Pure functions over the WORKING COPY (`DocEntry.working_path`), parsed once per call
 through the normative safe parser (`parse_svg_file`). No MCP decorators here; the tool
 layer (`inkscape_mcp.tools.document`) wraps these and maps errors to `ToolError`.
 
-These models + function names are a CONTRACT consumed by E1-05 (resources) and E1-08
+These models + function names are a CONTRACT consumed by (resources) and
 (validate) — do not rename.
 
 Namespaces handled: SVG (`http://www.w3.org/2000/svg`), Inkscape and sodipodi (layers,
@@ -62,7 +62,7 @@ _NON_OBJECT_TAGS = frozenset({"svg", "defs", "metadata", "style", "title", "desc
 _STYLE_PRESENTATION_ATTRS = ("fill", "stroke")
 
 # Generic CSS font keywords that always resolve — never reported as "missing". Shared with the
-# E1-08 validation engine (which imports this set) so font detection stays single-source.
+# validation engine (which imports this set) so font detection stays single-source.
 GENERIC_FONT_KEYWORDS = frozenset(
     {
         "serif",
@@ -656,7 +656,7 @@ def _count_css_rules(style_text: str) -> int:
     return stripped.count("{")
 
 
-# --- CSS-cascade paint resolution for find_objects matching (E14-07b) --------
+# --- CSS-cascade paint resolution for find_objects matching --------
 #
 # Read-only refinement of the `fill` / `stroke` FILTER matching only. The reported `ObjectRef.fill`
 # / `.stroke` stay the per-element authored token (back-compat); matching uses a separately-computed
@@ -705,7 +705,7 @@ class _CssRule:
 def _parse_css_rules(style_text: str) -> list[_CssRule]:
     """Parse a `<style>` body into a flat list of :class:`_CssRule` (element / `.class` / `#id`).
 
-    Minimal selector support per E14-07b: a single type, class, or id selector, plus selector lists
+    Minimal selector support per: a single type, class, or id selector, plus selector lists
     (`a, b`) and descendant/compound selectors — for which only the RIGHTMOST simple token (the
     "key" selector) is honored (its specificity is computed from that token alone). Selectors with
     a syntax we do not model are skipped rather than guessed. `@media` / `@font-face` and other
@@ -880,7 +880,7 @@ def _font_families_from_value(value: str) -> list[str]:
 def installed_font_families() -> set[str] | None:
     """Lowercased installed font-family names from `fc-list`, or None if it can't be queried.
 
-    Shared, single-source font-availability detection: the E1-08 validation engine reuses this same
+    Shared, single-source font-availability detection: the validation engine reuses this same
     function so `validate_document` V3 (missing_font) and `inspect_document` / the fonts resource
     (`available`) never diverge. Comma-separated alias lists are split. Never raises — any failure
     (binary absent, launch error, timeout, non-zero exit) returns None so callers degrade to "not
@@ -1026,7 +1026,7 @@ def inspect_assets(doc_id: str) -> DocAssets:
     return DocAssets(doc_id=doc_id, assets=assets)
 
 
-# --- Addressable object list + find_objects (E14-07) ------------------------
+# --- Addressable object list + find_objects ------------------------
 
 
 def _text_content(elem: etree._Element) -> str | None:
@@ -1087,7 +1087,7 @@ def _bbox_intersects(a: BBox, b: BBox) -> bool:
     )
 
 
-# --- Geometry-accurate (engine) bbox for find_objects (E14-07a) --------------
+# --- Geometry-accurate (engine) bbox for find_objects --------------
 #
 # Opt-in, batched, transform-/outline-aware boxes via the Inkscape render engine. A single
 # `--query-all` invocation returns `id,x,y,w,h` for EVERY object, so we never spawn per object. The
@@ -1164,7 +1164,7 @@ def find_objects(
     - `tag`: exact local element-name match (case-sensitive, namespace stripped), e.g. ``"rect"``.
     - `fill` / `stroke`: paint match against the object's EFFECTIVE rendered paint, compared through
       `inkscape_mcp.edit.dom.color_key` so casing / hex shorthand differences are ignored
-      (``#FFF`` matches ``#ffffff``). The effective value folds in the FULL CSS cascade (E14-07b):
+      (``#FFF`` matches ``#ffffff``). The effective value folds in the FULL CSS cascade:
       a matching `<style>` rule (element / `.class` / `#id` selector, by specificity then source
       order) < the presentation attribute < the inline `style`, and SVG inheritance — an element
       with no own paint takes the nearest ancestor's resolved `fill` / `stroke` (`none` is a real
@@ -1179,7 +1179,7 @@ def find_objects(
       default this is the attribute-derived box, and objects with `bbox is None` (path / text /
       group / transformed elements — see :class:`BBox`) are EXCLUDED. When `accurate_bbox=True`, the
       geometry-accurate engine box is used instead (see below), so those objects can now match.
-    - `accurate_bbox` (E14-07a): opt-in geometry-accurate boxes. When True, ONE batched
+    - `accurate_bbox`: opt-in geometry-accurate boxes. When True, ONE batched
       ``inkscape --query-all`` call computes transform-/outline-aware boxes for every object; each
       returned `ObjectRef.bbox` (and the `bbox` filter) then uses that true box where the engine
       reported one, falling back to the attribute box otherwise. Default False keeps the cheap
@@ -1197,7 +1197,7 @@ def find_objects(
     stroke_key = color_key(stroke) if stroke is not None else None
     text_needle = text.lower() if text is not None else None
 
-    # CSS-cascade paint resolution (E14-07b) — built once per call; only needed when a paint filter
+    # CSS-cascade paint resolution — built once per call; only needed when a paint filter
     # is supplied (the reported tokens stay per-element, so no work otherwise).
     css_rules: list[_CssRule] = []
     parents: dict[etree._Element, etree._Element] = {}
@@ -1205,7 +1205,7 @@ def find_objects(
         css_rules = _document_css_rules(root)
         parents = _build_parent_map(root)
 
-    # Geometry-accurate boxes (E14-07a) — one batched engine call, only when opted in. An empty map
+    # Geometry-accurate boxes — one batched engine call, only when opted in. An empty map
     # (binary absent / engine fault) transparently falls back to the attribute box per element.
     engine_boxes = _engine_bboxes(entry.working_path) if accurate_bbox else {}
 

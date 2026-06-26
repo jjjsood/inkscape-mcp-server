@@ -1,4 +1,4 @@
-"""Controlled Action/Extension tools (E6-02): discovery (low) + chain validation/execution (gated).
+"""Controlled Action/Extension tools: discovery (low) + chain validation/execution (gated).
 
 A thin `@mcp.tool` layer over :mod:`inkscape_mcp.actions`. Four small typed tools (ADR-002, no
 portmanteau):
@@ -12,10 +12,10 @@ portmanteau):
   argument + argv preview WITHOUT invoking Inkscape. Invalid chains are refused with a
   machine-readable error code.
 - ``run_action_chain`` — HIGH risk + approval-gated execution of a validated chain over a
-  document's working copy, routed through the E2-04 mutating pipeline (snapshot + Operation Record +
+  document's working copy, routed through the mutating pipeline (snapshot + Operation Record +
   before/after preview, reversible). Refuses anything not allowlisted-and-present, and refuses
   outright without an `approval_token`.
-- ``run_raw_action`` — the optional ADR-003 escape hatch (E6-03): a single, advanced-mode-only,
+- ``run_raw_action`` — the optional ADR-003 escape hatch: a single, advanced-mode-only,
   OFF-by-default, HIGH-risk raw-Action runner. It is a thin façade over the SAME chain machinery
   (one typed Action + typed args → a one-step chain), adding only the `raw_action_enabled` gate and
   the single-Action ergonomics. NOT a portmanteau replacement for the semantic tools (ADR-002) and
@@ -24,7 +24,7 @@ portmanteau):
   defaults to dry-run, and on a real run requires an `approval_token` and routes through the same
   mutating pipeline (snapshot + Operation Record + before/after preview, reversible).
 
-This is the gate machinery E6-03 (the raw-action escape hatch) reuses — there is no open-string
+This is the gate machinery (the raw-action escape hatch) reuses — there is no open-string
 passthrough here (ADR-003; sec.12 / X1).
 """
 
@@ -67,12 +67,12 @@ _logger = get_logger("tools.actions")
 
 #: Stable engine message (from `inkscape_mcp.actions.chains`) signalling the Inkscape engine could
 #: not be launched on this runtime (capability ABSENT). Matched at the tool layer so the client-
-#: facing error can NAME the discovery tool without the engine importing the tool surface (E14-08a).
+#: facing error can NAME the discovery tool without the engine importing the tool surface.
 _ENGINE_UNAVAILABLE = "inkscape engine unavailable"
 
 
 def _chain_error_message(exc: ActionChainError) -> str:
-    """Stable, machine-readable message for an `ActionChainError` (E14-08a).
+    """Stable, machine-readable message for an `ActionChainError`.
 
     The `action_absent` code means the requested Action is not present on THIS Inkscape runtime (a
     capability ABSENCE), so the message NAMES `list_actions` so the agent can see which Actions this
@@ -88,7 +88,7 @@ def _chain_error_message(exc: ActionChainError) -> str:
 
 
 def _engine_error_message(exc: ActionEngineError) -> str:
-    """Stable, host-path-free message for an `ActionEngineError` (E14-08a).
+    """Stable, host-path-free message for an `ActionEngineError`.
 
     When the engine is ABSENT (no Inkscape binary on this runtime) the message names the discovery
     tool so the agent can inspect support rather than retry blindly; every other engine error
@@ -130,8 +130,7 @@ def list_actions(include_all_actions: bool = True) -> ActionDiscovery:
 
     Key params: `include_all_actions` (default True for back-compat) controls the large `actions`
     array — the host reports ~1000 ids but only `allowlisted`/`available` can ever execute, so pass
-    `False` to OMIT `actions` while keeping the accurate `action_count` (a much smaller payload,
-    E13-05).
+    `False` to OMIT `actions` while keeping the accurate `action_count` (a much smaller payload).
 
     Return shape: `ActionDiscovery` — `actions` (all host ids unless omitted), `action_count`,
     `allowlisted` (may ever execute), `available` (allowlisted AND present), `notes`. Side effect:

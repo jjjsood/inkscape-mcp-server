@@ -1,6 +1,6 @@
-"""Document inspection resources (E1-05).
+"""Document inspection resources.
 
-Publishes the E1-04 inspection views as read-only MCP resource templates so hosts can pull
+Publishes the inspection views as read-only MCP resource templates so hosts can pull
 structured document state without a tool round-trip. Each resource is a thin wrapper over the
 reusable inspection engine (`inkscape_mcp.document.inspect`); for a given `doc_id` the payload
 is IDENTICAL to the matching component of the `inspect_document` tool result (parity contract).
@@ -139,7 +139,7 @@ def document_assets(doc_id: str) -> str:
 
 @mcp.resource("inkscape://documents", mime_type="application/json")
 def documents_index() -> str:
-    """Index of open documents and their per-document resource URIs (E11-10c discoverability).
+    """Index of open documents and their per-document resource URIs (discoverability).
 
     The seven per-document resources above are registered as URI TEMPLATES (they carry a `{doc_id}`
     placeholder), so they appear under `resources/templates/list` but NOT under the plain

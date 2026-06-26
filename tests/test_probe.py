@@ -1,4 +1,4 @@
-"""Probe-engine tests (E1-03).
+"""Probe-engine tests.
 
 Two flavors: live assertions on THIS host (gated behind `@pytest.mark.inkscape`, since they
 need a real Inkscape binary), and graceful-degradation tests that simulate a missing binary and

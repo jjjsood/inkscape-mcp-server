@@ -1,4 +1,4 @@
-"""Tool + registry tests (E14-06): `reload_document`.
+"""Tool + registry tests: `reload_document`.
 
 `reload_document` refreshes a working copy FROM ITS SOURCE under the SAME `doc_id`: it takes a
 pre-reload snapshot (so the refresh is reversible), re-resolves + re-validates the source is still

@@ -1,4 +1,4 @@
-"""Operation Record scaffold tests (E1-09 / ADR-004)."""
+"""Operation Record scaffold tests (ADR-004)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Direct-DOM transform engine (E2-03, ADR-005).
+"""Direct-DOM transform engine (ADR-005).
 
 Pure ``mutate(tree) -> str`` functions used as the callbacks for the shared edit pipeline
 (:func:`inkscape_mcp.edit.pipeline.apply_edit`). Each one edits the parsed working tree IN
@@ -10,7 +10,7 @@ Scope (ADR-005): SIMPLE transforms only. Object moves/scales/rotations are expre
 ``transform`` functions prepended to the target element (so they compose in parent space and stay
 trivially reversible via the pipeline snapshot), and canvas/viewBox edits touch only the root
 ``<svg>`` attributes. Complex geometry (outline, boolean path ops, real coordinate baking) is
-high risk and out of E2.
+high risk and out of.
 
 SAFETY (sec.12): every numeric value placed into an attribute goes through
 :func:`inkscape_mcp.edit.dom.fmt_num`, which rejects NaN/inf and emits a clean decimal string, so
@@ -84,7 +84,7 @@ def move(tree: etree._ElementTree, object_id: str, dx: float, dy: float) -> str:
 def scale(tree: etree._ElementTree, object_id: str, sx: float, sy: float | None = None) -> str:
     """Scale the target object by factor ``sx`` (and ``sy``, defaulting to ``sx`` for uniform).
 
-    Scaling is about the origin of the parent coordinate space (acceptable for E2 simple
+    Scaling is about the origin of the parent coordinate space (acceptable for simple
     transforms; recentering would require baking geometry, which is high risk and out of scope).
     Rejects a non-finite or non-positive factor with :class:`EditError`. Raises
     :class:`TargetNotFound` if the id is absent.
@@ -193,7 +193,7 @@ def resize_canvas(
     width/height are not both finite positive numbers (e.g. a percentage), the existing/synthesized
     behaviour is used and a note is appended.
 
-    With ``bleed`` > 0 (opt-in, default off — E16-10d) the resize ALSO grows the current
+    With ``bleed`` > 0 (opt-in, default off) the resize ALSO grows the current
     ``viewBox`` outward by ``bleed`` user units on every side and paints that new border strip with
     ``bleed_color`` (a validated colour, default white) via a single background ``<rect>`` behind
     all content — a print-bleed resize done in ONE call rather than needing a second

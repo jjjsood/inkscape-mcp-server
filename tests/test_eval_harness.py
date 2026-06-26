@@ -1,4 +1,4 @@
-"""Tool-usability eval harness test (E15-06).
+"""Tool-usability eval harness test.
 
 Runs the deterministic eval harness (``evals/run_eval.py``) over the shipped scenarios dataset and
 asserts the server's OWN discovery surface (``how_do_i`` / :mod:`inkscape_mcp.intents`) stays
@@ -9,7 +9,7 @@ agent-friendly:
 * the dataset is non-trivial and every ``expected_tools`` name is a REAL registered MCP tool.
 
 This both EXERCISES the harness and GUARDS ``intents.py`` / ``how_do_i`` against regressions, per
-the epic intent of feeding failures back into E15-02/E14-08.
+the intent of feeding eval failures back into the intent map and discovery surface.
 """
 
 from __future__ import annotations

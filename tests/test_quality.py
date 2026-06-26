@@ -1,4 +1,4 @@
-"""Quality-report tool + engine tests (E5-05).
+"""Quality-report tool + engine tests.
 
 Read-only / no Inkscape: `quality_report` extends `validate_document` with metrics and optimization
 opportunities. Tests assert the report is a structured model (findings + metrics + opportunities),
@@ -104,7 +104,7 @@ def test_unknown_doc_id(doc_id: str) -> None:
     assert "not found" in str(exc.value)
 
 
-# --- E13-08: rolled-up 0-100 triage score ---
+# ---: rolled-up 0-100 triage score ---
 
 # No ids (an unreferenced id is itself an optimization opportunity), no cruft, valid viewBox.
 _CLEAN_SVG = (
