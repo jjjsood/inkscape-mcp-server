@@ -32,7 +32,6 @@ so nothing the agent does touches your originals or can't be undone.
 - [Safety model](#safety-model)
 - [Project layout](#project-layout)
 - [Development](#development)
-- [Roadmap](#roadmap)
 - [License](#license)
 
 ---
