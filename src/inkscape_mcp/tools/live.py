@@ -288,7 +288,8 @@ def live_connect(prefer: str = "read") -> LiveSession:
 
     Key params: `prefer` selects the profile. `read` (default) is the best READ-capable transport
     (extension-socket primary; full selection/inspect surface) but is MODAL on the socket bridge —
-    the GUI freezes for the session. `no_freeze` drives the GUI WITHOUT freezing (Linux DBus path): the export-based active-doc read, `live_render_view`, `live_set_viewport`, and
+    the GUI freezes for the session. `no_freeze` drives the GUI WITHOUT freezing (Linux DBus
+    path): the export-based active-doc read, `live_render_view`, `live_set_viewport`, and
     `live_apply_to_selection` are no-freeze; selection-id reads (`live_get_selection` /
     `live_inspect_selection`) and `live_insert_svg` / `live_set_selected_text` are NOT available
     over DBus and stay modal. Requires the master gate (`INKSCAPE_MCP_LIVE_ENABLED`). With no

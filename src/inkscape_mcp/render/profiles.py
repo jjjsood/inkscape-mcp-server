@@ -112,7 +112,8 @@ class ProfileArtifact(BaseModel):
 class ProfileResult(BaseModel):
     """Outcome of one profile run: the profile token, its ordered artifacts, and applied settings.
 
-    `applied_settings` records the print/profile-specific options that were applied (auditable) — empty for profiles that apply none.
+    `applied_settings` records the print/profile-specific options that were applied
+    (auditable) — empty for profiles that apply none.
     """
 
     doc_id: str

@@ -153,23 +153,23 @@ def export_web_profile(
 ) -> ProfileExportResult:
     """Export a web-oriented asset set: a responsive PNG set plus one plain SVG.
 
-    When to use: producing a web-ready asset bundle. For a print PDF use `export_print_profile`; for
-    a square icon set use `create_icon_set`; for a single export use `export_document`.
+       When to use: producing a web-ready asset bundle. For a print PDF use `export_print_profile`; for
+       a square icon set use `create_icon_set`; for a single export use `export_document`.
 
-    Key params: PNG widths resolve as — explicit `widths` (each a PNG); else density `scales`
-    applied to `width_px` (e.g. [1,2,3] -> 1x/2x/3x); else `width_px`. Every PNG is pixel-capped
-    before Inkscape runs and distinct on disk; responsive entries report their `scale`. `out_dir`
- writes the set into a caller-chosen dir so a `dist/` tree assembles with no
-    `Bash cp` — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
-    (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix` tags each file.
+       Key params: PNG widths resolve as — explicit `widths` (each a PNG); else density `scales`
+       applied to `width_px` (e.g. [1,2,3] -> 1x/2x/3x); else `width_px`. Every PNG is pixel-capped
+       before Inkscape runs and distinct on disk; responsive entries report their `scale`. `out_dir`
+    writes the set into a caller-chosen dir so a `dist/` tree assembles with no
+       `Bash cp` — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
+       (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix` tags each file.
 
-    Return shape: `ProfileExportResult` — `profile`, `applied_settings`, and ordered `artifacts`
-    (ascending width, then one plain SVG last); each carries a `workspace_relative_path` plus
-    content-truth fields (PNG: `opaque_px`/`all_blank`).
+       Return shape: `ProfileExportResult` — `profile`, `applied_settings`, and ordered `artifacts`
+       (ascending width, then one plain SVG last); each carries a `workspace_relative_path` plus
+       content-truth fields (PNG: `opaque_px`/`all_blank`).
 
-    Example: `export_web_profile(doc_id, scales=[1, 2, 3], out_dir="dist/web")`
+       Example: `export_web_profile(doc_id, scales=[1, 2, 3], out_dir="dist/web")`
 
-    Risk class: low (export to a sandbox-checked dir; no original overwrite).
+       Risk class: low (export to a sandbox-checked dir; no original overwrite).
     """
     try:
         result = _export_web_profile(
@@ -207,23 +207,23 @@ def create_icon_set(
 ) -> ProfileExportResult:
     """Export a multi-size square PNG icon set from the source document.
 
-    When to use: producing a standard square icon set in one call. For a responsive web bundle use
-    `export_web_profile`; for arbitrary batch specs use `export_batch`.
+       When to use: producing a standard square icon set in one call. For a responsive web bundle use
+       `export_web_profile`; for arbitrary batch specs use `export_batch`.
 
-    Key params: `sizes` is the list of square px sizes (defaults to 16, 32, 48, 64, 128, 256). Each
-    must be a positive integer no greater than the configured pixel cap; an out-of-range or
-    non-positive size is rejected before Inkscape runs and no partial set is written. `out_dir`
- writes the set into a caller-chosen dir — a relative `out_dir` anchors to the
-    workspace ROOT and is sandbox-checked (out-of-workspace rejected "path rejected: outside
-    workspace"); `name_prefix` tags each file.
+       Key params: `sizes` is the list of square px sizes (defaults to 16, 32, 48, 64, 128, 256). Each
+       must be a positive integer no greater than the configured pixel cap; an out-of-range or
+       non-positive size is rejected before Inkscape runs and no partial set is written. `out_dir`
+    writes the set into a caller-chosen dir — a relative `out_dir` anchors to the
+       workspace ROOT and is sandbox-checked (out-of-workspace rejected "path rejected: outside
+       workspace"); `name_prefix` tags each file.
 
-    Return shape: `ProfileExportResult` — `profile`, `applied_settings`, and `artifacts` (each
-    carries its `requested_size_px`, a `workspace_relative_path`, and content-truth
-    `opaque_px`/`all_blank`).
+       Return shape: `ProfileExportResult` — `profile`, `applied_settings`, and `artifacts` (each
+       carries its `requested_size_px`, a `workspace_relative_path`, and content-truth
+       `opaque_px`/`all_blank`).
 
-    Example: `create_icon_set(doc_id, sizes=[16, 32, 64], out_dir="dist/icons")`
+       Example: `create_icon_set(doc_id, sizes=[16, 32, 64], out_dir="dist/icons")`
 
-    Risk class: low (export to a sandbox-checked dir; no original overwrite).
+       Risk class: low (export to a sandbox-checked dir; no original overwrite).
     """
     try:
         result = _create_icon_set(doc_id, sizes=sizes, out_dir=out_dir, name_prefix=name_prefix)

@@ -81,18 +81,18 @@ def render_live_view(
 ) -> LiveRenderResult:
     """Render the live canvas to a PNG under the live artifacts dir and return its rel path.
 
-    Reads bytes from the connected transport (raising `LiveNotAvailable` if none) and writes them
-    atomically (temp + replace) so a partial transfer never leaves a half-written artifact. With
-    `region` the renderer clips to that user-unit bbox; with `scale` it downscales/upscales the
-    raster. Both must already be server-validated; passing neither renders the whole canvas
-    (backward-compatible). View-only — no document mutation, no Operation Record.
+        Reads bytes from the connected transport (raising `LiveNotAvailable` if none) and writes them
+        atomically (temp + replace) so a partial transfer never leaves a half-written artifact. With
+        `region` the renderer clips to that user-unit bbox; with `scale` it downscales/upscales the
+        raster. Both must already be server-validated; passing neither renders the whole canvas
+        (backward-compatible). View-only — no document mutation, no Operation Record.
 
-: when ``use_cache`` and a session-scoped `RenderCache` exists, the result is served from /
-    stored in a cache keyed on ``(doc_revision, viewport, scale)``. ``doc_revision`` is the
-    revision digest, so a hit can never return a stale frame after the document changes. Within the
-    coalescing budget a repeated identical-key request returns the just-cached frame instead of
-    re-rendering. Caching is skipped (re-render every call) when the transport supplies no revision
-    marker — correctness over speed.
+    : when ``use_cache`` and a session-scoped `RenderCache` exists, the result is served from /
+        stored in a cache keyed on ``(doc_revision, viewport, scale)``. ``doc_revision`` is the
+        revision digest, so a hit can never return a stale frame after the document changes. Within the
+        coalescing budget a repeated identical-key request returns the just-cached frame instead of
+        re-rendering. Caching is skipped (re-render every call) when the transport supplies no revision
+        marker — correctness over speed.
     """
     s = settings if settings is not None else get_settings()
     mgr = manager if manager is not None else get_session_manager()

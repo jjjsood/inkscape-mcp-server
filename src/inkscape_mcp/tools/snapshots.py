@@ -132,24 +132,24 @@ def restore_snapshot(doc_id: str, snapshot_id: str) -> RestoreResult:
 def prune_snapshots(doc_id: str) -> PruneResult:
     """Apply the snapshot + live-frame retention policy, pruning superseded server state.
 
-    When to use: reclaiming disk from old snapshots/frames. To roll back instead use
-    `restore_snapshot`; to list checkpoints use `list_snapshots`. No mutating tool triggers this
-    implicitly — it is an explicit maintenance sweep.
+       When to use: reclaiming disk from old snapshots/frames. To roll back instead use
+       `restore_snapshot`; to list checkpoints use `list_snapshots`. No mutating tool triggers this
+       implicitly — it is an explicit maintenance sweep.
 
-    Key params: none beyond `doc_id`. Retains the last N snapshots and all within the keep-days
-    window (configurable), bounded by absolute hard caps on count and bytes; deletes the rest plus
-    orphaned Operation Records. In the SAME pass it prunes the doc root's loop/live render frames
- by age + byte budget, never deleting a frame still referenced by a Live Operation
-    Record. The current working copy and original are never touched, so the restore chain stays
-    intact.
+       Key params: none beyond `doc_id`. Retains the last N snapshots and all within the keep-days
+       window (configurable), bounded by absolute hard caps on count and bytes; deletes the rest plus
+       orphaned Operation Records. In the SAME pass it prunes the doc root's loop/live render frames
+    by age + byte budget, never deleting a frame still referenced by a Live Operation
+       Record. The current working copy and original are never touched, so the restore chain stays
+       intact.
 
-    Return shape: `PruneResult` — `pruned_snapshot_ids`, `pruned_operation_ids`, and `live_frames`
-    (the frame pruning stats).
+       Return shape: `PruneResult` — `pruned_snapshot_ids`, `pruned_operation_ids`, and `live_frames`
+       (the frame pruning stats).
 
-    Example: `prune_snapshots(doc_id)`
+       Example: `prune_snapshots(doc_id)`
 
-    Risk class: low (deletes only disposable, superseded server state under a deterministic policy;
-    authoritative current state is never affected).
+       Risk class: low (deletes only disposable, superseded server state under a deterministic policy;
+       authoritative current state is never affected).
     """
     try:
         result = _prune_document(doc_id)

@@ -35,7 +35,7 @@ host configs that prefer a zero-install launch command.
 uvx --from /abs/path/to/inkscape-mcp inkscape-mcp
 
 # Straight from git:
-uvx --from "git+https://github.com/johnnyjagatpal/inkscape-mcp.git" inkscape-mcp
+uvx --from "git+https://github.com/jjjsood/inkscape-mcp.git" inkscape-mcp
 ```
 
 The launched process waits on stdin for MCP JSON-RPC — that is correct; an MCP host drives it. To
@@ -50,7 +50,7 @@ just confirm it boots, send EOF (Ctrl-D) or pipe `</dev/null` and check there is
 pipx install /abs/path/to/inkscape-mcp
 
 # From git:
-pipx install "git+https://github.com/johnnyjagatpal/inkscape-mcp.git"
+pipx install "git+https://github.com/jjjsood/inkscape-mcp.git"
 
 # Then:
 inkscape-mcp           # starts the STDIO server (waits on stdin)

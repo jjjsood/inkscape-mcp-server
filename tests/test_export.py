@@ -375,7 +375,7 @@ def test_export_document_pdf_has_pdf_magic(doc_id: str) -> None:
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_export_document_png_reports_opaque_pixels(doc_id: str) -> None:
     # A real PNG export drew pixels, so it reports a non-zero opaque-pixel count and is not blank
-    #. The vector-only fields stay None for a raster.
+    # . The vector-only fields stay None for a raster.
     result = export_document(doc_id, "png", width_px=64)
     assert result.opaque_px is not None
     assert result.opaque_px > 0
