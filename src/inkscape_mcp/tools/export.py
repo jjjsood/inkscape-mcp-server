@@ -234,7 +234,8 @@ class ExportResult(BaseModel):
     `.inkscape-mcp/documents/<doc_id>/...` base; an `out_dir` output is its in-workspace relative
     path) — so you open it by a single join to the workspace root with no `find`/`stat`, for EVERY
     output. `artifact_path` is kept only for back-compat and now means exactly the same thing.
-    `width_px`/`height_px` are the TRUE on-disk raster dimensions for raster (PNG) exports and `None` for vector (PDF/SVG) outputs.
+    `width_px`/`height_px` are the TRUE on-disk raster dimensions for raster (PNG) exports
+    and `None` for vector (PDF/SVG) outputs.
     """
 
     doc_id: str
@@ -311,23 +312,23 @@ def render_preview(
 ) -> PreviewResult | ToolResult:
     """Render a PNG preview of the whole document into the artifacts dir.
 
-    When to use: a quick visual check of the whole document. For a final file use `export_document`;
-    for one object use `export_object`; for an ordered run series use `capture_frame`.
+        When to use: a quick visual check of the whole document. For a final file use `export_document`;
+        for one object use `export_object`; for an ordered run series use `capture_frame`.
 
-    Key params: `width_px` scales the raster (height follows the document aspect ratio); omit for
-    intrinsic size. Oversized requests are rejected before Inkscape runs. `name` tags the file
-    (successive calls do NOT clobber, — each render gets a unique frame name). INLINE RASTER
-: by default the PNG is also returned as an MCP image block so the agent SEES it without
-    a second `Read`; gated by `max_output_bytes` (~5 MiB default) and skipped for an oversized
-    render; `inline=False` returns only the structured result.
+        Key params: `width_px` scales the raster (height follows the document aspect ratio); omit for
+        intrinsic size. Oversized requests are rejected before Inkscape runs. `name` tags the file
+        (successive calls do NOT clobber, — each render gets a unique frame name). INLINE RASTER
+    : by default the PNG is also returned as an MCP image block so the agent SEES it without
+        a second `Read`; gated by `max_output_bytes` (~5 MiB default) and skipped for an oversized
+        render; `inline=False` returns only the structured result.
 
-    Return shape: `PreviewResult` — `artifact_path` / `workspace_relative_path` (same root-relative
-    value), `format`, `width_px`/`height_px` (TRUE on-disk size), `stale`. With an inline
-    image, a `ToolResult` carrying the same structured fields plus the image block.
+        Return shape: `PreviewResult` — `artifact_path` / `workspace_relative_path` (same root-relative
+        value), `format`, `width_px`/`height_px` (TRUE on-disk size), `stale`. With an inline
+        image, a `ToolResult` carrying the same structured fields plus the image block.
 
-    Example: `render_preview(doc_id, width_px=512)`
+        Example: `render_preview(doc_id, width_px=512)`
 
-    Risk class: low (render/export to artifact dir; no original overwrite).
+        Risk class: low (render/export to artifact dir; no original overwrite).
     """
     try:
         result = _render_preview(doc_id, width_px=width_px, name=name)
@@ -368,24 +369,24 @@ def capture_frame(
 ) -> FrameResult | ToolResult:
     """Capture the next numbered PNG screenshot in a per-run frame series.
 
-    When to use: documenting a scripted edit sequence step-by-step. For a one-off check use
-    `render_preview`; to gather a finished series use `list_frames`.
+        When to use: documenting a scripted edit sequence step-by-step. For a one-off check use
+        `render_preview`; to gather a finished series use `list_frames`.
 
-    Key params: `series` (sanitized; defaults to `run`) groups frames into a folder under
-    `artifacts/frames/<series>/`; the index is derived from the filesystem (highest existing
-    `frame-NNN` + 1) — monotonic, survives a restart, never clobbers. `label` is folded into the
-    frame name. Renders the whole canvas exactly like `render_preview` (no UI chrome). INLINE RASTER
-: the PNG is returned inline by default (gated by `max_output_bytes`); `inline=False`
-    returns only the structured result.
+        Key params: `series` (sanitized; defaults to `run`) groups frames into a folder under
+        `artifacts/frames/<series>/`; the index is derived from the filesystem (highest existing
+        `frame-NNN` + 1) — monotonic, survives a restart, never clobbers. `label` is folded into the
+        frame name. Renders the whole canvas exactly like `render_preview` (no UI chrome). INLINE RASTER
+    : the PNG is returned inline by default (gated by `max_output_bytes`); `inline=False`
+        returns only the structured result.
 
-    Return shape: `FrameResult` — `artifact_path` / `workspace_relative_path` (same value),
-    `format`, `width_px`/`height_px`, `series`, `frame_index` (1-based), `stale`. With an inline
-    image, a `ToolResult` carrying the same fields plus the image block.
+        Return shape: `FrameResult` — `artifact_path` / `workspace_relative_path` (same value),
+        `format`, `width_px`/`height_px`, `series`, `frame_index` (1-based), `stale`. With an inline
+        image, a `ToolResult` carrying the same fields plus the image block.
 
-    Example: `capture_frame(doc_id, series="cleanup", label="after-simplify")`
+        Example: `capture_frame(doc_id, series="cleanup", label="after-simplify")`
 
-    Risk class: low (render to the managed artifacts dir; no original overwrite, no Operation
-    Record).
+        Risk class: low (render to the managed artifacts dir; no original overwrite, no Operation
+        Record).
     """
     try:
         result = _capture_frame(doc_id, series=series, width_px=width_px, label=label)

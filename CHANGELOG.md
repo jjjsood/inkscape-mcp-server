@@ -33,4 +33,4 @@ agent-ready over STDIO.
   arg-list subprocess (never shell strings), safe XML parsing (no entity expansion), no network,
   no arbitrary extension execution, and risk-classed tools.
 
-[0.1.0]: https://github.com/johnnyjagatpal/inkscape-mcp/releases/tag/v0.1.0
+[0.1.0]: https://github.com/jjjsood/inkscape-mcp/releases/tag/v0.1.0

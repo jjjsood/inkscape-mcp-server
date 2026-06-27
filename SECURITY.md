@@ -5,9 +5,9 @@
 Please report security issues **privately**. Do not open a public GitHub issue for a vulnerability.
 
 Use GitHub's private vulnerability reporting on the repository
-([Security → Report a vulnerability](https://github.com/johnnyjagatpal/inkscape-mcp/security/advisories/new)),
+([Security → Report a vulnerability](https://github.com/jjjsood/inkscape-mcp/security/advisories/new)),
 or open a minimal-detail tracking issue at
-<https://github.com/johnnyjagatpal/inkscape-mcp/issues> asking for a private channel.
+<https://github.com/jjjsood/inkscape-mcp/issues> asking for a private channel.
 
 Please include a description, reproduction steps, and the affected version. You will get an
 acknowledgement and a fix or mitigation plan as soon as practical.

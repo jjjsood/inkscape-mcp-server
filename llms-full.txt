@@ -1359,7 +1359,6 @@ Description:
         Risk class: low (render to the managed artifacts dir; no original overwrite, no Operation
         Record).
 
-
 #### create_icon_set
 Risk class: low
 Key params: doc_id: string, sizes: array | null, out_dir: string | null, name_prefix: string | null
@@ -1383,7 +1382,6 @@ Description:
        Example: `create_icon_set(doc_id, sizes=[16, 32, 64], out_dir="dist/icons")`
 
        Risk class: low (export to a sandbox-checked dir; no original overwrite).
-
 
 #### export_batch
 Risk class: low
@@ -1409,7 +1407,6 @@ Description:
        Example: `export_batch(doc_id, [{"format": "png", "width_px": 256}], dry_run=False)`
 
        Risk class: low (artifact-only export to a sandbox-checked dir; composes the engine).
-
 
 #### export_document
 Risk class: low
@@ -1534,7 +1531,6 @@ Description:
 
        Risk class: low (export to a sandbox-checked dir; no original overwrite).
 
-
 #### list_frames
 Risk class: low
 Key params: doc_id: string, series: string | null
@@ -1577,7 +1573,6 @@ Description:
         Example: `render_preview(doc_id, width_px=512)`
 
         Risk class: low (render/export to artifact dir; no original overwrite).
-
 
 ### Optimize
 
@@ -1723,7 +1718,8 @@ Description:
 
     Key params: `prefer` selects the profile. `read` (default) is the best READ-capable transport
     (extension-socket primary; full selection/inspect surface) but is MODAL on the socket bridge —
-    the GUI freezes for the session. `no_freeze` drives the GUI WITHOUT freezing (Linux DBus path): the export-based active-doc read, `live_render_view`, `live_set_viewport`, and
+    the GUI freezes for the session. `no_freeze` drives the GUI WITHOUT freezing (Linux DBus
+    path): the export-based active-doc read, `live_render_view`, `live_set_viewport`, and
     `live_apply_to_selection` are no-freeze; selection-id reads (`live_get_selection` /
     `live_inspect_selection`) and `live_insert_svg` / `live_set_selected_text` are NOT available
     over DBus and stay modal. Requires the master gate (`INKSCAPE_MCP_LIVE_ENABLED`). With no
@@ -2138,7 +2134,6 @@ Description:
 
        Risk class: low (deletes only disposable, superseded server state under a deterministic policy;
        authoritative current state is never affected).
-
 
 #### restore_snapshot
 Risk class: medium

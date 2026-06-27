@@ -118,7 +118,7 @@ FastMCP app over STDIO. Install it via `uvx` (one-shot), `pipx` (persistent), or
 uvx --from /abs/path/to/inkscape-mcp inkscape-mcp
 
 # uvx — straight from git:
-uvx --from "git+https://github.com/johnnyjagatpal/inkscape-mcp.git" inkscape-mcp
+uvx --from "git+https://github.com/jjjsood/inkscape-mcp.git" inkscape-mcp
 
 # pipx — persistent install of the console script:
 pipx install /abs/path/to/inkscape-mcp

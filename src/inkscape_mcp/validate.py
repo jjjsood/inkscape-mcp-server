@@ -325,14 +325,14 @@ def _check_ids(root: etree._Element, findings: list[Finding]) -> None:
 def _check_doctype(root: etree._Element, findings: list[Finding]) -> None:
     """Surface a DOCTYPE / DTD so a hostile entity is OBSERVABLE, not just silently neutralized.
 
-    The safe parser (`resolve_entities=False`, `no_network=True`, `load_dtd=False`) never expands
-    entities or fetches anything, so an external entity such as
-    ``<!ENTITY xxe SYSTEM "file:///etc/hostname">`` is inert, but `validate_document` previously
-    reported `ok:true, findings:[]`, giving an agent zero signal a malicious DOCTYPE was present
-. This emits an EXTERNAL-ENTITY warning per declared external entity (SYSTEM/PUBLIC, a
-    classic XXE vector) and a `doctype_present` info finding for any DOCTYPE at all (rare in SVG).
-    It changes NOTHING and never reduces `ok` below an `error`: the parse is already safe; the point
-    is visibility.
+        The safe parser (`resolve_entities=False`, `no_network=True`, `load_dtd=False`) never expands
+        entities or fetches anything, so an external entity such as
+        ``<!ENTITY xxe SYSTEM "file:///etc/hostname">`` is inert, but `validate_document` previously
+        reported `ok:true, findings:[]`, giving an agent zero signal a malicious DOCTYPE was present
+    . This emits an EXTERNAL-ENTITY warning per declared external entity (SYSTEM/PUBLIC, a
+        classic XXE vector) and a `doctype_present` info finding for any DOCTYPE at all (rare in SVG).
+        It changes NOTHING and never reduces `ok` below an `error`: the parse is already safe; the point
+        is visibility.
     """
     dtd = root.getroottree().docinfo.internalDTD
     if dtd is None:

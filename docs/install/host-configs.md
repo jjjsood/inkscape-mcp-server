@@ -19,7 +19,7 @@ Ready-to-copy example files live in [`examples/`](../../examples/):
 |---|---|---|---|
 | `pipx` install on PATH | `inkscape-mcp` | `[]` | Installed with `pipx install` (script is on PATH). |
 | `uvx` from local path | `uvx` | `["--from", "/abs/.../inkscape-mcp", "inkscape-mcp"]` | No persistent install; run from a checkout. |
-| `uvx` from git | `uvx` | `["--from", "git+https://github.com/johnnyjagatpal/inkscape-mcp.git", "inkscape-mcp"]` | No checkout; pull from git. |
+| `uvx` from git | `uvx` | `["--from", "git+https://github.com/jjjsood/inkscape-mcp.git", "inkscape-mcp"]` | No checkout; pull from git. |
 | `uv` from source | `uv` | `["run", "--directory", "/abs/.../inkscape-mcp", "inkscape-mcp"]` | Development / dogfooding. |
 
 See [install.md](install.md) for the install paths behind each form.
@@ -66,7 +66,7 @@ claude mcp add inkscape \
 # uvx straight from git:
 claude mcp add inkscape \
   --env INKSCAPE_MCP_WORKSPACE_ROOTS=/absolute/path/to/your/svgs \
-  -- uvx --from git+https://github.com/johnnyjagatpal/inkscape-mcp.git inkscape-mcp
+  -- uvx --from git+https://github.com/jjjsood/inkscape-mcp.git inkscape-mcp
 ```
 
 `.mcp.json` form:

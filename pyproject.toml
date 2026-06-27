@@ -27,10 +27,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/johnnyjagatpal/inkscape-mcp"
-Repository = "https://github.com/johnnyjagatpal/inkscape-mcp"
-Issues = "https://github.com/johnnyjagatpal/inkscape-mcp/issues"
-Changelog = "https://github.com/johnnyjagatpal/inkscape-mcp/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/jjjsood/inkscape-mcp"
+Repository = "https://github.com/jjjsood/inkscape-mcp"
+Issues = "https://github.com/jjjsood/inkscape-mcp/issues"
+Changelog = "https://github.com/jjjsood/inkscape-mcp/blob/main/CHANGELOG.md"
 
 # inkex ships with Inkscape, not on PyPI as a clean wheel. Wire it via the local
 # Inkscape install / PYTHONPATH when E2 needs inkex-native edits. Until then: lxml + CLI.

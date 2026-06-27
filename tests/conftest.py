@@ -58,7 +58,8 @@ from inkscape_mcp.live.transport import (
 _INKSCAPE_ON_PATH = shutil.which("inkscape") is not None
 
 #: the suite's DEFAULT surface is the FULL surface. Progressive disclosure NARROWS
-# `tools/list` when `live_enabled` / `raw_action_enabled` are off; many drift-guard tests (count, annotations, llms.txt) register the surface at import and assert against the WHOLE
+# `tools/list` when `live_enabled` / `raw_action_enabled` are off; many drift-guard tests
+# (count, annotations, llms.txt) register the surface at import and assert against the WHOLE
 # catalog. Forcing both flags ON here — before any test module imports `register_tools` — makes the
 # default surface the full 97 tools (today's behaviour). Tests that exercise the EXCLUSION path set
 # the flags off explicitly + clear the settings cache + re-run `register_tools()`.
