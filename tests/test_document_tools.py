@@ -43,6 +43,17 @@ def test_open_document_returns_id_and_summary(root: Path) -> None:
     assert result.summary.num_layers == 1
 
 
+def test_open_document_carries_persist_hint(root: Path) -> None:
+    #: 2A: the result surfaces a runtime reminder that edits hit a working copy (not the source on
+    # disk) and names how to persist — counters the "my file looks unchanged" surprise.
+    src = root / "a.svg"
+    src.write_bytes(SVG)
+    result = open_document(str(src))
+    assert result.persist_hint
+    assert "working copy" in result.persist_hint
+    assert "save_document_as" in result.persist_hint
+
+
 def test_inspect_document_aggregate(root: Path) -> None:
     src = root / "a.svg"
     src.write_bytes(SVG)
