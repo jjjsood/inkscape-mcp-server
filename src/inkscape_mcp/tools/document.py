@@ -43,10 +43,18 @@ _logger = get_logger("tools.document")
 
 
 class OpenDocumentResult(BaseModel):
-    """Result of `open_document`: the new opaque id plus its summary."""
+    """Result of `open_document`: the new opaque id, its summary, and a persistence reminder."""
 
     doc_id: str
     summary: DocSummary
+    #: RUNTIME REMINDER (counters the "my file looks unchanged after editing" surprise): every edit
+    #: applies to a WORKING COPY — the source file on disk is never mutated. Constant guidance,
+    #: additive (default), so existing callers are unaffected.
+    persist_hint: str = (
+        "Edits apply to a working copy — your original file on disk is NEVER changed. To "
+        "persist the result, call save_document_as (writes a NEW .svg) or export_document "
+        "(PNG/PDF/SVG). render_preview only displays it."
+    )
 
 
 class InspectDocumentResult(BaseModel):

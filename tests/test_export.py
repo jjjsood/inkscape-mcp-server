@@ -718,6 +718,30 @@ def test_render_preview_inline_default_returns_image(doc_id: str) -> None:
 
 @pytest.mark.inkscape
 @pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
+def test_render_preview_inline_text_omits_path_keeps_structured(doc_id: str) -> None:
+    #: 1B: when the PNG is attached inline, the agent-facing TEXT payload must NOT advertise the
+    # workspace-relative artifact path (a path the client cannot resolve from its own CWD, luring
+    # it into a doomed `Read`); it carries a `note` instead. The resolvable path stays in
+    # structured_content for machine consumers.
+    import json
+
+    result = _render_preview_tool(doc_id, width_px=120)
+    assert isinstance(result, ToolResult)
+    text_blocks = [c for c in result.content if getattr(c, "type", None) == "text"]
+    assert len(text_blocks) == 1
+    payload = json.loads(text_blocks[0].text)  # type: ignore[attr-defined]
+    assert "artifact_path" not in payload
+    assert "workspace_relative_path" not in payload
+    assert payload.get("note")
+    # The structured channel still carries the resolvable path for machine consumers.
+    assert result.structured_content is not None
+    assert result.structured_content["workspace_relative_path"].startswith(
+        f".inkscape-mcp/documents/{doc_id}/"
+    )
+
+
+@pytest.mark.inkscape
+@pytest.mark.skipif(not inkscape_available, reason="inkscape not on PATH")
 def test_render_preview_inline_false_returns_bare_model(doc_id: str) -> None:
     # opt-out: inline=False returns the bare structured model, no image content block.
     result = _render_preview_tool(doc_id, width_px=120, inline=False)

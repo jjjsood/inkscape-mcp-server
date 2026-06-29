@@ -15,6 +15,7 @@ WORKSPACE ROOT, openable by a single join to the root — never an absolute host
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import mcp.types as mcp_types
@@ -135,21 +136,41 @@ def _inline_image(
     return Image(data=data, format=fmt)
 
 
+#: Local-only artifact path fields scrubbed from the human/agent-facing TEXT payload when the
+#: raster is attached inline: they are workspace-root-relative (sec.12, never absolute), so a client
+#: that tries to `Read` them resolves against its own CWD (!= the server workspace root) and fails.
+#: The full values stay in `structured_content` for machine consumers and schema validation.
+_INLINE_SCRUBBED_PATH_FIELDS = ("artifact_path", "workspace_relative_path")
+
+#: Appended to the inline text payload so the agent trusts the attached image instead of chasing a
+#: path it cannot resolve.
+_INLINE_NOTE = (
+    "Raster attached inline as an image — view it directly. The artifact is stored server-side "
+    "at a workspace-relative path (see structured output); it is NOT on your local filesystem, "
+    "so do not Read it."
+)
+
+
 def _with_inline[ModelT: BaseModel](result: ModelT, image: Image | None) -> ModelT | ToolResult:
     """Return the bare structured `result`, or a `ToolResult` carrying it PLUS the inline image.
 
     When `image` is None the bare Pydantic model is returned unchanged (existing direct callers and
     structured-output consumers see exactly the same shape as before — is additive). When an
-    image is present the structured result is preserved in `structured_content` (so `.artifact_path`
-    / dims / `stale` remain machine-readable) and the inline raster is appended as an MCP
-    ImageContent block, so the agent perceives its output without a second `Read`.
+    image is present the inline raster is appended as an MCP ImageContent block (so the agent
+    perceives its output without a second `Read`), the full structured result is preserved in
+    `structured_content` (so `.artifact_path` / dims / `stale` remain machine-readable), and the
+    human-facing TEXT payload is built WITHOUT the workspace-relative path fields — replaced by a
+    short note — so a path-chasing agent is not lured into a `Read` of a server-side path it cannot
+    resolve (1B).
     """
     if image is None:
         return result
     structured = result.model_dump()
+    display = {k: v for k, v in structured.items() if k not in _INLINE_SCRUBBED_PATH_FIELDS}
+    display["note"] = _INLINE_NOTE
     return ToolResult(
         content=[
-            mcp_types.TextContent(type="text", text=result.model_dump_json()),
+            mcp_types.TextContent(type="text", text=json.dumps(display)),
             image.to_image_content(),
         ],
         structured_content=structured,
@@ -319,7 +340,8 @@ def render_preview(
         intrinsic size. Oversized requests are rejected before Inkscape runs. `name` tags the file
         (successive calls do NOT clobber, — each render gets a unique frame name). INLINE RASTER
     : by default the PNG is also returned as an MCP image block so the agent SEES it without
-        a second `Read`; gated by `max_output_bytes` (~5 MiB default) and skipped for an oversized
+        a second `Read` — do NOT `Read` the returned path (it is server-side, not on your
+        filesystem); gated by `max_output_bytes` (~5 MiB default) and skipped for an oversized
         render; `inline=False` returns only the structured result.
 
         Return shape: `PreviewResult` — `artifact_path` / `workspace_relative_path` (same root-relative
@@ -377,7 +399,8 @@ def capture_frame(
         `frame-NNN` + 1) — monotonic, survives a restart, never clobbers. `label` is folded into the
         frame name. Renders the whole canvas exactly like `render_preview` (no UI chrome). INLINE RASTER
     : the PNG is returned inline by default (gated by `max_output_bytes`); `inline=False`
-        returns only the structured result.
+        returns only the structured result. Do NOT `Read` the returned path — view the inline image
+        (the path is server-side, workspace-relative, not on your filesystem).
 
         Return shape: `FrameResult` — `artifact_path` / `workspace_relative_path` (same value),
         `format`, `width_px`/`height_px`, `series`, `frame_index` (1-based), `stale`. With an inline
@@ -473,7 +496,9 @@ def export_document(
     into a caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is
     sandbox-checked (out-of-workspace is rejected with "path rejected: outside workspace");
     `name_prefix` tags the filename. INLINE RASTER: a PNG is returned inline by default
-    (gated by `max_output_bytes`); PDF/SVG are never embedded; `inline=False` opts out.
+    (gated by `max_output_bytes`); PDF/SVG are never embedded; `inline=False` opts out. For an
+    inlined PNG, view the image — do NOT `Read` the returned path (server-side, workspace-relative,
+    not on your filesystem).
 
     Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value),
     `format`, `width_px`/`height_px` (TRUE size for PNG, None for vector), `stale`. With an inline
@@ -549,7 +574,9 @@ def export_object(
     caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
     (out-of-workspace is rejected with "path rejected: outside workspace"); `name_prefix` tags the
     filename. INLINE RASTER: a PNG is returned inline by default (gated by
-    `max_output_bytes`); PDF/SVG never embedded; `inline=False` opts out.
+    `max_output_bytes`); PDF/SVG never embedded; `inline=False` opts out. For an inlined PNG, view
+    the image — do NOT `Read` the returned path (server-side, workspace-relative, not on your
+    filesystem).
 
     Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value),
     `format`, `width_px`/`height_px` (TRUE size for PNG, None for vector), `stale`. With an inline

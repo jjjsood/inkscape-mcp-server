@@ -248,7 +248,13 @@ directory); a relative `dest_path`/`out_dir` anchors to the **workspace root**, 
 CWD, and is sandbox + symlink checked (`path rejected: outside workspace` otherwise). Every
 artifact-producing tool returns a `workspace_relative_path` (root-relative, opens directly with no
 `find`/`stat`) alongside the managed `artifact_path`; no absolute host path ever appears in a result
-(sec.12). `changed` on a mutating result is decided in ONE place — the edit pipeline canonical-serializes
+(sec.12). The four raster tools (`render_preview` / `capture_frame` / `export_document` /
+`export_object`) also return the PNG **inline** as an MCP image block when it is under the inline
+byte threshold (≈5 MiB; tune via `max_output_bytes`, opt out with `inline=False`) — **view that
+image; do NOT `Read` the returned path.** Because the path is root-relative to the *server's*
+workspace (a client `Read` resolves it against its own CWD and fails), the inline text payload omits
+the path entirely (it carries a `note`); the resolvable path stays in `structured_content` for
+programmatic use. `changed` on a mutating result is decided in ONE place — the edit pipeline canonical-serializes
 the document before and after the mutation. A real change reports `changed: true` with a linked snapshot +
 Operation Record; a genuine **no-op** (e.g. `replace_color` matching nothing, `normalize_viewbox` on a
 valid viewBox, `set_fill` to the colour already present, a second `fit_to_content`) reports
@@ -309,7 +315,7 @@ catalog (generated with profile `full`). Everything outside core stays reachable
 
 | Tool | Signature | Description |
 |---|---|---|
-| `open_document` | `(path)` | Open an SVG into a tracked workspace working copy; returns an opaque `doc_id` plus summary. `path` may be workspace-**relative** (anchored to the workspace root, not the process CWD) or absolute; either is sandbox + symlink checked (`path rejected: outside workspace` otherwise). Original is never mutated. Docstring documents the working-copy model. |
+| `open_document` | `(path)` | Open an SVG into a tracked workspace working copy; returns an opaque `doc_id`, summary, and a `persist_hint` (a runtime reminder that edits hit a working copy — the source on disk is never changed — and that `save_document_as`/`export_document` are how you persist). `path` may be workspace-**relative** (anchored to the workspace root, not the process CWD) or absolute; either is sandbox + symlink checked (`path rejected: outside workspace` otherwise). Original is never mutated. Docstring documents the working-copy model. |
 | `create_document` | `(width, height, viewBox?, background?)` | Create a blank, tracked working-copy document from scratch — no source file required. `validate_document`-clean; returns the same `{doc_id, summary}` shape as `open_document`. Optional validated `background` colour painted as a full-page rect. *Medium, reversible downstream.* |
 | `reload_document` | `(doc_id)` | Refresh a working copy from its source under the **same** `doc_id`: takes a pre-reload snapshot (reversible), re-validates the source is still in the sandbox, re-copies it over the working copy. A `create_document` doc restores from its blank seed. Returns the refreshed summary + `pre_reload_snapshot_id`. |
 | `inspect_document` | `(doc_id)` | Aggregate inspection: tree, layers, styles, fonts, external assets, and an addressable `objects` list (`ObjectRef`: `object_id`/`tag`/`bbox`/`fill`/`stroke`/`text`). Each element carries a `paint` summary (`fill`/`stroke`/`stroke-width`) + `is_leaf`/`is_layer`; objects carry `bbox`; fonts/assets flag `available` and `used_by`. |
@@ -347,7 +353,7 @@ additive and `None` for outputs it does not apply to (or when verification was s
 
 | Tool | Signature | Description |
 |---|---|---|
-| `render_preview` | `(doc_id, width_px?, name?)` | Render a PNG preview of the whole document into the artifacts dir. Successive calls at the same width never clobber (unique frame per call; optional `name`/tag). Reports the true on-disk raster size + content-truth `opaque_px`/`all_blank` (prove the render drew pixels). |
+| `render_preview` | `(doc_id, width_px?, name?, inline=true, max_output_bytes?)` | Render a PNG preview of the whole document into the artifacts dir, returned **inline** as an MCP image block by default (**view it; do NOT `Read` the returned path** — it is server-side workspace-relative). Successive calls at the same width never clobber (unique frame per call; optional `name`/tag). Reports the true on-disk raster size + content-truth `opaque_px`/`all_blank` (prove the render drew pixels). |
 | `export_document` | `(doc_id, format, width_px?, out_dir?, name_prefix?)` | Export the whole document to **PNG / PDF / SVG** in the exports dir (or a sandbox-checked `out_dir`). Reports the true written raster size for PNG, plus content-truth: PNG → `opaque_px`/`all_blank`, PDF → `is_vector`/`fonts_outlined` (true vector when both hold). |
 | `export_object` | `(doc_id, object_id, format="png", width_px?, out_dir?, name_prefix?)` | Export a single object (by id) clipped to its bounding box; reports the actual clipped raster size + the same content-truth fields. The id is charset-validated and never passed raw to Inkscape. |
 | `capture_frame` | `(doc_id, series?, width_px?, label?)` | Capture the next numbered PNG screenshot in a per-run frame series (`frame-001.png`, `frame-002.png`, …) under `artifacts/frames/<series>/`, to document a scripted edit run. Canvas only (no UI chrome). The index is filesystem-derived (monotonic, restart-proof, never clobbers); `series`/`label` are sanitized to a single managed sub-dir. Returns the path plus `series`/`frame_index`. |
