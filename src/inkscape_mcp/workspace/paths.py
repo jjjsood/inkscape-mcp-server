@@ -218,6 +218,18 @@ def resolve_read_path(raw: str | Path, settings: Settings | None = None) -> Path
     try:
         resolved = Path(raw_str).resolve(strict=True)
     except FileNotFoundError:
+        # Decide the public message on the LEXICALLY-resolved path so a nonexistent
+        # out-of-workspace path reports `outside workspace`, not `file not found`. Reporting
+        # `file not found` for outside paths leaks an existence oracle (existing-outside →
+        # `outside workspace`, missing-outside → `file not found`), letting a caller probe
+        # arbitrary host paths via the differing message. `file not found` is only ever
+        # reachable for a path that IS inside the sandbox but missing (sec.12).
+        lexical = Path(raw_str).resolve(strict=False)
+        if not is_contained(lexical, s.workspace_roots):
+            raise SandboxViolation(
+                "path rejected: outside workspace",
+                detail=f"resolved path {str(lexical)!r} is outside all configured roots",
+            ) from None
         raise SandboxViolation(
             "path rejected: file not found",
             detail=f"read target not found: {raw_str!r}",
