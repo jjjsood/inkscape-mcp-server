@@ -94,3 +94,27 @@ def test_read_path_follows_symlink_and_checks_containment(root: Path, tmp_path: 
     with pytest.raises(SandboxViolation) as exc:
         resolve_read_path(str(link), settings=_settings(root))
     assert str(exc.value) == "path rejected: outside workspace"
+
+
+def test_read_path_missing_inside_reports_not_found(root: Path) -> None:
+    """An in-sandbox path that does not exist reports the in-workspace `file not found`."""
+    with pytest.raises(SandboxViolation) as exc:
+        resolve_read_path(str(root / "missing.svg"), settings=_settings(root))
+    assert str(exc.value) == "path rejected: file not found"
+
+
+def test_read_path_missing_outside_reports_outside_not_oracle(
+    root: Path, tmp_path: Path
+) -> None:
+    """A NONEXISTENT out-of-sandbox path reports `outside workspace`, not `file not found`.
+
+    Reporting `file not found` only for missing-outside paths (while existing-outside paths
+    report `outside workspace`) would leak an existence oracle for arbitrary host paths. Both
+    cases must collapse to the same `outside workspace` message (sec.12).
+    """
+    missing_outside = tmp_path / "does_not_exist.svg"  # outside root, never created
+    with pytest.raises(SandboxViolation) as exc:
+        resolve_read_path(str(missing_outside), settings=_settings(root))
+    assert str(exc.value) == "path rejected: outside workspace"
+    # No host filesystem path leaks into the public message.
+    assert str(missing_outside) not in str(exc.value)
