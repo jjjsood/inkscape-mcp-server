@@ -125,7 +125,14 @@ def sync_live_to_workspace(
     #    (server-minted) temp name and never clobber a pre-existing file — defence in depth behind
     #    resolve_write_path's containment + symlink guard (sec.12 / SV5; mirrors tools/save.py).
     tmp = resolved.with_name(f"{resolved.name}.{secrets.token_hex(4)}.tmp")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    #    Windows has no O_NOFOLLOW (O_EXCL still refuses a pre-planted name) and needs O_BINARY.
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
     try:
         fd = os.open(tmp, flags, 0o644)
         try:
