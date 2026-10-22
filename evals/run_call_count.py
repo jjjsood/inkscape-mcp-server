@@ -5,7 +5,7 @@ Drives scripted scenarios through the in-memory FastMCP `Client` against the reg
 records, per scenario, the number of tool calls, the total response bytes the model would receive,
 and how many calls failed. Used to compare the surface before/after the rework
 (docs/rework-plan.md). Scenarios are written per surface (`legacy` = the pre-rework 99-tool
-surface; `v2` is added with the new tools).
+surface; `v2` = the 10 result-oriented tools in `inkscape_mcp.tools.v2`).
 
 Without an Inkscape binary the render/export steps fail; they are still COUNTED (the call a real
 agent would make) and flagged `failed` so the report stays honest.
@@ -108,10 +108,83 @@ def legacy_scenarios(workdir: Path) -> list[Scenario]:
     ]
 
 
+def v2_scenarios(workdir: Path) -> list[Scenario]:
+    """The same tasks on the result-oriented surface: one call per outcome, not per element."""
+    (workdir / "logo.svg").write_text(SAMPLE_SVG, encoding="utf-8")
+    return [
+        Scenario(
+            "A",
+            "Draw a logo, export PNG + SVG",
+            [
+                Step(
+                    "open",
+                    lambda c: {
+                        "canvas": {"width": 200, "height": 120},
+                        "ops": [
+                            {
+                                "op": "create_rect",
+                                "x": 0,
+                                "y": 0,
+                                "width": 200,
+                                "height": 120,
+                                "fill": "#3366cc",
+                                "id": "bg",
+                            },
+                            {"op": "create_circle", "cx": 100, "cy": 60, "r": 30, "fill": "#fff"},
+                            {"op": "create_text", "x": 20, "y": 100, "text": "Logo"},
+                        ],
+                        "render": "inline",
+                    },
+                    _doc_id,
+                ),
+                Step(
+                    "export",
+                    lambda c: {
+                        "doc_id": c["doc_id"],
+                        "targets": [
+                            {"kind": "file", "format": "png"},
+                            {"kind": "file", "format": "svg"},
+                        ],
+                    },
+                ),
+            ],
+        ),
+        Scenario(
+            "B",
+            "Recolor an existing file, export for web",
+            [
+                Step("open", lambda c: {"path": str(workdir / "logo.svg")}, _doc_id),
+                Step(
+                    "edit",
+                    lambda c: {
+                        "doc_id": c["doc_id"],
+                        "ops": [
+                            {"op": "palette", "mapping": {"#ff0000": "#3366cc"}},
+                            {"op": "optimize_web"},
+                        ],
+                        "render": "inline",
+                    },
+                ),
+                Step(
+                    "export",
+                    lambda c: {
+                        "doc_id": c["doc_id"],
+                        "targets": [{"kind": "profile", "name": "web"}],
+                    },
+                ),
+            ],
+        ),
+    ]
+
+
 #: Scenario C (live: inspect selection, recolor, render) needs the in-memory live transport from
-#: tests/conftest.py. Static count on the legacy surface: live_connect, live_inspect_selection,
-#: live_apply_to_selection, live_render_view = 4 calls. Wired up when the v2 `live` tools land.
-LEGACY_STATIC = {"C": {"title": "Live: inspect selection, recolor, render", "calls": 4}}
+#: tests/conftest.py, so it is counted statically. legacy: live_connect, live_inspect_selection,
+#: live_apply_to_selection, live_render_view = 4 calls. v2: `live` observes (and connects) and
+#: `live_edit` recolors and renders = 2 calls.
+STATIC = {
+    "legacy": {"C": {"title": "Live: inspect selection, recolor, render", "calls": 4}},
+    "v2": {"C": {"title": "Live: inspect selection, recolor, render", "calls": 2}},
+}
 
 
 def response_bytes(result: Any) -> int:
@@ -130,15 +203,20 @@ async def run(surface: str, workdir: Path) -> list[dict[str, Any]]:
     from fastmcp import Client
     from fastmcp.exceptions import ToolError
 
-    from inkscape_mcp.server import mcp, register_tools
+    if surface == "legacy":
+        from inkscape_mcp.server import mcp as app
+        from inkscape_mcp.server import register_tools
 
-    register_tools()
-    if surface != "legacy":
-        raise SystemExit(f"surface {surface!r} not available yet")
-    scenarios = legacy_scenarios(workdir)
+        register_tools()
+        scenarios = legacy_scenarios(workdir)
+    else:
+        from inkscape_mcp.tools.v2 import build_app
+
+        app = build_app()
+        scenarios = v2_scenarios(workdir)
 
     report: list[dict[str, Any]] = []
-    async with Client(mcp) as client:
+    async with Client(app) as client:
         for scenario in scenarios:
             ctx: dict[str, Any] = {}
             calls = failed = total_bytes = 0
@@ -164,7 +242,7 @@ async def run(surface: str, workdir: Path) -> list[dict[str, Any]]:
                     "response_bytes": total_bytes,
                 }
             )
-    for key, info in LEGACY_STATIC.items():
+    for key, info in STATIC[surface].items():
         report.append(
             {
                 "scenario": key,

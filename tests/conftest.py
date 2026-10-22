@@ -373,3 +373,38 @@ def run_ops(doc_id: str, *ops: dict[str, Any], **kwargs: Any) -> Any:
     from inkscape_mcp.edit.ops import run_ops as _run_ops
 
     return _run_ops(doc_id, list(ops), **kwargs)
+
+
+@pytest.fixture
+def v2_ws(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """A fresh workspace root + registry for the result-oriented tool tests; returns the root."""
+    from inkscape_mcp.config import ENV_WORKSPACE_ROOTS
+    from inkscape_mcp.registry import reset_registry
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setenv(ENV_WORKSPACE_ROOTS, str(ws))
+    get_settings.cache_clear()
+    reset_registry()
+    return ws
+
+
+@pytest.fixture
+def v2_app(v2_ws: Any) -> Any:
+    """A standalone app with the new tools (advanced mode: `actions` included)."""
+    from inkscape_mcp.tools.v2 import build_app
+
+    return build_app(advanced=True)
+
+
+@pytest.fixture
+def v2_renders(monkeypatch: pytest.MonkeyPatch, v2_ws: Any) -> list[str]:
+    """Fake every Inkscape render the tools can trigger; returns the list of rendered doc ids."""
+    from tests.v2_support import fake_render
+
+    calls: list[str] = []
+    fake = fake_render(calls)
+    monkeypatch.setattr("inkscape_mcp.edit.ops.render_preview", fake)
+    monkeypatch.setattr("inkscape_mcp.edit.pipeline.render_preview", fake)
+    monkeypatch.setattr("inkscape_mcp.tools.v2.render.render_preview", fake)
+    return calls
