@@ -143,7 +143,9 @@ def test_dry_run_plans_without_writing(tool_app, tool_ws, engine) -> None:
 def test_budget_refuses_an_oversized_batch(tool_app, tool_ws, engine) -> None:
     doc = open_doc(tool_ws)
     with pytest.raises(ToolError, match="budget"):
-        _export(tool_app, doc, [{"kind": "file", "format": "png", "width_px": 4000}], byte_budget=10)
+        _export(
+            tool_app, doc, [{"kind": "file", "format": "png", "width_px": 4000}], byte_budget=10
+        )
     assert engine == []
 
 

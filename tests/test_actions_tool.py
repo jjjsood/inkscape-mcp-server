@@ -101,7 +101,9 @@ def test_raw_real_run_needs_approval_and_exactly_one_step(tool_app, tool_ws, eng
         _actions(tool_app, action="raw", doc_id=doc, steps=step, dry_run=False)
     with pytest.raises(ToolError, match="exactly one step"):
         _actions(tool_app, action="raw", doc_id=doc, steps=CHAIN)
-    res = _actions(tool_app, action="raw", doc_id=doc, steps=step, dry_run=False, approval_token="ok")
+    res = _actions(
+        tool_app, action="raw", doc_id=doc, steps=step, dry_run=False, approval_token="ok"
+    )
     assert res["changed"] is True
 
 
