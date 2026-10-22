@@ -58,6 +58,7 @@ import os
 import re
 import secrets
 import struct
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -676,7 +677,9 @@ def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
     `O_RDONLY|O_DIRECTORY|O_NOFOLLOW`, so if any component is (or is raced into) a symlink the
     `open` fails with `ELOOP` and creation aborts — the side-effect can never escape the base dir.
     """
-    if not HAS_DIR_FD_MKDIR:
+    # The explicit platform test lets mypy (--platform win32) treat the fd-relative code below as
+    # unreachable there; HAS_DIR_FD_MKDIR covers any other platform lacking dir_fd support.
+    if sys.platform == "win32" or not HAS_DIR_FD_MKDIR:
         portable_mkdir_chain(base_real_dir, components, "out_dir")
         return
     dir_fd = os.open(base_real_dir, os.O_RDONLY | os.O_DIRECTORY)

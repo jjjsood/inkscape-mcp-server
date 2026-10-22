@@ -16,6 +16,7 @@ fastmcp-patterns error model); the offending raw path is kept only in the privat
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from inkscape_mcp.config import Settings, get_settings
@@ -48,8 +49,11 @@ def portable_mkdir_chain(base_real_dir: Path, components: tuple[str, ...], label
     """Path-based fallback for `_safe_mkdir_chain` on platforms without `dir_fd` (Windows).
 
     Creates `components` under `base_real_dir` one level at a time and, after each step, refuses a
-    component that is a symlink or junction, is not a directory, or resolves outside the base, so
-    the directory side-effect cannot escape the validated ancestor through a link.
+    component that is a symlink or junction, is not a directory, or resolves outside the base. A
+    link already in the path therefore aborts creation. Unlike the fd-relative variant the check
+    runs AFTER each `mkdir`, so a junction raced in between two steps can make at most one EMPTY
+    directory land outside before the chain aborts; files are still only ever written to paths
+    validated by `resolve_write_path`.
     """
     current = base_real_dir
     for part in components:
@@ -63,6 +67,11 @@ def portable_mkdir_chain(base_real_dir: Path, components: tuple[str, ...], label
             nxt.mkdir()
         except FileExistsError:
             pass
+        except OSError as exc:  # its message carries the full host path: keep it in detail only
+            raise SandboxViolation(
+                "path rejected: could not resolve path",
+                detail=f"{label} component {part!r} could not be created: {exc}",
+            ) from None
         try:
             linked = nxt.is_symlink() or nxt.is_junction()
             real = nxt.resolve(strict=True)
@@ -206,7 +215,9 @@ def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
     descend `open` fails with `ELOOP`/`ENOTDIR` and creation aborts — the side-effect can never
     escape the base dir. Mirrors `render/cli.py::_safe_mkdir_chain`/`tools/save.py`.
     """
-    if not HAS_DIR_FD_MKDIR:
+    # The explicit platform test lets mypy (--platform win32) treat the fd-relative code below as
+    # unreachable there; HAS_DIR_FD_MKDIR covers any other platform lacking dir_fd support.
+    if sys.platform == "win32" or not HAS_DIR_FD_MKDIR:
         portable_mkdir_chain(base_real_dir, components, "dest")
         return
     dir_fd = os.open(base_real_dir, os.O_RDONLY | os.O_DIRECTORY)
