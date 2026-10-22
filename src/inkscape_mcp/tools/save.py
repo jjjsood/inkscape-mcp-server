@@ -49,9 +49,11 @@ from inkscape_mcp.server import mcp
 from inkscape_mcp.validate import ValidationReport, validate_document
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.paths import (
+    HAS_DIR_FD_MKDIR,
     SandboxViolation,
     is_contained,
     owning_root,
+    portable_mkdir_chain,
     resolve_write_path,
 )
 from inkscape_mcp.workspace.risk import PolicyViolation, RiskClass
@@ -218,6 +220,9 @@ def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
     descend `open` fails with `ELOOP`/`ENOTDIR` and creation aborts — the side-effect can never
     escape the base dir. Mirrors `render/cli.py::_safe_mkdir_chain`.
     """
+    if not HAS_DIR_FD_MKDIR:
+        portable_mkdir_chain(base_real_dir, components, "dest")
+        return
     dir_fd = os.open(base_real_dir, os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in components:
@@ -349,7 +354,15 @@ def save_document_as(
     #    file is truncated (the approval-gated overwrite).
     working = sandbox.working_copy(Path(entry.root), doc_id)
     working_bytes = working.read_bytes()
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+    #    Windows has no O_NOFOLLOW (the lstat/resolve checks above still guard there) and needs
+    #    O_BINARY so the bytes are written verbatim.
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_TRUNC
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
     try:
         fd = os.open(resolved_dest, flags, 0o644)
     except OSError as exc:

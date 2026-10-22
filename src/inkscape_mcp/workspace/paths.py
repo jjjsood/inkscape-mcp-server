@@ -33,6 +33,52 @@ class SandboxViolation(Exception):
         self.detail = detail
 
 
+#: True where the fd-relative `_safe_mkdir_chain` works (POSIX). Windows has no `O_DIRECTORY` /
+#: `O_NOFOLLOW` and no `dir_fd` support for `os.open`/`os.mkdir`, so it takes the path-based
+#: fallback below.
+HAS_DIR_FD_MKDIR = (
+    hasattr(os, "O_DIRECTORY")
+    and hasattr(os, "O_NOFOLLOW")
+    and os.open in os.supports_dir_fd
+    and os.mkdir in os.supports_dir_fd
+)
+
+
+def portable_mkdir_chain(base_real_dir: Path, components: tuple[str, ...], label: str) -> None:
+    """Path-based fallback for `_safe_mkdir_chain` on platforms without `dir_fd` (Windows).
+
+    Creates `components` under `base_real_dir` one level at a time and, after each step, refuses a
+    component that is a symlink or junction, is not a directory, or resolves outside the base, so
+    the directory side-effect cannot escape the validated ancestor through a link.
+    """
+    current = base_real_dir
+    for part in components:
+        if part in ("", ".", ".."):
+            raise SandboxViolation(
+                "path rejected: invalid filename",
+                detail=f"unsafe {label} component {part!r}",
+            )
+        nxt = current / part
+        try:
+            nxt.mkdir()
+        except FileExistsError:
+            pass
+        try:
+            linked = nxt.is_symlink() or nxt.is_junction()
+            real = nxt.resolve(strict=True)
+        except OSError as exc:
+            raise SandboxViolation(
+                "path rejected: could not resolve path",
+                detail=f"{label} component {part!r} could not be resolved: {exc}",
+            ) from None
+        if linked or not real.is_dir() or not is_contained(real, [base_real_dir]):
+            raise SandboxViolation(
+                "path rejected: outside workspace",
+                detail=f"{label} component {part!r} is not a real directory",
+            )
+        current = real
+
+
 def is_contained(p: Path, roots: list[Path]) -> bool:
     """True iff resolved path `p` is `R` or lives under `R` for some resolved root `R`.
 
@@ -160,6 +206,9 @@ def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
     descend `open` fails with `ELOOP`/`ENOTDIR` and creation aborts — the side-effect can never
     escape the base dir. Mirrors `render/cli.py::_safe_mkdir_chain`/`tools/save.py`.
     """
+    if not HAS_DIR_FD_MKDIR:
+        portable_mkdir_chain(base_real_dir, components, "dest")
+        return
     dir_fd = os.open(base_real_dir, os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in components:
