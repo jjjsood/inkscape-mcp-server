@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import math
+import os
 import re
 import secrets
 from collections.abc import Callable
@@ -28,6 +29,8 @@ from inkscape_mcp.document.inspect import (
     XLINK_NS,
     DocumentNotFound,
     InspectionError,
+    is_element,
+    local_name,
 )
 from inkscape_mcp.registry import DocEntry, Registry, get_registry
 from inkscape_mcp.workspace.xml_safety import UnsafeXMLError, parse_svg_file
@@ -128,27 +131,26 @@ def load_working_tree(
 def write_working_tree(entry: DocEntry, tree: etree._ElementTree) -> None:
     """Serialize `tree` back over the WORKING COPY only (never the original source file)."""
     data = etree.tostring(tree, xml_declaration=True, encoding="UTF-8")
-    Path(entry.working_path).write_bytes(data)
+    # Temp file in the same dir + os.replace: a failed write never leaves a truncated working copy.
+    target = Path(entry.working_path)
+    tmp = target.with_name(f".{target.name}.{secrets.token_hex(4)}.tmp")
+    try:
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+        with os.fdopen(os.open(tmp, flags, 0o600), "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 # --- Element helpers --------------------------------------------------------
 
 
-def _local_name(elem: etree._Element) -> str:
-    tag = elem.tag
-    if not isinstance(tag, str):
-        return ""
-    return etree.QName(tag).localname
-
-
-def _is_element(elem: etree._Element) -> bool:
-    return isinstance(elem.tag, str)
-
-
 def find_by_id(root: etree._Element, object_id: str) -> etree._Element | None:
     """Return the first element whose `id` equals `object_id`, or None."""
     for elem in root.iter():
-        if _is_element(elem) and elem.get("id") == object_id:
+        if is_element(elem) and elem.get("id") == object_id:
             return elem
     return None
 
@@ -172,7 +174,7 @@ def all_ids(root: etree._Element) -> set[str]:
     """Every `id` value currently defined in the document."""
     ids: set[str] = set()
     for elem in root.iter():
-        if _is_element(elem):
+        if is_element(elem):
             oid = elem.get("id")
             if oid:
                 ids.add(oid)
@@ -343,6 +345,12 @@ def fmt_num(n: float) -> str:
     return s if s not in ("", "-0") else "0"
 
 
+def require_finite(name: str, value: float) -> None:
+    """Reject a non-finite numeric input with a stable, host-path-free :class:`EditError`."""
+    if not math.isfinite(value):
+        raise EditError(f"{name} must be finite")
+
+
 def prepend_transform(elem: etree._Element, transform: str) -> None:
     """Prepend a transform function to the element's `transform` list (applied in parent space)."""
     existing = elem.get("transform")
@@ -497,7 +505,7 @@ def rewrite_references(root: etree._Element, mapping: dict[str, str]) -> None:
     if not mapping:
         return
     for elem in root.iter():
-        if not _is_element(elem):
+        if not is_element(elem):
             continue
         for attr in (_XLINK_HREF, "href"):
             href = elem.get(attr)
@@ -545,7 +553,7 @@ def deep_copy_with_new_ids(
     existing.add(top_new)
 
     for node in clone.iter():
-        if node is clone or not _is_element(node):
+        if node is clone or not is_element(node):
             continue
         nid = node.get("id")
         if not nid:
@@ -558,7 +566,41 @@ def deep_copy_with_new_ids(
         existing.add(candidate)
 
     rewrite_references(clone, mapping)
+    _scope_clone_css(clone, mapping, suffix)
     return clone, top_new
+
+
+#: A CSS class / id token in a selector (a leading digit is a number like `.5em`, not a name).
+_CSS_CLASS_RE = re.compile(r"\.(-?[_a-zA-Z][\w-]*)")
+_CSS_ID_RE = re.compile(r"#(-?[_a-zA-Z][\w-]*)")
+#: A selector prelude followed by its innermost `{ ... }` declaration block.
+_CSS_RULE_RE = re.compile(r"([^{}]*)(\{[^{}]*\})")
+
+
+def _scope_clone_css(clone: etree._Element, mapping: dict[str, str], suffix: str) -> None:
+    """Keep a clone's OWN `<style>` rules bound to the clone, not to the whole document.
+
+    CSS is document-global: two copies of a doc with `.accent { … }` would both obey whichever
+    rule comes last. Classes the clone's own stylesheet defines get the clone's id suffix (in the
+    selectors and in every `class` attribute of the clone), and `#id` selectors follow the id
+    remap. Classes defined outside the clone are left alone, so a same-document copy keeps its
+    styling.
+    """
+    styles = [n for n in clone.iter(f"{{{SVG_NS}}}style") if n.text]
+    if not styles:
+        return
+    preludes = [m[1] for st in styles for m in _CSS_RULE_RE.finditer(st.text or "")]
+    rename = {c: f"{c}-{suffix}" for p in preludes for c in _CSS_CLASS_RE.findall(p)}
+
+    def scope(prelude: str) -> str:
+        prelude = _CSS_CLASS_RE.sub(lambda m: "." + rename.get(m[1], m[1]), prelude)
+        return _CSS_ID_RE.sub(lambda m: "#" + mapping.get(m[1], m[1]), prelude)
+
+    for st in styles:
+        st.text = _CSS_RULE_RE.sub(lambda m: scope(m[1]) + m[2], st.text or "")
+    for node in clone.iter():
+        if is_element(node) and node.get("class"):
+            node.set("class", " ".join(rename.get(c, c) for c in node.get("class", "").split()))
 
 
 def parse_viewbox(raw: str | None) -> list[float] | None:
@@ -590,8 +632,10 @@ __all__ = [
     "deep_copy_with_new_ids",
     "find_by_id",
     "fmt_num",
+    "is_element",
     "is_url_paint",
     "load_working_tree",
+    "local_name",
     "normalize_color",
     "normalize_font_family",
     "normalize_font_weight",
@@ -601,6 +645,7 @@ __all__ = [
     "parse_viewbox",
     "path_points",
     "prepend_transform",
+    "require_finite",
     "require_target",
     "require_targets",
     "rewrite_references",

@@ -40,8 +40,15 @@ re-reads the source file.
 
 Risk classes & approval. low (inspect/render/help/export), medium (edit ops: reversible,
 snapshot-backed), high (delete, set_svg/insert_svg, path ops, overwriting a file, running Actions:
-needs a per-operation `approval_token`, minted out of band), restricted (never ships). A call's risk
+needs an explicit per-call `approval_token`), restricted (never ships). A call's risk
 is the MAX over its ops; a high-risk call without a non-empty `approval_token` is refused.
+A token approves ONE call: ask the human for it (show the dry_run plan) before each high-risk
+call, never invent one and never reuse a token from an earlier, different change.
+
+Working with the human. Act on what they named: if an id they gave is not found, say so and
+name the match you used (the error lists similar ids) instead of silently substituting it.
+Reply in the human's language; `help(goal=...)` understands non-English goals, so pass their
+words as they are.
 
 Look before you trust. `edit(..., render='inline')` and `render(doc_id)` return a PNG you can see;
 check it, and `history(action='restore')` if it is wrong. `inspect(doc_id, include=[...],

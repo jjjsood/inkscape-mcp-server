@@ -17,8 +17,9 @@ Render = Literal["none", "inline"]
 Detail = Literal["ids", "summary", "full"]
 
 DESCRIPTION = (
-    "Change a document with typed ops in ONE atomic call (all or nothing, one snapshot; undo "
-    "with history): create shapes, restyle, move, group, text, compose, optimize. Refer to an "
+    "Change a document with typed ops in ONE atomic call (all or nothing; snapshot_id = state "
+    "BEFORE it; undo with history): create shapes, restyle, move, group, text, compose, "
+    "optimize. Refer to an "
     "op's new object as '$<op index>'; target existing ones with ids=[...] or select={tag,fill,"
     "...}. render='inline' returns a PNG; dry_run=true the plan. HIGH ops (delete, set_svg, "
     "insert_svg, path ops) need approval_token. help(op=NAME) shows fields. "
@@ -55,6 +56,11 @@ def ops_payload(res: OpsResult, detail: Detail) -> dict[str, Any]:
         out["needs_approval"] = True
         if res.changed and res.snapshot_id:
             out["undo"] = f"history(doc_id, action='restore', snapshot_id='{res.snapshot_id}')"
+    if detail in ("summary", "full") and res.changed and res.snapshot_id:
+        out["snapshot_note"] = (
+            "snapshot_id is the state BEFORE this edit; restoring it undoes this edit "
+            "(and any later ones)"
+        )
     if detail in ("summary", "full") and not res.dry_run:
         out["ops"] = [f"{o.op} {o.name}: {o.summary}" for o in res.outcomes]
     if detail == "full":

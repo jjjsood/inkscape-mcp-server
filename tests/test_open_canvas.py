@@ -78,3 +78,16 @@ def test_two_canvases_get_distinct_documents(tool_app) -> None:
     a = _open_canvas(tool_app, width=10, height=10)["doc_id"]
     b = _open_canvas(tool_app, width=10, height=10)["doc_id"]
     assert a != b
+
+
+def test_open_summary_reflects_ops_applied_in_the_same_call(tool_app) -> None:
+    data = call(
+        tool_app,
+        "open",
+        {
+            "canvas": {"width": 50, "height": 50},
+            "ops": [{"op": "create_rect", "x": 1, "y": 1, "width": 5, "height": 5}],
+            "detail": "summary",
+        },
+    ).data
+    assert data["summary"]["objects"] == 1

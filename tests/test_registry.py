@@ -7,28 +7,19 @@ from pathlib import Path
 
 import pytest
 
-from inkscape_mcp.config import ENV_WORKSPACE_ROOTS, Settings, get_settings
+from inkscape_mcp.config import get_settings
 from inkscape_mcp.registry import Registry
 from inkscape_mcp.workspace import sandbox
 
 SVG_BODY = b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'
 
 
-@pytest.fixture
-def settings_with_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
-    root = tmp_path / "ws"
-    root.mkdir()
-    monkeypatch.setenv(ENV_WORKSPACE_ROOTS, str(root))
-    get_settings.cache_clear()
-    return get_settings()
-
-
-def test_open_document_creates_workspace(settings_with_root: Settings) -> None:
-    root = settings_with_root.workspace_roots[0]
+def test_open_document_creates_workspace(tool_ws: Path) -> None:
+    root = tool_ws
     src = root / "logo.svg"
     src.write_bytes(SVG_BODY)
 
-    reg = Registry(settings_with_root)
+    reg = Registry(get_settings())
     entry = reg.open_document(str(src))
 
     assert entry.doc_id.startswith("d_")
@@ -38,27 +29,17 @@ def test_open_document_creates_workspace(settings_with_root: Settings) -> None:
     assert working == sandbox.working_copy(root, entry.doc_id)
     assert original.read_bytes() == SVG_BODY
     assert working.read_bytes() == SVG_BODY
+    assert src.read_bytes() == SVG_BODY  # the true source file is untouched
 
 
-def test_original_source_unchanged(settings_with_root: Settings) -> None:
-    root = settings_with_root.workspace_roots[0]
-    src = root / "logo.svg"
-    src.write_bytes(SVG_BODY)
-
-    reg = Registry(settings_with_root)
-    reg.open_document(str(src))
-    # The true original file at its source path is byte-identical and untouched.
-    assert src.read_bytes() == SVG_BODY
-
-
-def test_registry_json_relative_source(settings_with_root: Settings) -> None:
-    root = settings_with_root.workspace_roots[0]
+def test_registry_json_relative_source(tool_ws: Path) -> None:
+    root = tool_ws
     subdir = root / "designs"
     subdir.mkdir()
     src = subdir / "poster.svg"
     src.write_bytes(SVG_BODY)
 
-    reg = Registry(settings_with_root)
+    reg = Registry(get_settings())
     entry = reg.open_document(str(src))
 
     reg_path = root / sandbox.STATE_DIR / "registry.json"
@@ -74,16 +55,16 @@ def test_registry_json_relative_source(settings_with_root: Settings) -> None:
     assert entry.source_path == "designs/poster.svg"
 
 
-def test_get_unknown_id_raises_keyerror(settings_with_root: Settings) -> None:
-    reg = Registry(settings_with_root)
+def test_get_unknown_id_raises_keyerror(tool_ws: Path) -> None:
+    reg = Registry(get_settings())
     with pytest.raises(KeyError):
         reg.get("d_deadbeef")
 
 
-def test_list_documents(settings_with_root: Settings) -> None:
-    root = settings_with_root.workspace_roots[0]
+def test_list_documents(tool_ws: Path) -> None:
+    root = tool_ws
     src = root / "a.svg"
     src.write_bytes(SVG_BODY)
-    reg = Registry(settings_with_root)
+    reg = Registry(get_settings())
     e = reg.open_document(str(src))
     assert [d.doc_id for d in reg.list_documents()] == [e.doc_id]

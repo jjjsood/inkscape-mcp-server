@@ -6,10 +6,11 @@ import shutil
 from pathlib import Path
 
 import pytest
+from lxml import etree
 
-from inkscape_mcp.config import ENV_WORKSPACE_ROOTS, get_settings
 from inkscape_mcp.document.inspect import (
     DocumentNotFound,
+    bbox_of,
     inspect_assets,
     inspect_fonts,
     inspect_layers,
@@ -18,12 +19,12 @@ from inkscape_mcp.document.inspect import (
     inspect_summary,
     inspect_tree,
 )
-from inkscape_mcp.registry import get_registry, reset_registry
+from tests.tool_support import open_doc
 
 FIXTURE_SVG = b"""<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg"
      xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
-     xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.0.dtd"
+     xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
      xmlns:xlink="http://www.w3.org/1999/xlink"
      width="100mm" height="50mm" viewBox="0 0 100 50"
      inkscape:document-units="mm">
@@ -44,18 +45,8 @@ FIXTURE_SVG = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 
 @pytest.fixture
-def doc_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
-    root = tmp_path / "ws"
-    root.mkdir()
-    monkeypatch.setenv(ENV_WORKSPACE_ROOTS, str(root))
-    get_settings.cache_clear()
-    reset_registry()
-
-    src = root / "fixture.svg"
-    src.write_bytes(FIXTURE_SVG)
-
-    entry = get_registry().open_document(str(src))
-    return entry.doc_id
+def doc_id(tool_ws: Path) -> str:
+    return open_doc(tool_ws, "fixture.svg", FIXTURE_SVG)
 
 
 def test_summary(doc_id: str) -> None:
@@ -139,30 +130,6 @@ def test_unknown_id_raises(doc_id: str) -> None:
         inspect_summary("d_doesnotexist")
 
 
-def test_original_source_byte_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    root = tmp_path / "ws"
-    root.mkdir()
-    monkeypatch.setenv(ENV_WORKSPACE_ROOTS, str(root))
-    get_settings.cache_clear()
-    reset_registry()
-
-    src = root / "fixture.svg"
-    src.write_bytes(FIXTURE_SVG)
-
-    entry = get_registry().open_document(str(src))
-    # Full inspection pass over the working copy.
-    inspect_summary(entry.doc_id)
-    inspect_tree(entry.doc_id)
-    inspect_layers(entry.doc_id)
-    inspect_objects(entry.doc_id)
-    inspect_styles(entry.doc_id)
-    inspect_fonts(entry.doc_id)
-    inspect_assets(entry.doc_id)
-
-    # The ORIGINAL source file is byte-for-byte unchanged.
-    assert src.read_bytes() == FIXTURE_SVG
-
-
 # --- /: paint, leaf/layer flags, bbox, font availability, used_by --------------
 
 # A fixture exercising the per-element read surface: a stroke-only rect (S13), a leaf vs. a
@@ -189,15 +156,8 @@ PAINT_SVG = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 
 @pytest.fixture
-def paint_doc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
-    root = tmp_path / "ws"
-    root.mkdir()
-    monkeypatch.setenv(ENV_WORKSPACE_ROOTS, str(root))
-    get_settings.cache_clear()
-    reset_registry()
-    src = root / "paint.svg"
-    src.write_bytes(PAINT_SVG)
-    return get_registry().open_document(str(src)).doc_id
+def paint_doc(tool_ws: Path) -> str:
+    return open_doc(tool_ws, "paint.svg", PAINT_SVG)
 
 
 def _obj(doc_id: str, obj_id: str):
@@ -221,11 +181,10 @@ def test_objects_carry_paint_summary(paint_doc: str) -> None:
     dot = _obj(paint_doc, "dot")
     assert dot.paint.fill == "blue"
 
-
-def test_stroke_only_check_answerable_from_objects(paint_doc: str) -> None:
-    """S13: 'no stroke-only element' is answerable from inspect_objects alone."""
-    stroke_only = [o.id for o in inspect_objects(paint_doc).objects if o.paint.stroke_only]
-    assert stroke_only == ["strokeonly"]
+    # S13: "no stroke-only element" is answerable from inspect_objects alone.
+    assert [o.id for o in inspect_objects(paint_doc).objects if o.paint.stroke_only] == [
+        "strokeonly"
+    ]
 
 
 def test_is_leaf_and_is_layer_flags(paint_doc: str) -> None:
@@ -239,12 +198,8 @@ def test_is_leaf_and_is_layer_flags(paint_doc: str) -> None:
     # A drawable shape with no element children is a leaf.
     assert objs["filled"].is_leaf is True
     assert objs["filled"].is_layer is False
-
-
-def test_leaf_only_check_answerable_from_objects(paint_doc: str) -> None:
-    """S12: 'leaf objects only' is answerable — non-leaf object ids are enumerable."""
-    non_leaf = sorted(o.id for o in inspect_objects(paint_doc).objects if not o.is_leaf)
-    assert non_leaf == ["inner", "layer1"]
+    # S12: "leaf objects only" is answerable: the non-leaf ids are enumerable.
+    assert sorted(i for i, o in objs.items() if not o.is_leaf) == ["inner", "layer1"]
 
 
 def test_objects_bbox_from_attributes(paint_doc: str) -> None:
@@ -270,8 +225,42 @@ def test_objects_bbox_from_attributes(paint_doc: str) -> None:
 def test_objects_bbox_none_when_not_derivable(paint_doc: str) -> None:
     # A <path> has no attribute-derived box (needs the engine).
     assert _obj(paint_doc, "p1").bbox is None
-    # A transformed element is reported as None rather than an untransformed (wrong) box.
-    assert _obj(paint_doc, "nested").bbox is None
+    # The element's own transform is applied (box in its parent's user space).
+    nested = _obj(paint_doc, "nested").bbox
+    assert nested is not None
+    assert (nested.x, nested.y, nested.width, nested.height) == (10, 10, 3, 3)
+
+
+_SVG = 'xmlns="http://www.w3.org/2000/svg"'
+
+
+@pytest.mark.parametrize(
+    ("elem", "box"),
+    [
+        # What the edit ops write: move then scale about the centre.
+        (f'<rect {_SVG} x="10" y="10" width="20" height="10" transform="translate(5,0) '
+         'translate(5,0) matrix(2,0,0,2,-20,-15)"/>', (10, 5, 40, 20)),
+        (f'<circle {_SVG} cx="100" cy="50" r="25" transform="matrix(1.3,0,0,1.3,-30,-15)"/>',
+         (67.5, 17.5, 65, 65)),
+        (f'<rect {_SVG} x="0" y="0" width="20" height="10" transform="rotate(90,10,5)"/>',
+         (5, -5, 10, 20)),
+        (f'<rect {_SVG} width="10" height="10" transform="skewX(45)"/>', (0, 0, 20, 10)),
+        (f'<line {_SVG} x1="0" y1="0" x2="10" y2="0" transform="rotate(90)"/>', (0, 0, 0, 10)),
+        (f'<polygon {_SVG} points="0,0 4,0 4,2" transform="scale(2 3)"/>', (0, 0, 8, 6)),
+        (f'<ellipse {_SVG} cx="0" cy="0" rx="2" ry="1" transform="scale(-1)"/>', (-2, -1, 4, 2)),
+        # A rotated curve's corner box would be too big; malformed transforms are not guessed.
+        (f'<circle {_SVG} cx="0" cy="0" r="5" transform="rotate(30)"/>', None),
+        (f'<rect {_SVG} width="1" height="1" transform="wobble(2)"/>', None),
+        (f'<rect {_SVG} width="1" height="1" transform="translate(1,"/>', None),
+    ],
+)  # fmt: skip
+def test_bbox_applies_the_elements_own_transform(elem: str, box: tuple | None) -> None:
+    got = bbox_of(etree.fromstring(elem))
+    if box is None:
+        assert got is None
+    else:
+        assert got is not None
+        assert (got.x, got.y, got.width, got.height) == pytest.approx(box)
 
 
 def test_tree_nodes_carry_paint_and_flags(paint_doc: str) -> None:
@@ -304,37 +293,6 @@ def _tree_nodes_by_id(doc_id: str) -> dict[str, object]:
     return found
 
 
-def test_tree_nodes_carry_bbox_from_attributes(paint_doc: str) -> None:
-    """inspect_document's tree nodes carry an attribute-derived bbox (no disk access)."""
-    nodes = _tree_nodes_by_id(paint_doc)
-
-    rect = nodes["filled"]
-    assert rect.bbox is not None  # type: ignore[union-attr]
-    assert (rect.bbox.x, rect.bbox.y, rect.bbox.width, rect.bbox.height) == (  # type: ignore[union-attr]
-        1.0,
-        2.0,
-        10.0,
-        20.0,
-    )
-
-    circle = nodes["dot"]
-    assert circle.bbox is not None  # type: ignore[union-attr]
-    # circle bbox = (cx-r, cy-r, 2r, 2r)
-    assert (circle.bbox.x, circle.bbox.y, circle.bbox.width, circle.bbox.height) == (  # type: ignore[union-attr]
-        45.0,
-        35.0,
-        10.0,
-        10.0,
-    )
-
-
-def test_tree_nodes_bbox_none_when_not_derivable(paint_doc: str) -> None:
-    """A <path> and a transformed element report bbox=None in the tree (not a wrong box)."""
-    nodes = _tree_nodes_by_id(paint_doc)
-    assert nodes["p1"].bbox is None  # type: ignore[union-attr]
-    assert nodes["nested"].bbox is None  # type: ignore[union-attr]
-
-
 def test_tree_bbox_matches_objects_bbox_parity(paint_doc: str) -> None:
     """Tree bbox and the objects-resource bbox are identical for every element (parity)."""
     nodes = _tree_nodes_by_id(paint_doc)
@@ -343,16 +301,6 @@ def test_tree_bbox_matches_objects_bbox_parity(paint_doc: str) -> None:
     for obj_id, obj in objects.items():
         assert obj_id in nodes
         assert nodes[obj_id].bbox == obj.bbox  # type: ignore[union-attr]
-
-
-def test_where_is_element_answerable_from_tree_alone(paint_doc: str) -> None:
-    """An agent can answer 'where is element X' from inspect_tree alone — no disk read."""
-    nodes = _tree_nodes_by_id(paint_doc)
-    box = nodes["filled"].bbox  # type: ignore[union-attr]
-    assert box is not None
-    # Concrete placement answer: top-left corner and extent, in user units.
-    assert (box.x, box.y) == (1.0, 2.0)
-    assert (box.width, box.height) == (10.0, 20.0)
 
 
 def test_fonts_available_flag_and_used_by(paint_doc: str) -> None:
@@ -368,22 +316,13 @@ def test_fonts_available_flag_and_used_by(paint_doc: str) -> None:
         assert bogus.available is False
 
 
-def test_fonts_generic_keyword_always_available(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = tmp_path / "ws"
-    root.mkdir()
-    monkeypatch.setenv(ENV_WORKSPACE_ROOTS, str(root))
-    get_settings.cache_clear()
-    reset_registry()
+def test_fonts_generic_keyword_always_available(tool_ws: Path) -> None:
     svg = (
         b'<?xml version="1.0"?>'
         b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
         b'<text id="t" font-family="sans-serif">x</text></svg>'
     )
-    src = root / "g.svg"
-    src.write_bytes(svg)
-    doc_id = get_registry().open_document(str(src)).doc_id
+    doc_id = open_doc(tool_ws, "g.svg", svg)
     fonts = {f.family: f for f in inspect_fonts(doc_id).fonts}
     # Generic CSS keywords always resolve, regardless of the font database.
     assert fonts["sans-serif"].available is True

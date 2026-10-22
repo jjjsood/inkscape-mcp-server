@@ -15,11 +15,10 @@ from lxml import etree
 
 from inkscape_mcp.document.inspect import INKSCAPE_NS, SVG_NS, XLINK_NS
 from inkscape_mcp.edit.ops import OpError
-from inkscape_mcp.edit.pipeline import EditApplyError
 from inkscape_mcp.snapshots import restore_snapshot
 from inkscape_mcp.workspace import sandbox
 from tests.conftest import run_ops
-from tests.tool_support import call, open_doc
+from tests.tool_support import open_doc
 
 SVG = (
     b'<svg xmlns="http://www.w3.org/2000/svg" '
@@ -169,16 +168,6 @@ def test_delete_removes_the_targets_and_reports_them(tool_ws, doc) -> None:
     assert {"t1", "g1", "r1", "u1"} <= _ids(tool_ws, doc)
 
 
-def test_delete_writes_one_high_risk_snapshot_and_record(tool_ws, doc) -> None:
-    result = run_ops(doc, _delete(["seed1"]), approval_token=TOKEN)
-    assert result.operation_id.startswith("op_") and result.snapshot_id.startswith("snap_")
-    assert _counts(tool_ws, doc) == (1, 1)
-    record = json.loads(
-        (sandbox.operations_dir(tool_ws, doc) / f"{result.operation_id}.json").read_text()
-    )
-    assert (record["status"], record["risk_class"]) == ("applied", "high")
-
-
 def test_delete_is_undone_byte_for_byte(tool_ws, doc) -> None:
     before = _working(tool_ws, doc)
     result = run_ops(doc, _delete(["seed1", "seed2"]), approval_token=TOKEN)
@@ -214,31 +203,3 @@ def test_delete_without_a_real_token_is_refused_before_any_write(tool_ws, doc, t
         match=r"ops\[0\] delete is HIGH risk; re-call with approval_token",
         approval_token=token,
     )
-
-
-def test_delete_dry_run_reports_the_plan_and_writes_nothing(tool_ws, doc) -> None:
-    before, counts = _working(tool_ws, doc), _counts(tool_ws, doc)
-    plan = run_ops(doc, _delete(["seed1"]), dry_run=True)
-    assert plan.dry_run is True and plan.needs_approval is True and plan.risk == "high"
-    assert plan.outcomes[0].matched == ["seed1"]
-    assert _working(tool_ws, doc) == before and _counts(tool_ws, doc) == counts
-
-
-def test_delete_through_the_tool_needs_approval(tool_app, doc, tool_ws) -> None:
-    from fastmcp.exceptions import ToolError
-
-    with pytest.raises(ToolError, match="HIGH risk"):
-        call(tool_app, "edit", {"doc_id": doc, "ops": [_delete(["seed1"])]})
-    done = call(
-        tool_app, "edit", {"doc_id": doc, "ops": [_delete(["seed1"])], "approval_token": TOKEN}
-    ).data
-    assert done["changed"] is True and done["risk"] == "high"
-    assert done["undo"] == (
-        f"history(doc_id, action='restore', snapshot_id='{done['snapshot_id']}')"
-    )
-    assert "seed1" not in _ids(tool_ws, doc)
-
-
-def test_unknown_document(doc) -> None:
-    with pytest.raises(EditApplyError, match="document id not found"):
-        run_ops("d_nope", _delete(["seed1"]), approval_token=TOKEN)

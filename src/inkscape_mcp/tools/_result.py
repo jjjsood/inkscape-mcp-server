@@ -38,7 +38,7 @@ from inkscape_mcp.logging_setup import get_logger
 from inkscape_mcp.registry import doc_not_found_message, get_registry
 from inkscape_mcp.render.batch import BatchError
 from inkscape_mcp.render.cli import InvalidObjectId, RenderError
-from inkscape_mcp.render.inline import inline_image
+from inkscape_mcp.render.inline import png_image, resolve_artifact_abspath
 from inkscape_mcp.render.profiles import ProfileSizeError
 from inkscape_mcp.snapshots import SnapshotNotFound
 from inkscape_mcp.workspace.limits import LimitExceeded
@@ -92,16 +92,20 @@ def _live_error(exc: LiveError) -> ToolError:
     return ToolError("live operation failed")
 
 
-def to_tool_error(exc: BaseException, *, limit_msg: str = DEFAULT_LIMIT_MSG) -> ToolError:
+def to_tool_error(
+    exc: BaseException, *, limit_msg: str = DEFAULT_LIMIT_MSG, doc_id: object = None
+) -> ToolError:
     """Map any engine exception to a stable, host-path-free, actionable `ToolError`."""
     if isinstance(exc, ToolError):
         return exc
     if isinstance(exc, KeyError | DocumentNotFound | EditApplyError):
-        return ToolError(doc_not_found_message())
+        return ToolError(doc_not_found_message(doc_id if isinstance(doc_id, str) else None))
     if isinstance(exc, TargetNotFound):
         return ToolError("object id not found in document")
     if isinstance(exc, InspectionError | UnsafeXMLError):
         return ToolError("document could not be parsed safely")
+    if isinstance(exc, SandboxViolation) and str(exc) == "path rejected: outside workspace":
+        return ToolError(f"{exc}; pass a path relative to the workspace root (no '..')")
     if isinstance(exc, _PASSTHROUGH):
         return ToolError(str(exc))
     if isinstance(exc, LimitExceeded):
@@ -142,7 +146,7 @@ def guarded[**P, R](
             except ToolError:
                 raise
             except Exception as exc:
-                raise to_tool_error(exc, limit_msg=limit_msg) from exc
+                raise to_tool_error(exc, limit_msg=limit_msg, doc_id=kwargs.get("doc_id")) from exc
 
         return wrapper
 
@@ -177,13 +181,7 @@ def inline_png(doc_id: str, workspace_relative_path: str | None) -> Image | None
     """The PNG at a server-minted workspace-relative path as an inline image, else None."""
     if not workspace_relative_path:
         return None
-    return inline_image(
-        doc_id=doc_id,
-        workspace_relative_path=workspace_relative_path,
-        fmt="png",
-        inline=True,
-        max_output_bytes=None,
-    )
+    return png_image(resolve_artifact_abspath(doc_id, workspace_relative_path))
 
 
 def require_doc(doc_id: str) -> None:
@@ -191,7 +189,7 @@ def require_doc(doc_id: str) -> None:
     try:
         get_registry().get(doc_id)
     except KeyError as exc:
-        raise ToolError(doc_not_found_message()) from exc
+        raise ToolError(doc_not_found_message(doc_id)) from exc
 
 
 def doc_summary(doc_id: str) -> dict[str, Any]:

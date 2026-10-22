@@ -72,7 +72,7 @@ INKSCAPE_OBJECT_PATH = "/org/inkscape/Inkscape"
 GTK_ACTIONS_IFACE = "org.gtk.Actions"
 
 #: SVG namespaces used when reading an exported document.
-_SODIPODI_NS = "http://sodipodi.sourceforge.net/DTD/sodipodi-0.0.dtd"
+_SODIPODI_NS = "http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
 
 #: Values that may be interpolated into a GVariant text literal must contain none of these
 #: (quote / backslash / control characters) — they would break out of the ``'...'`` quoting.

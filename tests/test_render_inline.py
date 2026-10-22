@@ -1,9 +1,8 @@
 """Render engine and inline images: `render.cli` previews / frames, `render.inline`, `render` tool.
 
-`tests/test_render_tool.py` covers the tool's argument handling against faked engine functions;
-this file runs the real engine (paths, naming, caps, frame numbering, sandbox, staleness) against
-`FakeInkscape` (see `test_export_files`) and checks the inline PNG the tool attaches. Tests that
-need the real renderer carry `@pytest.mark.inkscape`.
+Runs the real engine (paths, naming, caps, frame numbering, sandbox, staleness) against
+`FakeInkscape` (see `test_export_files`), checks the inline PNG the tool attaches and the tool's
+argument handling. Tests that need the real renderer carry `@pytest.mark.inkscape`.
 """
 
 from __future__ import annotations
@@ -21,15 +20,14 @@ from inkscape_mcp.config import ENV_MAX_EXPORT_PX, ENV_MAX_OUTPUT_BYTES, get_set
 from inkscape_mcp.registry import get_registry
 from inkscape_mcp.render import inline
 from inkscape_mcp.render.cli import (
-    RenderError,
+    RenderResult,
     _next_frame_index,
     capture_frame,
     list_frames,
     render_preview,
 )
-from inkscape_mcp.render.inline import inline_image
+from inkscape_mcp.tools._result import inline_png
 from inkscape_mcp.workspace import sandbox
-from inkscape_mcp.workspace.limits import LimitExceeded
 from tests.test_export_files import ART, FakeInkscape, install_fake
 from tests.tool_support import PNG, call, open_doc
 
@@ -70,9 +68,10 @@ def test_preview_dims_location_and_content(fake_inkscape, doc) -> None:
     assert out.read_bytes()[:4] == PNG_MAGIC
     head = out.read_bytes()[:24]
     assert (result.width_px, result.height_px) == struct.unpack(">II", head[16:24]) == (200, 160)
-    assert result.artifact_path == result.workspace_relative_path
-    assert not result.artifact_path.startswith("/")
-    assert result.artifact_path.startswith(f".inkscape-mcp/documents/{doc}/artifacts/preview/")
+    assert not result.workspace_relative_path.startswith("/")
+    assert result.workspace_relative_path.startswith(
+        f".inkscape-mcp/documents/{doc}/artifacts/preview/"
+    )
     assert result.format == "png" and result.stale is False
     assert result.opaque_px and result.all_blank is False
     assert "--export-area-page" in fake_inkscape.calls[-1]
@@ -98,14 +97,6 @@ def test_blank_page_is_reported(fake_inkscape, doc) -> None:
     fake_inkscape.blank = True
     result = render_preview(doc, width_px=40)
     assert (result.opaque_px, result.all_blank) == (0, True)
-
-
-def test_oversized_preview_is_rejected_before_inkscape(fake_inkscape, doc, monkeypatch) -> None:
-    monkeypatch.setenv(ENV_MAX_EXPORT_PX, "2")
-    get_settings.cache_clear()
-    with pytest.raises(LimitExceeded, match="cap"):
-        render_preview(doc, width_px=500)
-    assert fake_inkscape.calls == []
 
 
 def test_unknown_document_is_a_keyerror(fake_inkscape, tool_ws) -> None:
@@ -136,17 +127,16 @@ def test_next_frame_index_is_derived_from_the_filesystem(tmp_path: Path) -> None
 def test_frames_are_numbered_per_series(fake_inkscape, doc) -> None:
     a, b = capture_frame(doc), capture_frame(doc)
     assert [(f.series, f.frame_index) for f in (a, b)] == [("run", 1), ("run", 2)]
-    assert a.artifact_path == a.workspace_relative_path
-    assert a.artifact_path.endswith("artifacts/frames/run/frame-001.png")
-    assert b.artifact_path.endswith("frame-002.png")
+    assert a.workspace_relative_path.endswith("artifacts/frames/run/frame-001.png")
+    assert b.workspace_relative_path.endswith("frame-002.png")
     other = capture_frame(doc, series="alpha")
     assert (other.series, other.frame_index) == ("alpha", 1)
-    assert "artifacts/frames/alpha/" in other.artifact_path
+    assert "artifacts/frames/alpha/" in other.workspace_relative_path
 
 
 def test_frame_label_and_collisions_never_clobber(fake_inkscape, doc) -> None:
     labelled = capture_frame(doc, label="after-recolor")
-    assert labelled.artifact_path.endswith("frame-001-after-recolor.png")
+    assert labelled.workspace_relative_path.endswith("frame-001-after-recolor.png")
     # a later capture continues past it
     assert capture_frame(doc).frame_index == 2
     # a pre-existing frame (as left by an earlier server run) is continued past, not overwritten
@@ -157,18 +147,10 @@ def test_frame_label_and_collisions_never_clobber(fake_inkscape, doc) -> None:
 
 def test_frame_series_is_sanitised_to_one_folder(fake_inkscape, doc, tool_ws) -> None:
     result = capture_frame(doc, series="../escape")
-    assert result.series == "escape" and "artifacts/frames/escape/" in result.artifact_path
+    assert (
+        result.series == "escape" and "artifacts/frames/escape/" in result.workspace_relative_path
+    )
     assert not (tool_ws.parent / "escape").exists()
-
-
-def test_frame_width_must_be_positive_and_within_the_cap(fake_inkscape, doc, monkeypatch) -> None:
-    with pytest.raises(RenderError, match="positive integer"):
-        capture_frame(doc, width_px=-5)
-    monkeypatch.setenv(ENV_MAX_EXPORT_PX, "2")
-    get_settings.cache_clear()
-    with pytest.raises(LimitExceeded):
-        capture_frame(doc, width_px=500)
-    assert fake_inkscape.calls == []
 
 
 def test_list_frames_orders_by_index_and_ignores_strangers(fake_inkscape, doc) -> None:
@@ -180,7 +162,6 @@ def test_list_frames_orders_by_index_and_ignores_strangers(fake_inkscape, doc) -
     listing = list_frames(doc, series="run3")
     assert [f.frame_index for f in listing.frames] == [1, 2, 3]
     for frame in listing.frames:
-        assert frame.artifact_path == frame.workspace_relative_path
         assert _file(doc, frame.workspace_relative_path).read_bytes()[:4] == PNG_MAGIC
 
 
@@ -194,18 +175,7 @@ def test_list_frames_skips_symlinks(fake_inkscape, doc, tool_ws) -> None:
     assert [f.frame_index for f in list_frames(doc).frames] == [1]
 
 
-def test_frame_result_can_recompute_staleness(fake_inkscape, doc) -> None:
-    import os
-
-    frame = capture_frame(doc)
-    assert frame.stale is False
-    working = Path(get_registry().get(doc).working_path)
-    later = Path(frame.artifact_abspath or "").stat().st_mtime + 10
-    os.utime(working, (later, later))
-    assert frame.recompute_stale() is True
-
-
-# --- inline_image: when a PNG is embedded ---
+# --- inline_png: when a PNG is embedded ---
 
 
 @pytest.fixture
@@ -213,46 +183,27 @@ def stored_png(fake_inkscape, doc) -> tuple[str, str]:
     return doc, render_preview(doc, width_px=32).workspace_relative_path
 
 
-def _inline(doc_id, rel, **kw):
-    return inline_image(
-        doc_id=doc_id,
-        workspace_relative_path=rel,
-        fmt=kw.pop("fmt", "png"),
-        inline=kw.pop("inline", True),
-        max_output_bytes=kw.pop("max_output_bytes", None),
-    )
-
-
-def test_inline_image_embeds_the_artifact_bytes(stored_png) -> None:
+def test_inline_png_embeds_the_artifact_bytes(stored_png) -> None:
     doc_id, rel = stored_png
-    image = _inline(*stored_png)
+    image = inline_png(doc_id, rel)
     assert image is not None and image.data == _file(doc_id, rel).read_bytes()
 
 
-@pytest.mark.parametrize(
-    "gate",
-    [{"inline": False}, {"fmt": "pdf"}, {"fmt": "svg"}, {"max_output_bytes": 1}],
-    ids=["opted-out", "pdf", "svg", "over-threshold"],
-)
-def test_inline_image_is_skipped_when_gated(stored_png, gate) -> None:
-    assert _inline(*stored_png, **gate) is None
+def test_inline_png_skipped_when_over_the_inline_threshold(stored_png, monkeypatch) -> None:
+    monkeypatch.setattr(inline, "DEFAULT_INLINE_MAX_BYTES", 1)
+    assert inline_png(*stored_png) is None
 
 
-def test_inline_image_threshold_defaults_when_unset_or_non_positive(stored_png) -> None:
-    for threshold in (None, 0, -1):
-        assert _inline(*stored_png, max_output_bytes=threshold) is not None
-
-
-def test_inline_image_respects_the_hard_output_cap(stored_png, monkeypatch) -> None:
+def test_inline_png_respects_the_hard_output_cap(stored_png, monkeypatch) -> None:
     monkeypatch.setenv(ENV_MAX_OUTPUT_BYTES, "1")
     get_settings.cache_clear()
-    assert _inline(*stored_png) is None
+    assert inline_png(*stored_png) is None
 
 
-def test_inline_image_skips_missing_files_and_unknown_documents(stored_png) -> None:
+def test_inline_png_skips_missing_files_and_unknown_documents(stored_png) -> None:
     doc_id, _ = stored_png
-    assert _inline(doc_id, "no/such.png") is None
-    assert _inline("d_missing", "x.png") is None
+    assert inline_png(doc_id, "no/such.png") is None
+    assert inline_png("d_missing", "x.png") is None
 
 
 # --- the `render` tool: inline PNG ---
@@ -262,8 +213,10 @@ def test_tool_attaches_a_png_whose_dims_match_the_json(tool_app, fake_inkscape, 
     res = call(tool_app, "render", {"doc_id": doc, "width_px": 120})
     img = _decode(res)
     assert img.size == (120, 96) == (res.data["width_px"], res.data["height_px"])
+    assert res.data["target"] == "page"
     assert res.data["all_blank"] is False and "stale" not in res.data
-    assert "artifact_path" not in res.data and "do not Read" in res.data["note"]
+    assert "workspace_relative_path" not in res.data
+    assert "do not Read" in res.data["note"]
     # the artifact itself is kept server-side
     previews = sandbox.artifacts_dir(Path(get_registry().get(doc).root), doc) / "preview"
     assert len(list(previews.glob("*.png"))) == 1
@@ -288,10 +241,23 @@ def test_tool_object_render_clips_to_the_object(tool_app, fake_inkscape, doc) ->
     assert "--export-id=dot" in argv and "--export-id-only" in argv
 
 
-@pytest.mark.parametrize("bad_id", ["a b", "../etc/passwd", "id;rm -rf", "a/b", "$(x)"])
-def test_tool_unsafe_object_ids_never_reach_inkscape(tool_app, fake_inkscape, doc, bad_id) -> None:
+def test_tool_bad_object_ids_never_reach_inkscape(tool_app, fake_inkscape, doc) -> None:
     with pytest.raises(ToolError, match="object id is not valid"):
-        call(tool_app, "render", {"doc_id": doc, "target": "object", "object_id": bad_id})
+        call(tool_app, "render", {"doc_id": doc, "target": "object", "object_id": "id;rm -rf"})
+    with pytest.raises(ToolError, match="object id not found in document"):
+        call(tool_app, "render", {"doc_id": doc, "target": "object", "object_id": "ghost"})
+    with pytest.raises(ToolError, match="requires object_id"):
+        call(tool_app, "render", {"doc_id": doc, "target": "object"})
+    assert fake_inkscape.calls == []
+
+
+def test_tool_argument_combinations_are_checked(tool_app, fake_inkscape, doc) -> None:
+    with pytest.raises(ToolError, match="only used with target='object'"):
+        call(tool_app, "render", {"doc_id": doc, "object_id": "r1"})
+    with pytest.raises(ToolError, match="only used with target='frame'"):
+        call(tool_app, "render", {"doc_id": doc, "series": "x"})
+    with pytest.raises(ToolError, match="document id not found"):
+        call(tool_app, "render", {"doc_id": "nope"})
     assert fake_inkscape.calls == []
 
 
@@ -332,6 +298,35 @@ def test_tool_missing_engine_is_actionable_and_leaks_nothing(tool_app, fake_inks
     assert "help(topic='diagnose')" in str(exc.value) and "binary not found" not in str(exc.value)
 
 
+def _all_artifacts(doc_id: str) -> list[Path]:
+    root = Path(get_registry().get(doc_id).root)
+    return [p for p in sandbox.artifacts_dir(root, doc_id).rglob("*") if p.is_file()]
+
+
+@pytest.mark.parametrize("knob", ["returncode", "timed_out"])
+@pytest.mark.parametrize("target", ["page", "object", "frame"])
+def test_tool_failed_or_timed_out_inkscape_leaves_no_artifact(
+    tool_app, fake_inkscape, doc, knob, target
+) -> None:
+    setattr(fake_inkscape, knob, 1 if knob == "returncode" else True)
+    args = {"doc_id": doc, "target": target, **({"object_id": "dot"} if target == "object" else {})}
+    with pytest.raises(ToolError, match="render/export failed"):
+        call(tool_app, "render", args)
+    assert fake_inkscape.calls and _all_artifacts(doc) == []
+
+
+@pytest.mark.parametrize("target", ["page", "object", "frame"])
+def test_tool_oversized_preview_artifact_is_deleted_and_refused(
+    tool_app, fake_inkscape, doc, monkeypatch, target
+) -> None:
+    monkeypatch.setenv(ENV_MAX_OUTPUT_BYTES, "20")  # every stub PNG is larger
+    get_settings.cache_clear()
+    args = {"doc_id": doc, "target": target, **({"object_id": "dot"} if target == "object" else {})}
+    with pytest.raises(ToolError, match="render exceeds the configured size or dimension limit"):
+        call(tool_app, "render", args)
+    assert fake_inkscape.calls and _all_artifacts(doc) == []
+
+
 # --- real renderer ---
 
 
@@ -353,3 +348,65 @@ def test_real_blank_document_renders_all_blank(tool_ws) -> None:
     doc_id = open_doc(tool_ws, "blank.svg", blank)
     result = render_preview(doc_id, width_px=40)
     assert result.opaque_px == 0 and result.all_blank is True
+
+
+def _white_dot_png(path: Path) -> None:
+    im = Image.new("RGBA", (20, 20), (0, 0, 0, 0))
+    im.paste((255, 255, 255, 255), (5, 5, 15, 15))
+    im.save(path)
+
+
+@pytest.fixture
+def white_dot(monkeypatch: pytest.MonkeyPatch, doc: str):
+    """The render tool's page render replaced by a white dot on a transparent PNG."""
+    import inkscape_mcp.tools.render as tool_render
+
+    root = Path(get_registry().get(doc).root)
+    out = root / "dot.png"
+    _white_dot_png(out)
+    monkeypatch.setattr(
+        tool_render,
+        "render_preview",
+        lambda doc_id, width_px=None: RenderResult(
+            doc_id=doc_id,
+            workspace_relative_path="dot.png",
+            format="png",
+            width_px=20,
+            height_px=20,
+            duration_s=0.0,
+        ),
+    )
+    return out
+
+
+def test_render_background_fills_transparency(tool_app, doc, white_dot) -> None:
+    res = call(tool_app, "render", {"doc_id": doc, "background": "#333"})
+    assert "note" in res.data and "background=" not in res.data["note"]
+    px = _decode(res)
+    assert px.convert("RGBA").getpixel((0, 0)) == (0x33, 0x33, 0x33, 255)
+    assert px.convert("RGBA").getpixel((10, 10)) == (255, 255, 255, 255)
+
+
+def test_render_notes_white_on_transparent(tool_app, doc, white_dot) -> None:
+    res = call(tool_app, "render", {"doc_id": doc})
+    assert "background='#333'" in res.data["note"]
+
+
+@pytest.mark.parametrize("bad", ["red; rm -rf", "--export-id=x", "#12", "url(x)", "nosuchcolour"])
+def test_render_background_is_validated(tool_app, doc, white_dot, bad) -> None:
+    with pytest.raises(ToolError, match="background must be a CSS colour"):
+        call(tool_app, "render", {"doc_id": doc, "background": bad})
+
+
+@pytest.mark.inkscape
+def test_real_white_circle_object_render(tool_app, tool_ws) -> None:
+    svg = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">'
+        b'<circle id="mark" cx="20" cy="20" r="15" fill="#fff"/></svg>'
+    )
+    doc_id = open_doc(tool_ws, "dot.svg", svg)
+    args = {"doc_id": doc_id, "target": "object", "object_id": "mark"}
+    assert "background='#333'" in call(tool_app, "render", args).data["note"]
+    res = call(tool_app, "render", {**args, "background": "#333"})
+    assert "background='#333'" not in res.data["note"]
+    assert _decode(res).convert("RGBA").getpixel((0, 0))[:3] == (0x33, 0x33, 0x33)

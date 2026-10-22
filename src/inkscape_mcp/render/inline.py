@@ -2,9 +2,8 @@
 
 Shared by the render/export tools so the agent perceives its output without a second `Read` of a
 server-side artifact path. Bytes are always read from a SERVER-MINTED sandbox artifact path (never
-client input, sec.12) and are gated by an `inline` flag, the raster-format allowlist and a byte
-threshold, so an over-threshold export still produces the file and reports its path — it is just not
-embedded.
+client input, sec.12) and are gated by a byte threshold, so an over-threshold export still produces
+the file and reports its path — it is just not embedded.
 """
 
 from __future__ import annotations
@@ -24,14 +23,8 @@ _logger = get_logger("render.inline")
 #: without a second `Read` of the artifact path. The default is deliberately small (≈5 MiB) — far
 #: below the hard `Settings.max_output_bytes` artifact cap — because an inlined PNG is
 #: base64-encoded into the MCP message; an over-threshold export still produces the file and
-#: reports its path, it is just not embedded. A caller can raise/lower this per call via
-#: `max_output_bytes`, or set `inline=False` to opt out of embedding entirely.
+#: reports its path, it is just not embedded.
 DEFAULT_INLINE_MAX_BYTES = 5 * 1024 * 1024
-
-#: Raster formats whose artifact bytes can be embedded as an MCP ImageContent block. Vector outputs
-#: (PDF/SVG) are never inlined — they are not an image content type — so they always return the bare
-#: structured result with the artifact path.
-_INLINE_FORMATS = frozenset({"png"})
 
 
 def resolve_artifact_abspath(doc_id: str, workspace_relative_path: str) -> Path | None:
@@ -50,46 +43,23 @@ def resolve_artifact_abspath(doc_id: str, workspace_relative_path: str) -> Path 
     return candidate if candidate.is_file() else None
 
 
-def inline_image(
-    *,
-    doc_id: str,
-    workspace_relative_path: str,
-    fmt: str,
-    inline: bool,
-    max_output_bytes: int | None,
-) -> Image | None:
-    """Build an MCP `Image` for a produced raster artifact, gated by `inline` + the byte threshold.
+def png_image(abspath: Path | None) -> Image | None:
+    """An MCP `Image` for a produced PNG artifact, or None when it must not be embedded.
 
-    Returns None (skip embedding) when: `inline` is False; the format is not an inlineable raster
-    (PDF/SVG); the artifact cannot be resolved/read; or its on-disk size exceeds the effective
-    threshold (`max_output_bytes` when given and > 0, else `DEFAULT_INLINE_MAX_BYTES`). The bytes
-    are read from the SERVER-MINTED sandbox artifact path, never from client input (sec.12).
+    Returns None when `abspath` is None/unreadable or its on-disk size exceeds
+    `min(DEFAULT_INLINE_MAX_BYTES, Settings.max_output_bytes)`. The caller passes a SERVER-MINTED
+    sandbox path, never client input (sec.12).
     """
-    if not inline or fmt not in _INLINE_FORMATS:
-        return None
-    threshold = (
-        max_output_bytes
-        if (max_output_bytes is not None and max_output_bytes > 0)
-        else (DEFAULT_INLINE_MAX_BYTES)
-    )
-    abspath = resolve_artifact_abspath(doc_id, workspace_relative_path)
     if abspath is None:
         return None
+    limit = min(DEFAULT_INLINE_MAX_BYTES, get_settings().max_output_bytes)
     try:
         size = abspath.stat().st_size
-    except OSError:  # pragma: no cover - file existence just checked
+        if size > limit:
+            _logger.info(
+                "inline image skipped: over threshold", extra={"size": size, "threshold": limit}
+            )
+            return None
+        return Image(data=abspath.read_bytes(), format="png")
+    except OSError:
         return None
-    if size > threshold:
-        _logger.info(
-            "inline image skipped: over threshold",
-            extra={"doc_id": doc_id, "size": size, "threshold": threshold},
-        )
-        return None
-    # Defense in depth: never embed a file larger than the configured hard artifact cap either.
-    if size > get_settings().max_output_bytes:
-        return None
-    try:
-        data = abspath.read_bytes()
-    except OSError:  # pragma: no cover
-        return None
-    return Image(data=data, format=fmt)

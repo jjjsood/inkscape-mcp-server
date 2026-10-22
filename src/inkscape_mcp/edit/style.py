@@ -1,10 +1,10 @@
 """Direct-DOM style edit engine (ADR-005).
 
-Pure ``mutate(tree) -> str`` builders for the five style tools (``set_fill``, ``set_stroke``,
-``set_opacity``, ``replace_color``, ``apply_palette``). Each function returns a closure suitable
-as the ``mutate`` callback of :func:`inkscape_mcp.edit.pipeline.apply_edit`: it edits the parsed
-working tree IN MEMORY and returns a short human summary of what changed. No MCP decorators live
-here — the ``inkscape_mcp.tools.style`` layer wraps these and maps exceptions to ``ToolError``.
+Pure ``fn(tree, ...) -> str`` edits for the five style tools (``set_fill``, ``set_stroke``,
+``set_opacity``, ``replace_color``, ``apply_palette``). Each edits the parsed working tree IN MEMORY
+(called from ``edit.ops`` inside the shared edit pipeline) and returns a short human summary of
+what changed. No MCP decorators live here — the ``edit`` tool (``inkscape_mcp.tools.edit``)
+wraps these and maps exceptions to ``ToolError``.
 
 SAFETY (sec.12): every colour input is validated through :func:`normalize_color` and every
 length through :func:`normalize_length` (both reject CSS-injection punctuation) BEFORE it is
@@ -17,13 +17,23 @@ on the working copy via the pipeline.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 
 from lxml import etree
 
+from inkscape_mcp.document.inspect import (
+    _CSS_RULE_RE,
+    _CSS_SIMPLE_SELECTOR_RE,
+    _CssRule,
+    _document_css_rules,
+    _element_classes,
+    _own_paint_value,
+    is_element,
+    local_name,
+)
 from inkscape_mcp.edit.dom import (
     EditError,
     color_key,
+    fmt_num,
     is_url_paint,
     normalize_color,
     normalize_length,
@@ -45,11 +55,6 @@ _COLOR_PROPERTIES: tuple[str, ...] = (
     "lighting-color",
     "color",
 )
-
-#: The ``mutate`` callback type re-declared locally to avoid importing from the pipeline (which
-#: would create an import cycle through the tools layer). Matches
-#: :data:`inkscape_mcp.edit.pipeline.MutateFn`.
-MutateFn = Callable[[etree._ElementTree], str]
 
 #: CSS named colours (Color Module Level 4) plus the SVG keywords ``none`` / ``transparent`` /
 #: ``currentcolor``. Used to STRICTLY validate a named-colour token: :func:`normalize_color`
@@ -241,18 +246,14 @@ def _check_opacity(value: float) -> float:
     return num
 
 
-def _fmt_opacity(value: float) -> str:
-    """Format an opacity value compactly (trailing zeros trimmed) for an attribute/style value."""
-    text = f"{value:.6f}".rstrip("0").rstrip(".")
-    return text if text else "0"
-
-
 def _plural(count: int) -> str:
     return "object" if count == 1 else "objects"
 
 
-def set_fill_mutate(object_ids: list[str], color: str, opacity: float | None = None) -> MutateFn:
-    """Build a mutate that sets ``fill`` (and optionally ``fill-opacity``) on each target.
+def set_fill(
+    tree: etree._ElementTree, object_ids: list[str], color: str, opacity: float | None = None
+) -> str:
+    """Set ``fill`` (and optionally ``fill-opacity``) on each target.
 
     The paint is validated/canonicalized eagerly so an invalid value is rejected before any
     pipeline side effect. ``color`` accepts a colour OR a ``url(#id)`` paint-server reference (a
@@ -264,26 +265,23 @@ def set_fill_mutate(object_ids: list[str], color: str, opacity: float | None = N
     # compared verbatim (key=None) — lowercasing an id could falsely treat two distinct refs as one.
     fill_key = None if is_url_paint(fill) else color_key
     fill_opacity = None if opacity is None else _check_opacity(opacity)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        targets = require_targets(tree.getroot(), object_ids)
-        for elem in targets:
-            set_style_property(elem, "fill", fill, key=fill_key)
-            if fill_opacity is not None:
-                set_style_property(elem, "fill-opacity", _fmt_opacity(fill_opacity))
-        count = len(targets)
-        return f"set fill on {count} {_plural(count)}"
-
-    return mutate
+    targets = require_targets(tree.getroot(), object_ids)
+    for elem in targets:
+        set_style_property(elem, "fill", fill, key=fill_key)
+        if fill_opacity is not None:
+            set_style_property(elem, "fill-opacity", fmt_num(fill_opacity))
+    count = len(targets)
+    return f"set fill on {count} {_plural(count)}"
 
 
-def set_stroke_mutate(
+def set_stroke(
+    tree: etree._ElementTree,
     object_ids: list[str],
     color: str | None = None,
     width: str | None = None,
     opacity: float | None = None,
-) -> MutateFn:
-    """Build a mutate that sets any provided of ``stroke`` / ``stroke-width`` / ``stroke-opacity``.
+) -> str:
+    """Set any provided of ``stroke`` / ``stroke-width`` / ``stroke-opacity``.
 
     At least one of ``color``, ``width``, ``opacity`` must be supplied (else :class:`EditError`).
     Each is validated eagerly: paint via :func:`normalize_paint` (a colour OR a ``url(#id)``
@@ -293,50 +291,37 @@ def set_stroke_mutate(
         raise EditError("set_stroke requires at least one of color, width, opacity")
 
     stroke = None if color is None else normalize_paint(color)
-    # See set_fill_mutate: a url(#id) ref compares verbatim, a colour uses the color_key no-op key.
+    # See set_fill: a url(#id) ref compares verbatim, a colour uses the color_key no-op key.
     stroke_key = None if (stroke is not None and is_url_paint(stroke)) else color_key
     stroke_width = None if width is None else normalize_length(width)
     stroke_opacity = None if opacity is None else _check_opacity(opacity)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        targets = require_targets(tree.getroot(), object_ids)
-        changed: list[str] = []
-        for elem in targets:
-            if stroke is not None:
-                set_style_property(elem, "stroke", stroke, key=stroke_key)
-            if stroke_width is not None:
-                set_style_property(elem, "stroke-width", stroke_width)
-            if stroke_opacity is not None:
-                set_style_property(elem, "stroke-opacity", _fmt_opacity(stroke_opacity))
+    targets = require_targets(tree.getroot(), object_ids)
+    changed: list[str] = []
+    for elem in targets:
         if stroke is not None:
-            changed.append("color")
+            set_style_property(elem, "stroke", stroke, key=stroke_key)
         if stroke_width is not None:
-            changed.append("width")
+            set_style_property(elem, "stroke-width", stroke_width)
         if stroke_opacity is not None:
-            changed.append("opacity")
-        count = len(targets)
-        return f"set stroke {'/'.join(changed)} on {count} {_plural(count)}"
-
-    return mutate
-
-
-def set_opacity_mutate(object_ids: list[str], opacity: float) -> MutateFn:
-    """Build a mutate that sets element-level ``opacity`` (``[0, 1]``) on each target."""
-    value = _check_opacity(opacity)
-    formatted = _fmt_opacity(value)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        targets = require_targets(tree.getroot(), object_ids)
-        for elem in targets:
-            set_style_property(elem, "opacity", formatted)
-        count = len(targets)
-        return f"set opacity on {count} {_plural(count)}"
-
-    return mutate
+            set_style_property(elem, "stroke-opacity", fmt_num(stroke_opacity))
+    if stroke is not None:
+        changed.append("color")
+    if stroke_width is not None:
+        changed.append("width")
+    if stroke_opacity is not None:
+        changed.append("opacity")
+    count = len(targets)
+    return f"set stroke {'/'.join(changed)} on {count} {_plural(count)}"
 
 
-def _is_element(elem: etree._Element) -> bool:
-    return isinstance(elem.tag, str)
+def set_opacity(tree: etree._ElementTree, object_ids: list[str], opacity: float) -> str:
+    """Set element-level ``opacity`` (``[0, 1]``) on each target."""
+    formatted = fmt_num(_check_opacity(opacity))
+    targets = require_targets(tree.getroot(), object_ids)
+    for elem in targets:
+        set_style_property(elem, "opacity", formatted)
+    count = len(targets)
+    return f"set opacity on {count} {_plural(count)}"
 
 
 def _scope_elements(root: etree._Element, scope_ids: list[str] | None) -> list[etree._Element]:
@@ -347,13 +332,13 @@ def _scope_elements(root: etree._Element, scope_ids: list[str] | None) -> list[e
     document (every element under the root, root included) is scanned.
     """
     if scope_ids is None:
-        return [elem for elem in root.iter() if _is_element(elem)]
+        return [elem for elem in root.iter() if is_element(elem)]
     roots = require_targets(root, scope_ids)
     elements: list[etree._Element] = []
     seen: set[int] = set()
     for sub in roots:
         for elem in sub.iter():
-            if _is_element(elem) and id(elem) not in seen:
+            if is_element(elem) and id(elem) not in seen:
                 seen.add(id(elem))
                 elements.append(elem)
     return elements
@@ -429,6 +414,71 @@ def _replace_color_in_css(elem: etree._Element, from_key: str, to_color: str) ->
     return total
 
 
+_CssKey = tuple[str | None, str | None, str | None]
+
+
+def _rule_key(rule: _CssRule) -> _CssKey:
+    return (rule.tag, rule.cls, rule.elem_id)
+
+
+def _winning_rule(elem: etree._Element, rules: list[_CssRule], prop: str) -> _CssRule | None:
+    """The `<style>` rule that supplies `prop` to `elem` (same cascade as `_own_paint_value`)."""
+    classes, tag, elem_id = _element_classes(elem), local_name(elem), elem.get("id")
+    best: _CssRule | None = None
+    for rule in rules:
+        if prop in rule.decls and rule.matches(tag=tag, classes=classes, elem_id=elem_id):
+            if best is None or (rule.specificity, rule.order) > (best.specificity, best.order):
+                best = rule
+    return best
+
+
+def _rewritable_rule_keys(root: etree._Element, from_key: str, in_scope: set[int]) -> set[_CssKey]:
+    """Class/id rule keys whose `from_key` colour may be rewritten IN the `<style>` rule.
+
+    A rule qualifies when it is the winning source of a `from_key` paint (no inline/attribute
+    override) for at least one in-scope element and for NO out-of-scope element: a class shared
+    with untargeted elements must not recolour them, so those keep the inline-override fallback.
+    """
+    rules = _document_css_rules(root)
+    used: set[_CssKey] = set()
+    blocked: set[_CssKey] = set()
+    for elem in root.iter():
+        if not is_element(elem):
+            continue
+        for prop in _COLOR_PROPERTIES:
+            if prop in parse_style(elem) or elem.get(prop) is not None:
+                continue
+            rule = _winning_rule(elem, rules, prop)
+            if rule is None or color_key(rule.decls[prop].strip()) != from_key:
+                continue
+            key = _rule_key(rule)
+            if rule.cls is None and rule.elem_id is None:
+                blocked.add(key)  # type / universal selectors are never rewritten
+            (used if id(elem) in in_scope else blocked).add(key)
+    return used - blocked
+
+
+def _rewrite_css_rules(
+    text: str, keys: set[_CssKey], from_key: str, to_color: str
+) -> tuple[str, int]:
+    """Rewrite `from_key` colours inside rule blocks whose selectors are ALL in `keys`."""
+    total = 0
+
+    def block(match: re.Match[str]) -> str:
+        nonlocal total
+        sels = [s.split()[-1] for s in match.group(1).split(",") if s.strip()]
+        found = [_CSS_SIMPLE_SELECTOR_RE.match(t) for t in sels]
+        if not found or any(
+            m is None or (m.group(1), m.group(2), m.group(3)) not in keys for m in found
+        ):
+            return match.group(0)
+        body, n = _rewrite_css(match.group(2), from_key, to_color)
+        total += n
+        return match.group(1) + "{" + body + "}"
+
+    return _CSS_RULE_RE.sub(block, text), total
+
+
 def _replace_color_in_tree(
     root: etree._Element,
     from_color: str,
@@ -438,23 +488,53 @@ def _replace_color_in_tree(
     """Replace ``from_color`` with ``to_color`` across the document (or within ``scope_ids``).
 
     Both colours are assumed already validated by the caller. Returns the total number of
-    property/attribute rewrites made.
+    property/attribute rewrites made. A scope naming the root ``<svg>`` is document-wide; a
+    ``<style>`` element in the scope has all its colour declarations rewritten.
     """
     from_key = color_key(from_color)
+    styles: list[etree._Element] = []
+    if scope_ids is not None:
+        targets = require_targets(root, scope_ids)
+        if any(t is root for t in targets):
+            scope_ids = None
+        else:
+            styles = [t for t in targets if local_name(t) == "style"]
     total = 0
-    for elem in _scope_elements(root, scope_ids):
+    scope = _scope_elements(root, scope_ids)
+    for elem in scope:
         total += _replace_color_in_element(elem, from_key, to_color)
-        # `<style>` rules paint objects anywhere in the document, so they are rewritten only for
-        # a document-wide replacement, never for a scoped one.
-        if scope_ids is None and etree.QName(elem).localname == "style":
+        if scope_ids is None and local_name(elem) == "style":
             total += _replace_color_in_css(elem, from_key, to_color)
+    for style in styles:
+        total += _replace_color_in_css(style, from_key, to_color)
+    if scope_ids is None:
+        return total
+    # Scoped: a CSS-painted target (class / id rule) is recoloured IN its rule when only targeted
+    # elements use that rule; otherwise (shared class, type selector) overridden inline per element.
+    keys = _rewritable_rule_keys(root, from_key, {id(e) for e in scope})
+    if keys:
+        for style in root.iter():
+            if is_element(style) and local_name(style) == "style":
+                for node, attr in [(style, "text"), *((c, "tail") for c in style)]:
+                    text = getattr(node, attr)
+                    if text and len(text) <= _MAX_CSS_CHARS:
+                        new, n = _rewrite_css_rules(text, keys, from_key, to_color)
+                        setattr(node, attr, new)
+                        total += n
+    rules = _document_css_rules(root)
+    for elem in scope if rules else ():
+        for prop in _COLOR_PROPERTIES:
+            value = _own_paint_value(elem, rules, prop)
+            if value is not None and color_key(value) == from_key:
+                set_style_property(elem, prop, to_color)
+                total += 1
     return total
 
 
-def replace_color_mutate(
-    from_color: str, to_color: str, scope_ids: list[str] | None = None
-) -> MutateFn:
-    """Build a mutate that replaces one colour with another across the document or a scope.
+def replace_color(
+    tree: etree._ElementTree, from_color: str, to_color: str, scope_ids: list[str] | None = None
+) -> str:
+    """Replace one colour with another across the document or a scope.
 
     Both colours are validated/canonicalized eagerly. Matching is by :func:`color_key` (casefold
     + hex shorthand expansion) against inline-style colour properties AND presentation attributes;
@@ -462,45 +542,38 @@ def replace_color_mutate(
     """
     normalized_from = normalize_color(from_color)
     normalized_to = normalize_color(to_color)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        count = _replace_color_in_tree(tree.getroot(), normalized_from, normalized_to, scope_ids)
-        return f"replaced {normalized_from} with {normalized_to} ({count} {_plural(count)})"
-
-    return mutate
+    count = _replace_color_in_tree(tree.getroot(), normalized_from, normalized_to, scope_ids)
+    return f"replaced {normalized_from} with {normalized_to} ({count} {_plural(count)})"
 
 
-def apply_palette_mutate(mapping: dict[str, str], scope_ids: list[str] | None = None) -> MutateFn:
-    """Build a mutate that applies many ``from -> to`` colour replacements in one operation.
+def apply_palette(
+    tree: etree._ElementTree, mapping: dict[str, str], scope_ids: list[str] | None = None
+) -> str:
+    """Apply many ``from -> to`` colour replacements in one operation.
 
     Every key AND value is STRICTLY colour-validated eagerly via :func:`validate_palette_color`
     (a typo'd named colour such as ``notacolor`` is rejected, not silently accepted), so
-    an invalid entry raises BEFORE the builder returns and therefore before any op record, snapshot,
+    an invalid entry raises BEFORE the tree is touched and therefore before any op record, snapshot,
     or write exists. Each mapping entry reuses the same colour-matching logic as
-    :func:`replace_color_mutate`. The summary reports the total replacement count across entries.
+    :func:`replace_color`. The summary reports the total replacement count across entries.
     """
     if not mapping:
         raise EditError("apply_palette requires a non-empty colour mapping")
     normalized: list[tuple[str, str]] = [
         (validate_palette_color(src), validate_palette_color(dst)) for src, dst in mapping.items()
     ]
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        total = 0
-        for src, dst in normalized:
-            total += _replace_color_in_tree(root, src, dst, scope_ids)
-        return f"applied palette ({len(normalized)} mappings, {total} {_plural(total)})"
-
-    return mutate
+    root = tree.getroot()
+    total = 0
+    for src, dst in normalized:
+        total += _replace_color_in_tree(root, src, dst, scope_ids)
+    return f"applied palette ({len(normalized)} mappings, {total} {_plural(total)})"
 
 
 __all__ = [
-    "MutateFn",
-    "apply_palette_mutate",
-    "replace_color_mutate",
-    "set_fill_mutate",
-    "set_opacity_mutate",
-    "set_stroke_mutate",
+    "apply_palette",
+    "replace_color",
+    "set_fill",
+    "set_opacity",
+    "set_stroke",
     "validate_palette_color",
 ]

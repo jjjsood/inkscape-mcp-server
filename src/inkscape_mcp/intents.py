@@ -27,6 +27,7 @@ silently drift from it.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -729,6 +730,31 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
     ),
     # --- history / undo ---
     _entry(
+        "Clean up / prune old history and free snapshot space",
+        "history",
+        ["history:prune"],
+        "history(doc_id, action='prune') deletes old snapshots/operation records and live frames "
+        "beyond the retention limits and reports freed_bytes. Recent snapshots are kept.",
+        [
+            "prune",
+            "clean up the history",
+            "clean up history",
+            "cleanup history",
+            "tidy history",
+            "tidy up the history",
+            "free snapshot space",
+            "free up space",
+            "snapshot space",
+            "reduce history",
+            "shrink history",
+            "old snapshots",
+            "delete snapshots",
+            "clear history",
+            "history size",
+        ],
+        _doc_call("history", action="prune"),
+    ),
+    _entry(
         "Snapshot, undo, or restore the document state",
         "history",
         ["history:list", "history:create", "history:restore"],
@@ -806,13 +832,66 @@ def _match(entry: IntentEntry) -> IntentMatch:
     )
 
 
+#: German matcher keywords by `goal_pattern` (agents often pass the user's own words). Kept out of
+#: `INTENT_MAP` so the published intents stay English; only the matcher reads them.
+_GERMAN_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "Draw a rectangle / square": ("rechteck", "quadrat"),
+    "Draw a circle": ("kreis",),
+    "Add text / a label": ("text hinzu", "text anlegen", "beschriftung", "schreib"),
+    "Group objects together / make a group": ("gruppier",),
+    "Create a brand-new blank document": ("neue datei", "neues dokument", "leere fläche"),
+    "Open an existing SVG file to work on it": ("öffne", "oeffne", "datei laden"),
+    "Understand a document's structure (tree, layers, styles, fonts, assets)": (
+        "struktur",
+        "ebenen",
+    ),
+    "Validate that a document is well-formed / correct": ("validier", "prüf"),
+    "Diagnose why Inkscape or an export is not working": (
+        "funktioniert",
+        "installation",
+        "geht nicht",
+    ),
+    "Look at the current result (preview image)": ("zeig mir", "vorschau", "ansehen"),
+    "Change an object's fill color": ("färbe", "faerbe", "farbe ändern", "füllung"),
+    "Change an object's stroke / outline": ("kontur", "rand", "strichstärke"),
+    "Change opacity / transparency": ("deckkraft", "transparen"),
+    "Change the font of text": ("schrift",),
+    "Replace text content": ("text ersetzen", "text ändern", "ersetze den text"),
+    "Replace one color with another across the document": ("ersetze", "farbe tauschen", "umfärb"),
+    "Apply a color palette / theme to the document": ("farbpalette", "farbschema"),
+    "Move / scale / rotate an object": (
+        "verschieb",
+        "skalier",
+        "dreh",
+        "größer",
+        "kleiner machen",
+        "vergrößer",
+        "verkleiner",
+    ),
+    "Duplicate or rename an object": ("dupliz", "kopier", "umbenenn"),
+    "Delete an object": ("lösch", "loesch", "entfern"),
+    "Resize the canvas or fit it to the content": ("zuschneiden", "seitengröße", "zeichenfläche"),
+    "Export a PNG (or other raster/PDF) of the document": ("als png", "exportier"),
+    "Export many sizes/formats at once (batch / icon set)": ("icon-set", "mehrere größen"),
+    "Make the SVG smaller / optimized for the web": (
+        "kleiner",
+        "fürs web",
+        "für das web",
+        "optimier",
+    ),
+    "Save the document to a new file": ("speicher",),
+    "Snapshot, undo, or restore the document state": ("rückgängig", "wiederherstell", "zurück"),
+}
+
+
 def _score_entry(entry: IntentEntry, goal_lc: str) -> int:
     """Count this entry's keywords that appear as substrings of the lowercased goal.
 
     Deterministic and dependency-free: each keyword contributes 1 to the score if it is a substring
     of the goal. A longer keyword still counts as 1 hit; ordering ties are broken by map order.
     """
-    return sum(1 for kw in entry.keywords if kw in goal_lc)
+    german = _GERMAN_KEYWORDS.get(entry.goal_pattern, ())
+    return sum(1 for kw in (*entry.keywords, *german) if kw in goal_lc)
 
 
 def detect_out_of_scope(goal: str) -> OutOfScopeRule | None:
@@ -833,12 +912,18 @@ def match_intents(goal: str, limit: int = 3) -> list[IntentMatch]:
     """Score `INTENT_MAP` against `goal` (lowercased keyword substring) and return the best matches.
 
     Returns up to `limit` entries with a non-zero score, highest score first, ties broken by map
-    order (deterministic). Returns an empty list when nothing matches (the caller then suggests
-    `help(topic='ops')`).
+    order (deterministic). Entries targeting a tool the current flags hide (`live`, `actions`) are
+    skipped so guidance never points at an uncallable tool. Returns an empty list when nothing
+    matches (the caller then suggests `help(topic='ops')`).
     """
     goal_lc = goal.lower()
+    from inkscape_mcp.tool_tags import hidden_tools
+
+    hidden = hidden_tools()
     scored: list[tuple[int, int, IntentEntry]] = []
     for idx, entry in enumerate(INTENT_MAP):
+        if any(t.tool in hidden for t in entry.targets):
+            continue
         score = _score_entry(entry, goal_lc)
         if score > 0:
             scored.append((score, idx, entry))
@@ -862,6 +947,5 @@ def intents_summary_json() -> str:
     Shape: ``{"intents": [{goal_pattern, targets, how_to, group, example}, ...]}`` — the same map
     `help(goal=...)` matches against, minus the matcher keywords.
     """
-    entries = intents_summary()
-    body = ", ".join(m.model_dump_json(exclude_none=True) for m in entries)
-    return f'{{"intents": [{body}]}}'
+    entries = [m.model_dump(mode="json", exclude_none=True) for m in intents_summary()]
+    return json.dumps({"intents": entries}, ensure_ascii=False, separators=(",", ":"))

@@ -11,15 +11,16 @@ The resolved real path is the only value passed to copy (TOCTOU, §3).
 
 from __future__ import annotations
 
+import functools
 import json
+import posixpath
 import secrets
 import shutil
-from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel
 
-from inkscape_mcp.config import Settings, get_settings
+from inkscape_mcp.config import Settings, get_settings, utc_iso
 from inkscape_mcp.logging_setup import get_logger, log_file_io
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.limits import check_input_bytes_size, check_input_size
@@ -49,10 +50,6 @@ class DocEntry(BaseModel):
 
 def _registry_path(root: Path) -> Path:
     return root / sandbox.STATE_DIR / REGISTRY_FILENAME
-
-
-def _utc_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _mint_doc_id() -> str:
@@ -119,7 +116,7 @@ class Registry:
             source_path=rel_source,
             root=str(root),
             workspace_dir=str(sandbox.doc_dir(root, doc_id)),
-            opened_at=_utc_iso(),
+            opened_at=utc_iso(),
             original_path=str(original),
             working_path=str(working),
         )
@@ -173,7 +170,7 @@ class Registry:
             source_path="document.svg",
             root=str(root),
             workspace_dir=str(sandbox.doc_dir(root, doc_id)),
-            opened_at=_utc_iso(),
+            opened_at=utc_iso(),
             original_path=str(original),
             working_path=str(working),
         )
@@ -254,30 +251,39 @@ class Registry:
         )
 
 
-_registry_singleton: Registry | None = None
-
-
+@functools.cache
 def get_registry() -> Registry:
     """Return the process-wide `Registry` singleton (reset for tests via `reset_registry`)."""
-    global _registry_singleton
-    if _registry_singleton is None:
-        _registry_singleton = Registry()
-    return _registry_singleton
+    return Registry()
 
 
-def doc_not_found_message(*, limit: int = 5) -> str:
+#: Drop the cached singleton (test helper).
+reset_registry = get_registry.cache_clear
+
+
+def doc_not_found_message(given: str | None = None, *, limit: int = 5) -> str:
     """`document id not found` plus the next step: the open ids, or how to open one.
 
-    Host-path-free: only registry ids are listed, never source paths.
+    Host-path-free: only registry ids and root-relative source paths are shown, never absolute
+    paths. If `given` is the source path of exactly one open document, that doc_id is named.
+    Open ids are listed most recently opened first.
     """
-    ids = [e.doc_id for e in get_registry().list_documents()]
-    if not ids:
+    docs = get_registry().list_documents()
+    if not docs:
         return "document id not found; no document is open, call open(path=…|svg=…|canvas=…) first"
+    if given:
+        norm = posixpath.normpath(given.strip().replace("\\", "/"))
+        hits = [
+            e
+            for e in docs
+            if e.source_path != "document.svg"
+            and norm in (e.source_path, f"{e.root.rstrip('/')}/{e.source_path}")
+        ]
+        if len(hits) == 1:
+            return (
+                f"document id not found: {hits[0].source_path!r} is open as doc_id "
+                f"{hits[0].doc_id!r}; pass that doc_id"
+            )
+    ids = [e.doc_id for e in sorted(reversed(docs), key=lambda e: e.opened_at, reverse=True)]
     shown = ", ".join(ids[:limit]) + (f" (+{len(ids) - limit} more)" if len(ids) > limit else "")
-    return f"document id not found; open ids: {shown}"
-
-
-def reset_registry() -> None:
-    """Drop the cached singleton (test helper)."""
-    global _registry_singleton
-    _registry_singleton = None
+    return f"document id not found; open ids: {shown} (use the doc_id open returned, not a path)"

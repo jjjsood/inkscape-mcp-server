@@ -4,7 +4,7 @@ Pure ``mutate(tree) -> str`` functions used as the callbacks for the shared edit
 (:func:`inkscape_mcp.edit.pipeline.apply_edit`). Each one edits the parsed working tree IN
 MEMORY and returns a short human summary of what changed; none of them carry an ``@mcp.tool``
 decorator, perform any I/O, or invoke Inkscape — they are the per-tool kernels behind the thin
-MCP layer in ``inkscape_mcp.tools.transform``.
+``edit`` tool (``inkscape_mcp.tools.edit``).
 
 Scope (ADR-005): SIMPLE transforms only. Object moves/scales/rotations are expressed as SVG
 ``transform`` functions prepended to the target element (so they compose in parent space and stay
@@ -25,12 +25,13 @@ from __future__ import annotations
 import copy
 import math
 import os
+import re
 import tempfile
 from pathlib import Path
 
 from lxml import etree
 
-from inkscape_mcp.config import Settings, get_settings
+from inkscape_mcp.config import Settings, resolve_settings
 from inkscape_mcp.edit.dom import (
     SVG_NS,
     EditError,
@@ -42,6 +43,7 @@ from inkscape_mcp.edit.dom import (
     normalize_length,
     parse_viewbox,
     prepend_transform,
+    require_finite,
     require_target,
 )
 from inkscape_mcp.logging_setup import get_logger
@@ -63,10 +65,27 @@ _logger = get_logger("edit.transform")
 MAX_TILES = 1024
 
 
-def _require_finite(name: str, value: float) -> None:
-    """Reject a non-finite numeric input with a stable, host-path-free :class:`EditError`."""
-    if not math.isfinite(value):
-        raise EditError(f"{name} must be finite")
+_LEADING_TRANSLATE = re.compile(
+    r"^\s*translate\(\s*([-+.\d][-+.\deE]*)\s*(?:[,\s]\s*([-+.\d][-+.\deE]*))?\s*\)\s*"
+)
+
+
+def _prepend_translate(elem: etree._Element, dx: float, dy: float) -> None:
+    """Prepend ``translate(dx,dy)``, folding it into an existing leading translate.
+
+    ``translate(a) translate(b) rest`` == ``translate(a+b) rest``, so repeated moves keep ONE
+    translate instead of stacking.
+    """
+    existing = elem.get("transform") or ""
+    m = _LEADING_TRANSLATE.match(existing)
+    if m:
+        try:
+            dx, dy = dx + float(m.group(1)), dy + float(m.group(2) or 0)
+            existing = existing[m.end() :]
+        except ValueError:  # unparsable leading number: just stack
+            pass
+    new = f"translate({fmt_num(dx)},{fmt_num(dy)})"
+    elem.set("transform", f"{new} {existing}".strip())
 
 
 def move(tree: etree._ElementTree, object_id: str, dx: float, dy: float) -> str:
@@ -75,10 +94,10 @@ def move(tree: etree._ElementTree, object_id: str, dx: float, dy: float) -> str:
     Prepends ``translate(dx,dy)`` to the element's transform list. Raises
     :class:`TargetNotFound` if the id is absent and :class:`EditError` on a non-finite offset.
     """
-    _require_finite("dx", dx)
-    _require_finite("dy", dy)
+    require_finite("dx", dx)
+    require_finite("dy", dy)
     elem = require_target(tree.getroot(), object_id)
-    prepend_transform(elem, f"translate({fmt_num(dx)},{fmt_num(dy)})")
+    _prepend_translate(elem, dx, dy)
     return f"translated {object_id!r} by ({fmt_num(dx)},{fmt_num(dy)})"
 
 
@@ -107,8 +126,8 @@ def scale(tree: etree._ElementTree, object_id: str, sx: float, sy: float | None 
     :class:`TargetNotFound` if the id is absent.
     """
     factor_y = sx if sy is None else sy
-    _require_finite("sx", sx)
-    _require_finite("sy", factor_y)
+    require_finite("sx", sx)
+    require_finite("sy", factor_y)
     if sx <= 0 or factor_y <= 0:
         raise EditError("scale factors must be positive")
     if fmt_num(sx) == "0" or fmt_num(factor_y) == "0":
@@ -142,14 +161,14 @@ def rotate(
     :func:`scale`). Supplying only one of ``cx`` / ``cy`` is rejected with :class:`EditError`.
     Raises :class:`TargetNotFound` if the id is absent and :class:`EditError` on a non-finite value.
     """
-    _require_finite("degrees", degrees)
+    require_finite("degrees", degrees)
     if (cx is None) != (cy is None):
         raise EditError("rotation centre requires both cx and cy")
     elem = require_target(tree.getroot(), object_id)
     deg = fmt_num(degrees)
     if cx is not None and cy is not None:
-        _require_finite("cx", cx)
-        _require_finite("cy", cy)
+        require_finite("cx", cx)
+        require_finite("cy", cy)
         prepend_transform(elem, f"rotate({deg},{fmt_num(cx)},{fmt_num(cy)})")
         return f"rotated {object_id!r} by {deg}deg about ({fmt_num(cx)},{fmt_num(cy)})"
     center = _own_center(elem)
@@ -243,7 +262,7 @@ def resize_canvas(
     if bleed is not None and adjust_viewbox:
         raise EditError("resize_canvas bleed cannot be combined with adjust_viewbox")
     if bleed is not None:
-        _require_finite("bleed", bleed)
+        require_finite("bleed", bleed)
         if bleed < 0:
             raise EditError("resize_canvas bleed must be 0 or greater")
     safe_bleed_color = normalize_color(bleed_color) if bleed else bleed_color
@@ -331,10 +350,6 @@ class ContentBBoxError(Exception):
     """
 
 
-def _settings(settings: Settings | None) -> Settings:
-    return settings if settings is not None else get_settings()
-
-
 def _run_query_all(query_path: Path, settings: Settings) -> tuple[float, float, float, float]:
     """Run ``inkscape --query-all <file>`` and parse the root ``<svg>`` union bbox.
 
@@ -377,22 +392,6 @@ def _run_query_all(query_path: Path, settings: Settings) -> tuple[float, float, 
     return x, y, w, h
 
 
-def query_content_bbox(
-    working_path: Path, settings: Settings | None = None
-) -> tuple[float, float, float, float]:
-    """Query a file's CONTENT bounding box via the Inkscape engine (ADR-005).
-
-    Thin wrapper over :func:`_run_query_all` that runs ``--query-all`` on the file as-is. The bbox
-    is reported in the file's OUTPUT (pixel) space — i.e. mapped through its ``width``/``height``
-    and ``viewBox``. For an idempotent fit use :func:`content_bbox_user_space`, which probes a
-    px-identity copy so the box is reported in the document's intrinsic user-coordinate space.
-
-    Raises :class:`ContentBBoxError` if Inkscape is unavailable, the query times out or fails, the
-    document has no drawable content, or the bbox is degenerate.
-    """
-    return _run_query_all(working_path, _settings(settings))
-
-
 def content_bbox_user_space(
     tree: etree._ElementTree, working_path: Path, settings: Settings | None = None
 ) -> tuple[float, float, float, float]:
@@ -415,7 +414,7 @@ def content_bbox_user_space(
     the temp probe's directory implicitly via the OS temp dir — the probe content comes from
     ``tree`` (never client input). Raises :class:`ContentBBoxError` if the bbox cannot be computed.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     root = tree.getroot()
     identity = _synthesize_viewbox(root.get("width"), root.get("height"))
     if identity is None:
@@ -499,8 +498,8 @@ def tile(
         raise EditError("tile rows and cols must each be >= 1")
     if rows * cols > MAX_TILES:
         raise EditError(f"tile grid too large: {rows}x{cols} exceeds {MAX_TILES} cells")
-    _require_finite("dx", dx)
-    _require_finite("dy", dy)
+    require_finite("dx", dx)
+    require_finite("dy", dy)
 
     elem = require_target(tree.getroot(), object_id)
     parent = elem.getparent()
@@ -576,7 +575,6 @@ __all__ = [
     "fit_to_content",
     "move",
     "normalize_viewbox",
-    "query_content_bbox",
     "resize_canvas",
     "rotate",
     "scale",

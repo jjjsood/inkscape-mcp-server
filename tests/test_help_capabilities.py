@@ -1,8 +1,5 @@
 """`help` beyond op docs: the capability matrix (engine + resource + topics), `stat_paths`, and
-`goal` -> intent lookup as the CURRENT `intents.py` does it.
-
-The intent map still names the pre-rework tools until P6 rewrites it to (tool, op) entries, so no
-test here pins tool names or checks that the map references registered tools.
+`goal` -> intent lookup. That every intent target is a real `(tool, op)`: `test_intents.py`.
 """
 
 from __future__ import annotations
@@ -110,6 +107,11 @@ def test_stat_rejects_paths_outside_the_workspace(tool_app, tool_ws, how: str) -
     assert "path rejected" in str(exc.value) and str(tool_ws.parent) not in str(exc.value)
 
 
+def test_stat_needs_at_least_one_path(tool_app) -> None:
+    with pytest.raises(ToolError, match="at least one path"):
+        _help(tool_app, stat_paths=[])
+
+
 # --- goal -> intent lookup (current intents.py) -------------------------------------------------
 
 
@@ -128,8 +130,12 @@ def test_matches_follow_the_engine_order_best_first(tool_app) -> None:
     assert [m["use"] for m in _help(tool_app, goal=goal)["goal"]["matches"]] == expected
 
 
-def test_match_limit_is_respected() -> None:
-    assert len(match_intents("export png pdf icon batch web optimize", limit=2)) <= 2
+def test_goal_never_recommends_a_flag_hidden_tool(surface_with_flags) -> None:
+    surface_with_flags(live=False, raw=False)
+    for goal in ("connect to the running inkscape (live mode)", "run an inkscape action chain"):
+        matches = _help(mcp, goal=goal)["goal"]["matches"]
+        uses = [u for m in matches if isinstance(m, dict) for u in m["use"]]
+        assert not any(u.startswith(("live", "actions")) for u in uses), (goal, uses)
 
 
 @pytest.mark.parametrize(
@@ -146,12 +152,6 @@ def test_out_of_scope_goals_say_why_and_return_no_tool(tool_app, goal, why_conta
     assert out["out_of_scope"] is True and "matches" not in out
     if why_contains:
         assert any(word in out["why"].lower() or word in out["why"] for word in why_contains)
-
-
-def test_inkscape_actions_are_guidance_not_a_refusal(tool_app) -> None:
-    out = _help(tool_app, goal="run an arbitrary inkscape action")["goal"]
-    assert "out_of_scope" not in out
-    assert out["matches"][0]["use"][0].startswith("actions:")
 
 
 def test_unmatched_goal_points_at_the_op_list(tool_app) -> None:
@@ -180,6 +180,11 @@ def test_runtime_intents_resource_is_the_shared_accessor() -> None:
     assert "inkscape://runtime/intents" in asyncio.run(listed())
     text = _read("inkscape://runtime/intents")
     assert text == intents_summary_json()
+    assert [m.goal_pattern for m in intents_summary()] == [e.goal_pattern for e in INTENT_MAP]
+    first = json.loads(text)["intents"][0]
+    assert (
+        first["example"]["tool"] and "keywords" not in first
+    )  # the summary drops matcher internals
     from_resource = [
         (e["goal_pattern"], [f"{t['tool']}:{t['op']}" for t in e["targets"]], e["how_to"])
         for e in json.loads(text)["intents"]

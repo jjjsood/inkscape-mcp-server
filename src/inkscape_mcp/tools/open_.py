@@ -112,7 +112,7 @@ def open_(
             preview = render_preview(doc_id)
             return ok(
                 payload,
-                inline_png(doc_id, preview.workspace_relative_path or preview.artifact_path),
+                inline_png(doc_id, preview.workspace_relative_path),
             )
         return ok(payload)
 
@@ -127,7 +127,11 @@ def open_(
     except Exception as exc:
         # The document exists already; say so, so the caller can retry with `edit`.
         error = to_tool_error(exc)
-        raise ToolError(f"opened {doc_id}, but ops failed: {error}") from exc
+        raise ToolError(
+            f"opened {doc_id}, but ops failed: {error}; no op was applied, "
+            f"fix it and call edit(doc_id='{doc_id}', ops=[…])"
+        ) from exc
+    payload["summary"] = doc_summary(doc_id)  # reflect the document AFTER the ops
     payload.update(ops_payload(res, detail))
     return ok(payload, inline_png(doc_id, res.render_artifact))
 

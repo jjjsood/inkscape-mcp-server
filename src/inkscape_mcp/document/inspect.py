@@ -2,7 +2,7 @@
 
 Pure functions over the WORKING COPY (`DocEntry.working_path`), parsed once per call
 through the normative safe parser (`parse_svg_file`). No MCP decorators here; the tool
-layer (`inkscape_mcp.tools.document`) wraps these and maps errors to `ToolError`.
+layer (`inkscape_mcp.tools.inspect_`) wraps these and maps errors to `ToolError`.
 
 These models + function names are a CONTRACT consumed by (resources) and
 (validate) — do not rename.
@@ -24,6 +24,7 @@ Definitions chosen here (documented for downstream reuse):
 
 from __future__ import annotations
 
+import math
 import re
 import shutil
 from pathlib import Path
@@ -48,7 +49,7 @@ _logger = get_logger("document.inspect")
 
 SVG_NS = "http://www.w3.org/2000/svg"
 INKSCAPE_NS = "http://www.inkscape.org/namespaces/inkscape"
-SODIPODI_NS = "http://sodipodi.sourceforge.net/DTD/sodipodi-0.0.dtd"
+SODIPODI_NS = "http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
 XLINK_NS = "http://www.w3.org/1999/xlink"
 
 _INKSCAPE_LABEL = f"{{{INKSCAPE_NS}}}label"
@@ -83,9 +84,9 @@ GENERIC_FONT_KEYWORDS = frozenset(
 )
 
 # SVG element tags whose own attributes geometrically define an axis-aligned box without the render
-# engine (direct DOM, ADR-005). Paths / text / groups / transformed elements report bbox=None — a
-# true geometric bbox for those needs the Inkscape engine, out of scope for this read-only DOM
-# surface. polygon / polyline boxes are derived analytically from their `points` list.
+# engine (direct DOM, ADR-005); the element's own `transform` is applied. Paths / text / groups (and
+# rotated or skewed circles / ellipses) report bbox=None — a true geometric bbox for those needs the
+# Inkscape engine. polygon / polyline boxes are derived analytically from their `points` list.
 _BBOXABLE_TAGS = frozenset(
     {"rect", "image", "use", "circle", "ellipse", "line", "polygon", "polyline"}
 )
@@ -131,8 +132,10 @@ class DocSummary(BaseModel):
 
 class BBox(BaseModel):
     """An axis-aligned bounding box in user units (origin + extent), derived from an element's
-    own geometry attributes via direct DOM. Element transforms and path geometry are NOT applied;
-    elements whose box is not derivable from attributes report no bbox (the field is None)."""
+    own geometry attributes via direct DOM, through the element's own `transform` (so in its
+    parent's user space; ancestor transforms are not applied). Path / text / group geometry is
+    not derived; such elements, rotated/skewed circles and ellipses, and unparseable transforms
+    report no bbox (the field is None)."""
 
     x: float
     y: float
@@ -245,11 +248,12 @@ class ObjectRef(BaseModel):
 
     `object_id` is the element's `id` (objects with no id are excluded — they cannot be addressed by
     the id-taking edit tools, which is the whole point of this surface). `tag` is the local element
-    name. `bbox` is the element's attribute-derived axis-aligned box (None for path / text / group /
-    transformed elements — see :class:`BBox`). `fill` / `stroke` are the EFFECTIVE per-element paint
-    tokens as authored (inline `style` wins over the presentation attribute; None when unset on the
-    element itself — no cascade). `text` is the element's concatenated text content (present only
-    when non-empty)."""
+    name. `bbox` is the element's attribute-derived axis-aligned box, own transform applied (None
+    for path / text / group elements — see :class:`BBox`). `fill` / `stroke` are the EFFECTIVE
+    per-element paint tokens as authored (inline `style` wins over the presentation attribute; None
+    when unset on the element itself — no cascade). `text` is the element's concatenated text
+    content (present only when non-empty). `transform` is the element's own `transform` attribute as
+    authored (None when unset), so a rotate / scale / move is visible without reading the SVG."""
 
     object_id: str
     tag: str
@@ -257,6 +261,7 @@ class ObjectRef(BaseModel):
     fill: str | None = None
     stroke: str | None = None
     text: str | None = None
+    transform: str | None = None
 
 
 class FindResult(BaseModel):
@@ -322,7 +327,7 @@ TreeNode.model_rebuild()
 # --- Internal helpers -------------------------------------------------------
 
 
-def _local_name(elem: etree._Element) -> str:
+def local_name(elem: etree._Element) -> str:
     """Local tag name of an element (namespace stripped). '' for comments/PIs."""
     tag = elem.tag
     if not isinstance(tag, str):  # comment / PI / entity
@@ -330,7 +335,7 @@ def _local_name(elem: etree._Element) -> str:
     return etree.QName(tag).localname
 
 
-def _is_element(elem: etree._Element) -> bool:
+def is_element(elem: etree._Element) -> bool:
     """True for real element nodes (excludes comments / processing instructions)."""
     return isinstance(elem.tag, str)
 
@@ -344,7 +349,7 @@ def _id_of(elem: etree._Element) -> str | None:
 
 
 def _is_layer(elem: etree._Element) -> bool:
-    return _local_name(elem) == "g" and elem.get(_INKSCAPE_GROUPMODE) == "layer"
+    return local_name(elem) == "g" and elem.get(_INKSCAPE_GROUPMODE) == "layer"
 
 
 def _has_style(elem: etree._Element) -> bool:
@@ -355,7 +360,7 @@ def _has_style(elem: etree._Element) -> bool:
 
 def _is_leaf(elem: etree._Element) -> bool:
     """True when the element has no child element nodes (comments/PIs don't count)."""
-    return not any(_is_element(child) for child in elem)
+    return not any(is_element(child) for child in elem)
 
 
 def _resolved_paint_prop(elem: etree._Element, decls: dict[str, str], prop: str) -> str | None:
@@ -408,58 +413,104 @@ def _num_attr(elem: etree._Element, name: str) -> float | None:
 def _bbox_of(elem: etree._Element) -> BBox | None:
     """Attribute-derived axis-aligned bbox for an element, or None when not derivable.
 
-    Direct DOM only (ADR-005): the box comes from the element's own geometry attributes. Element
-    transforms and path/polyline geometry are NOT applied — those need the render engine, so such
-    elements return None rather than a wrong box. A `transform` on the element also yields None to
-    avoid reporting an untransformed box as if it were final.
+    Direct DOM only (ADR-005): the box comes from the element's own geometry attributes, pushed
+    through the element's OWN `transform` (so it is in the parent's user space, like an
+    untransformed element's box; ancestor transforms are not applied). Path / text / group geometry
+    needs the render engine and returns None. So does a rotated or skewed circle/ellipse (its corner
+    box would be too big) and an unparseable `transform`, rather than reporting a wrong box.
     """
-    if elem.get("transform"):
-        return None
-    tag = _local_name(elem)
+    tag = local_name(elem)
     if tag not in _BBOXABLE_TAGS:
         return None
+    pts = _outline_points(elem, tag)
+    if not pts:
+        return None
+    raw = elem.get("transform")
+    if raw:
+        m = _parse_transform(raw)
+        if m is None:
+            return None
+        a, b, c, d, e, f = m
+        if (b or c) and tag in ("circle", "ellipse"):
+            return None
+        pts = [(a * x + c * y + e, b * x + d * y + f) for x, y in pts]
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    lo_x, lo_y = min(xs), min(ys)
+    return BBox(x=lo_x, y=lo_y, width=max(xs) - lo_x, height=max(ys) - lo_y)
 
-    if tag in ("rect", "image", "use"):
-        x = _num_attr(elem, "x") or 0.0
-        y = _num_attr(elem, "y") or 0.0
-        w = _num_attr(elem, "width")
-        h = _num_attr(elem, "height")
+
+def _outline_points(elem: etree._Element, tag: str) -> list[tuple[float, float]]:
+    """Points whose hull is the element's box under any affine map (box corners for curves)."""
+    if tag in ("rect", "image", "use", "circle", "ellipse"):
+        if tag in ("rect", "image", "use"):
+            x = _num_attr(elem, "x") or 0.0
+            y = _num_attr(elem, "y") or 0.0
+            w = _num_attr(elem, "width")
+            h = _num_attr(elem, "height")
+        else:
+            rx = _num_attr(elem, "r" if tag == "circle" else "rx")
+            ry = rx if tag == "circle" else _num_attr(elem, "ry")
+            if rx is None or ry is None:
+                return []
+            x = (_num_attr(elem, "cx") or 0.0) - rx
+            y = (_num_attr(elem, "cy") or 0.0) - ry
+            w, h = 2 * rx, 2 * ry
         if w is None or h is None or w < 0 or h < 0:
-            return None
-        return BBox(x=x, y=y, width=w, height=h)
-    if tag == "circle":
-        cx = _num_attr(elem, "cx") or 0.0
-        cy = _num_attr(elem, "cy") or 0.0
-        r = _num_attr(elem, "r")
-        if r is None or r < 0:
-            return None
-        return BBox(x=cx - r, y=cy - r, width=2 * r, height=2 * r)
-    if tag == "ellipse":
-        cx = _num_attr(elem, "cx") or 0.0
-        cy = _num_attr(elem, "cy") or 0.0
-        rx = _num_attr(elem, "rx")
-        ry = _num_attr(elem, "ry")
-        if rx is None or ry is None or rx < 0 or ry < 0:
-            return None
-        return BBox(x=cx - rx, y=cy - ry, width=2 * rx, height=2 * ry)
+            return []
+        return [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]
     if tag == "line":
-        x1 = _num_attr(elem, "x1")
-        y1 = _num_attr(elem, "y1")
-        x2 = _num_attr(elem, "x2")
-        y2 = _num_attr(elem, "y2")
-        if x1 is None or y1 is None or x2 is None or y2 is None:
+        ends = [_num_attr(elem, n) for n in ("x1", "y1", "x2", "y2")]
+        if None in ends:
+            return []
+        x1, y1, x2, y2 = (v or 0.0 for v in ends)
+        return [(x1, y1), (x2, y2)]
+    return _parse_points(elem.get("points"))  # polygon / polyline
+
+
+_TRANSFORM_FN_RE = re.compile(r"\s*([a-zA-Z]+)\s*\(([^)]*)\)\s*,?")
+_NUM_RE = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def _parse_transform(raw: str) -> tuple[float, float, float, float, float, float] | None:
+    """Parse an SVG `transform` list into one affine `(a, b, c, d, e, f)`; None when malformed."""
+    a, b, c, d, e, f = 1.0, 0.0, 0.0, 1.0, 0.0, 0.0
+    pos = 0
+    for match in _TRANSFORM_FN_RE.finditer(raw):
+        if match.start() != pos:
             return None
-        lo_x, lo_y = min(x1, x2), min(y1, y2)
-        return BBox(x=lo_x, y=lo_y, width=abs(x2 - x1), height=abs(y2 - y1))
-    if tag in ("polygon", "polyline"):
-        pts = _parse_points(elem.get("points"))
-        if not pts:
+        pos = match.end()
+        name, args = match.group(1), match.group(2)
+        n = [float(v) for v in _NUM_RE.findall(args)]
+        if _NUM_RE.sub("", args).strip(" \t\r\n,"):
             return None
-        xs = [p[0] for p in pts]
-        ys = [p[1] for p in pts]
-        lo_x, lo_y = min(xs), min(ys)
-        return BBox(x=lo_x, y=lo_y, width=max(xs) - lo_x, height=max(ys) - lo_y)
-    return None  # pragma: no cover - all _BBOXABLE_TAGS handled above
+        if name == "matrix" and len(n) == 6:
+            m = (n[0], n[1], n[2], n[3], n[4], n[5])
+        elif name == "translate" and len(n) in (1, 2):
+            m = (1.0, 0.0, 0.0, 1.0, n[0], n[1] if len(n) == 2 else 0.0)
+        elif name == "scale" and len(n) in (1, 2):
+            m = (n[0], 0.0, 0.0, n[-1], 0.0, 0.0)
+        elif name == "rotate" and len(n) in (1, 3):
+            cos, sin = math.cos(math.radians(n[0])), math.sin(math.radians(n[0]))
+            cx, cy = (n[1], n[2]) if len(n) == 3 else (0.0, 0.0)
+            m = (cos, sin, -sin, cos, cx - cos * cx + sin * cy, cy - sin * cx - cos * cy)
+        elif name in ("skewX", "skewY") and len(n) == 1:
+            t = math.tan(math.radians(n[0]))
+            m = (1.0, 0.0, t, 1.0, 0.0, 0.0) if name == "skewX" else (1.0, t, 0.0, 1.0, 0.0, 0.0)
+        else:
+            return None
+        # Left-to-right list = outer-to-inner: current @ m.
+        a, b, c, d, e, f = (
+            a * m[0] + c * m[1],
+            b * m[0] + d * m[1],
+            a * m[2] + c * m[3],
+            b * m[2] + d * m[3],
+            a * m[4] + c * m[5] + e,
+            b * m[4] + d * m[5] + f,
+        )
+    if pos != len(raw) and raw[pos:].strip():
+        return None
+    return a, b, c, d, e, f
 
 
 def _parse_points(raw: str | None) -> list[tuple[float, float]]:
@@ -538,9 +589,9 @@ def _iter_objects(root: etree._Element) -> list[etree._Element]:
     """Object nodes: SVG-namespace elements minus structural-only tags."""
     out: list[etree._Element] = []
     for elem in root.iter():
-        if not _is_element(elem):
+        if not is_element(elem):
             continue
-        if _local_name(elem) in _NON_OBJECT_TAGS:
+        if local_name(elem) in _NON_OBJECT_TAGS:
             continue
         out.append(elem)
     return out
@@ -581,12 +632,12 @@ def inspect_summary(doc_id: str) -> DocSummary:
             units = unit_match.group(0)
 
     # Page count: <inkscape:page> elements (Inkscape 1.x multipage); default 1.
-    page_count = sum(1 for elem in root.iter(f"{{{INKSCAPE_NS}}}page") if _is_element(elem))
+    page_count = sum(1 for elem in root.iter(f"{{{INKSCAPE_NS}}}page") if is_element(elem))
     if page_count == 0:
         page_count = 1
 
     num_objects = len(_iter_objects(root))
-    num_layers = sum(1 for elem in root.iter() if _is_element(elem) and _is_layer(elem))
+    num_layers = sum(1 for elem in root.iter() if is_element(elem) and _is_layer(elem))
 
     return DocSummary(
         doc_id=doc_id,
@@ -597,14 +648,14 @@ def inspect_summary(doc_id: str) -> DocSummary:
         page_count=page_count,
         num_objects=num_objects,
         num_layers=num_layers,
-        root_tag=_local_name(root),
+        root_tag=local_name(root),
     )
 
 
 def _build_node(elem: etree._Element) -> TreeNode:
-    children = [_build_node(child) for child in elem if _is_element(child)]
+    children = [_build_node(child) for child in elem if is_element(child)]
     return TreeNode(
-        tag=_local_name(elem),
+        tag=local_name(elem),
         id=_id_of(elem),
         label=_label_of(elem),
         paint=_paint_of(elem),
@@ -626,7 +677,7 @@ def inspect_layers(doc_id: str) -> DocLayers:
     _entry, root = _load_tree(doc_id)
     layers: list[LayerInfo] = []
     for elem in root.iter():
-        if not _is_element(elem) or not _is_layer(elem):
+        if not is_element(elem) or not _is_layer(elem):
             continue
         style = elem.get("style") or ""
         decls = _parse_style_decls(style)
@@ -634,7 +685,7 @@ def inspect_layers(doc_id: str) -> DocLayers:
         visibility = decls.get("visibility")
         visible = display != "none" and visibility != "hidden"
         locked = elem.get(_SODIPODI_INSENSITIVE) == "true"
-        num_children = sum(1 for child in elem if _is_element(child))
+        num_children = sum(1 for child in elem if is_element(child))
         layers.append(
             LayerInfo(
                 id=_id_of(elem),
@@ -653,7 +704,7 @@ def inspect_objects(doc_id: str) -> DocObjects:
     objects = [
         ObjectInfo(
             id=_id_of(elem),
-            tag=_local_name(elem),
+            tag=local_name(elem),
             label=_label_of(elem),
             has_style=_has_style(elem),
             paint=_paint_of(elem),
@@ -763,7 +814,7 @@ def _document_css_rules(root: etree._Element) -> list[_CssRule]:
     """All CSS rules from every `<style>` element in the document, in source order."""
     rules: list[_CssRule] = []
     for elem in root.iter():
-        if _is_element(elem) and _local_name(elem) == "style":
+        if is_element(elem) and local_name(elem) == "style":
             rules.extend(_parse_css_rules(elem.text or ""))
     return rules
 
@@ -786,7 +837,7 @@ def _own_paint_value(elem: etree._Element, rules: list[_CssRule], prop: str) -> 
     value: str | None = None
     # `<style>` rules: take the winner by (specificity, source order).
     classes = _element_classes(elem)
-    tag = _local_name(elem)
+    tag = local_name(elem)
     elem_id = _id_of(elem)
     best: tuple[tuple[int, int, int], int] | None = None
     for rule in rules:
@@ -837,10 +888,10 @@ def _build_parent_map(root: etree._Element) -> dict[etree._Element, etree._Eleme
     """Map each element to its parent (for the memoized ancestor walk in inheritance resolution)."""
     parents: dict[etree._Element, etree._Element] = {}
     for parent in root.iter():
-        if not _is_element(parent):
+        if not is_element(parent):
             continue
         for child in parent:
-            if _is_element(child):
+            if is_element(child):
                 parents[child] = parent
     return parents
 
@@ -862,9 +913,9 @@ def inspect_styles(doc_id: str) -> DocStyles:
             colors.append(norm)
 
     for elem in root.iter():
-        if not _is_element(elem):
+        if not is_element(elem):
             continue
-        if _local_name(elem) == "style":
+        if local_name(elem) == "style":
             css_rule_count += _count_css_rules(elem.text or "")
             for rule in _parse_css_rules(elem.text or ""):
                 add_color(rule.decls.get("fill"))
@@ -959,9 +1010,9 @@ def inspect_fonts(doc_id: str) -> DocFonts:
         counts[fam] += 1
 
     for elem in root.iter():
-        if not _is_element(elem):
+        if not is_element(elem):
             continue
-        if _local_name(elem) == "style":
+        if local_name(elem) == "style":
             for match in re.finditer(
                 r"font-family\s*:\s*([^;}\n]+)", elem.text or "", flags=re.IGNORECASE
             ):
@@ -1022,9 +1073,9 @@ def inspect_assets(doc_id: str) -> DocAssets:
         )
 
     for elem in root.iter():
-        if not _is_element(elem):
+        if not is_element(elem):
             continue
-        local = _local_name(elem)
+        local = local_name(elem)
         elem_id = _id_of(elem)
         href = elem.get(_XLINK_HREF) or elem.get("href")
         if local == "image" and href:
@@ -1072,11 +1123,12 @@ def _object_ref(elem: etree._Element) -> ObjectRef | None:
     paint = _paint_of(elem)
     return ObjectRef(
         object_id=oid,
-        tag=_local_name(elem),
+        tag=local_name(elem),
         bbox=_bbox_of(elem),
         fill=paint.fill,
         stroke=paint.stroke,
         text=_text_content(elem),
+        transform=elem.get("transform"),
     )
 
 
@@ -1260,7 +1312,7 @@ def find_objects(
     - `id_prefix`: the object's `id` starts with this string.
     - `bbox`: keep objects whose box INTERSECTS the given box (shared edge/corner counts). By
       default this is the attribute-derived box, and objects with `bbox is None` (path / text /
-      group / transformed elements — see :class:`BBox`) are EXCLUDED. When `accurate_bbox=True`, the
+      group elements — see :class:`BBox`) are EXCLUDED. When `accurate_bbox=True`, the
       geometry-accurate engine box is used instead (see below), so those objects can now match.
     - `accurate_bbox`: opt-in geometry-accurate boxes. When True, ONE batched
       ``inkscape --query-all`` call computes transform-/outline-aware boxes for every object; each

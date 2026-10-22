@@ -47,7 +47,11 @@ def test_ok_has_one_text_block_and_no_structured_content() -> None:
         (OpError("ops[2] fill: id 'a' not found"), "ops[2] fill: id 'a' not found"),
         (EditError("bad colour"), "bad colour"),
         (PolicyViolation("needs approval"), "needs approval"),
-        (SandboxViolation("path rejected: outside workspace"), "path rejected: outside workspace"),
+        (
+            SandboxViolation("path rejected: outside workspace"),
+            "path rejected: outside workspace; "
+            "pass a path relative to the workspace root (no '..')",
+        ),
         (InvalidObjectId("x"), "object id is not valid"),
         (RenderError("boom"), "render/export failed"),
         (SnapshotNotFound("x"), "snapshot not found; call history(action='list') for valid ids"),

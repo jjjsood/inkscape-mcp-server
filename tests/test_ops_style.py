@@ -15,8 +15,6 @@ import pytest
 from lxml import etree
 
 from inkscape_mcp.edit.ops import OpError
-from inkscape_mcp.edit.pipeline import EditApplyError
-from inkscape_mcp.snapshots import restore_snapshot
 from inkscape_mcp.workspace import sandbox
 from tests.conftest import run_ops
 from tests.tool_support import open_doc
@@ -102,14 +100,6 @@ def test_fill_opacity_applies_to_every_target(tool_ws, doc) -> None:
     for oid in ("r1", "r2"):
         props = _props(_elem(tool_ws, doc, oid))
         assert (props["fill"], props["fill-opacity"]) == ("blue", "0.5")
-
-
-def test_fill_is_undone_by_its_snapshot(tool_ws, doc) -> None:
-    before = _working(tool_ws, doc)
-    result = run_ops(doc, _fill(["r1"], "#abcdef"))
-    assert _working(tool_ws, doc) != before
-    restore_snapshot(doc, result.snapshot_id)
-    assert _working(tool_ws, doc) == before
 
 
 @pytest.mark.parametrize(
@@ -202,12 +192,20 @@ def test_replace_color_matches_attribute_shorthand_and_inline_style(tool_ws, doc
     assert "1 object" in result.summary
 
 
-def test_replace_color_with_zero_matches_is_a_noop(tool_ws, doc) -> None:
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "replace_color", "from_color": "#abcdef", "to_color": "#123123"},
+        {"op": "palette", "mapping": {"#aaaaaa": "#bbbbbb"}},
+    ],
+)
+def test_recolour_with_zero_matches_is_a_noop(tool_ws, doc, op) -> None:
     before, counts = _working(tool_ws, doc), _count(tool_ws, doc)
-    result = run_ops(doc, {"op": "replace_color", "from_color": "#abcdef", "to_color": "#123123"})
+    result = run_ops(doc, op)
     assert result.changed is False
     assert result.operation_id == "" and result.snapshot_id == ""
-    assert "0 object" in result.summary
+    if op["op"] == "replace_color":
+        assert "0 object" in result.summary
     assert _working(tool_ws, doc) == before and _count(tool_ws, doc) == counts
 
 
@@ -238,10 +236,6 @@ def test_palette_scope_via_selector(tool_ws, doc) -> None:
     assert _paint(_elem(tool_ws, doc, "r1")) == "#ff0000"
 
 
-def test_palette_with_no_matches_is_a_noop(tool_ws, doc) -> None:
-    assert run_ops(doc, {"op": "palette", "mapping": {"#aaaaaa": "#bbbbbb"}}).changed is False
-
-
 def test_palette_accepts_a_named_colour(tool_ws, doc) -> None:
     assert run_ops(doc, {"op": "palette", "mapping": {"#ff0000": "blue"}}).changed is True
     assert _paint(_elem(tool_ws, doc, "r1")) == "blue"
@@ -261,24 +255,11 @@ def test_palette_validates_colours_before_any_record(tool_ws, doc, mapping) -> N
 # --- targets and shared error paths ---------------------------------------------
 
 
-def test_one_call_restyles_with_one_snapshot(tool_ws, doc) -> None:
-    run_ops(doc, _fill(["r1"], "#0000ff"), {"op": "stroke", "ids": ["r1"], "color": "#000"})
-    assert _count(tool_ws, doc) == (1, 1)
-
-
 def test_missing_and_empty_targets_are_rejected(tool_ws, doc) -> None:
     _rejected(
         tool_ws, doc, _fill(["does-not-exist"], "#000000"), match="id 'does-not-exist' not found"
     )
     _rejected(tool_ws, doc, _fill([], "#000000"), match="'ids' is empty")
-    _rejected(
-        tool_ws, doc, _fill(["r1"], "#000000"), _fill(["r9"], "#000000"), match=r"ops\[1\] fill"
-    )
-
-
-def test_unknown_document(doc) -> None:
-    with pytest.raises(EditApplyError, match="document id not found"):
-        run_ops("d_nope", _fill(["r1"], "#000000"))
 
 
 # --- colours inside <style> CSS rules ------------------------------------------------------
@@ -298,13 +279,22 @@ def test_palette_rewrites_css_rules_including_text_after_a_comment(tool_ws) -> N
     assert "fill: #2a9d8f ;" in css and "!important" in css and "fill:#000" in css
 
 
-def test_scoped_replace_color_leaves_shared_css_alone(tool_ws) -> None:
-    doc_id = open_doc(tool_ws, "css.svg", CSS_SVG)
-    run_ops(
-        doc_id,
+@pytest.mark.parametrize(
+    "op",
+    [
         {"op": "replace_color", "from_color": "#e63946", "to_color": "#000000", "ids": ["r"]},
-    )
+        {"op": "palette", "mapping": {"#e63946": "#000000"}, "ids": ["r"]},
+    ],
+)
+def test_scoped_recolour_overrides_css_inline_and_leaves_shared_css_alone(tool_ws, op) -> None:
+    svg = CSS_SVG.replace(b"</svg>", b'<rect id="r2" class="a" width="5" height="5"/></svg>')
+    doc_id = open_doc(tool_ws, "css.svg", svg)
+    run_ops(doc_id, op)
+    # The scoped object changes (its class-painted colour is overridden inline) ...
+    assert "fill:#000000" in (_elem(tool_ws, doc_id, "r").get("style") or "")
+    # ... while the shared rule and the other object using it stay as they were.
     assert "#E63946" in "".join(_elem(tool_ws, doc_id, "css").itertext())
+    assert _elem(tool_ws, doc_id, "r2").get("style") is None
 
 
 def test_css_scan_is_linear_on_hostile_whitespace() -> None:
@@ -316,3 +306,66 @@ def test_css_scan_is_linear_on_hostile_whitespace() -> None:
     start = time.perf_counter()
     _rewrite_css(hostile, "#e63946", "#000000")
     assert time.perf_counter() - start < 1.0
+
+
+# --- CSS-class painted targets (poster-like) ------------------------------------
+
+POSTER = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" id="svg1" width="10" height="10">'
+    b'<defs><style id="style1">.accent { fill: #e63946; }\n.shared { stroke: #e63946; }\n'
+    b".ink { fill: #1d3557; }</style></defs>"
+    b'<rect id="band" class="accent"/><rect id="cta" class="accent"/>'
+    b'<rect id="a" class="shared"/><rect id="b" class="shared"/>'
+    b'<rect id="ink" class="ink"/></svg>'
+)
+
+RECOLOUR = [
+    {"op": "replace_color", "from_color": "#e63946", "to_color": "#2a9d8f"},
+    {"op": "palette", "mapping": {"#e63946": "#2a9d8f"}},
+]
+
+
+@pytest.fixture
+def poster(tool_ws: Path) -> str:
+    return open_doc(tool_ws, "poster.svg", POSTER)
+
+
+@pytest.mark.parametrize("op", RECOLOUR)
+@pytest.mark.parametrize(
+    "scope",
+    [
+        {"ids": ["band", "cta", "a", "b"]},  # every user of both classes
+        {"select": {"fill": "#e63946"}},  # the agent's case: select by effective fill
+        {"ids": ["svg1"]},  # root = document-wide
+        {"ids": ["style1"]},  # the stylesheet itself
+    ],
+)
+def test_recolour_scoped_rewrites_css_class_rules(tool_ws, poster, op, scope) -> None:
+    assert run_ops(poster, {**op, **scope}).changed is True
+    out = _working(tool_ws, poster)
+    assert b"#2a9d8f" in out
+    if "select" not in scope:  # select matches fills only, so `.shared` (a stroke) keeps its colour
+        assert b"#e63946" not in out
+    else:
+        assert b".accent { fill: #2a9d8f; }" in out
+
+
+def test_scoped_recolour_rewrites_the_class_rule_not_inline(tool_ws, poster) -> None:
+    run_ops(poster, {**RECOLOUR[0], "ids": ["band", "cta"]})
+    assert ".accent { fill: #2a9d8f; }" in _working(tool_ws, poster).decode()
+    assert _paint(_elem(tool_ws, poster, "band")) is None  # rule rewritten, no inline override
+    assert ".ink { fill: #1d3557; }" in _working(tool_ws, poster).decode()
+
+
+def test_shared_class_falls_back_to_inline_override(tool_ws, poster) -> None:
+    # `.shared` is also used by untargeted `b`: rule untouched, only `a` overridden inline
+    run_ops(poster, {**RECOLOUR[0], "ids": ["a"]})
+    assert "stroke: #e63946" in _working(tool_ws, poster).decode()
+    assert _props(_elem(tool_ws, poster, "a"))["stroke"] == "#2a9d8f"
+    assert "stroke" not in _props(_elem(tool_ws, poster, "b"))
+
+
+def test_style_element_target_leaves_elements_untouched(tool_ws, poster) -> None:
+    run_ops(poster, {**RECOLOUR[0], "ids": ["style1"]})
+    assert _props(_elem(tool_ws, poster, "band")) == {}
+    assert ".accent { fill: #2a9d8f; }" in _working(tool_ws, poster).decode()

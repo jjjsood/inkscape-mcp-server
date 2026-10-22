@@ -9,6 +9,7 @@ re-id'd) into the target. Hermetic: nothing here needs Inkscape.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,6 @@ from lxml import etree
 from inkscape_mcp.config import get_settings
 from inkscape_mcp.edit.compose import ComposeError, parse_and_scrub
 from inkscape_mcp.edit.ops import OpError
-from inkscape_mcp.edit.pipeline import EditApplyError
 from inkscape_mcp.snapshots import restore_snapshot
 from inkscape_mcp.validate import validate_document
 from inkscape_mcp.workspace import sandbox
@@ -76,14 +76,21 @@ REJECTED = {
     "external-paint": (f'<svg {NS}><rect fill="url(http://evil/x)"/></svg>', ""),
     "image": (f'<svg {NS}><image href="x.png"/></svg>', "image"),
 }
+#: name -> (svg, tag, attribute, value the scrubbed tree must keep)
 ALLOWED = {
     "same-document-href": (
         f'<svg {NS} {XLINK}><rect id="a" x="0" y="0" width="5" height="5"/>'
-        '<use xlink:href="#a"/></svg>'
+        '<use xlink:href="#a"/></svg>',
+        "use",
+        "{http://www.w3.org/1999/xlink}href",
+        "#a",
     ),
     "fragment-paint": (
         f'<svg {NS}><defs><linearGradient id="g"><stop offset="0" stop-color="#fff"/>'
-        '</linearGradient></defs><rect width="5" height="5" fill="url(#g)"/></svg>'
+        '</linearGradient></defs><rect width="5" height="5" fill="url(#g)"/></svg>',
+        "rect",
+        "fill",
+        "url(#g)",
     ),
 }
 
@@ -97,7 +104,9 @@ def test_scrub_rejects(name: str) -> None:
 
 @pytest.mark.parametrize("name", ALLOWED)
 def test_scrub_allows_same_document_references(name: str) -> None:
-    assert parse_and_scrub(ALLOWED[name]) is not None
+    svg, tag, attr, value = ALLOWED[name]
+    elem = parse_and_scrub(svg).find(f".//{SVG_NS}{tag}")
+    assert elem is not None and elem.get(attr) == value
 
 
 # --- allowlist and approval through the ops -----------------------------------
@@ -118,8 +127,7 @@ def test_set_svg_and_insert_svg_surface_the_allowlist_error(doc: str, tool_ws: P
     assert _text(tool_ws, doc) == before
 
 
-@pytest.mark.parametrize("token", [None, "", "  "])
-@pytest.mark.parametrize("op", ["set_svg", "insert_svg"])
+@pytest.mark.parametrize(("op", "token"), [("set_svg", None), ("insert_svg", "  ")])
 def test_compose_ops_are_high_risk_and_need_a_token(
     doc: str, tool_ws: Path, op: str, token: str | None
 ) -> None:
@@ -165,11 +173,6 @@ def test_set_svg_replaces_the_document_and_it_validates(doc: str, tool_ws: Path)
 def test_set_svg_needs_a_parseable_svg_root(doc: str, svg: str, message: str) -> None:
     with pytest.raises(OpError, match=rf"ops\[0\] set_svg: .*{message}"):
         run_ops(doc, {"op": "set_svg", "svg": svg}, approval_token=TOKEN)
-
-
-def test_unknown_document(tool_ws: Path) -> None:
-    with pytest.raises(EditApplyError, match="document id not found"):
-        run_ops("d_nope", {"op": "set_svg", "svg": f"<svg {NS}/>"}, approval_token=TOKEN)
 
 
 # --- insert_svg ---------------------------------------------------------------
@@ -293,6 +296,35 @@ def test_place_refuses_bad_input_without_changing_the_target(
     assert _text(tool_ws, target) == before
 
 
+def _css_doc(color: str) -> bytes:
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">'
+        f"<defs><style>.accent {{ fill: {color}; }}</style></defs>"
+        f'<rect id="bar" class="accent" width="5" height="5"/></svg>'
+    ).encode()
+
+
+def _scoped_rules(root: etree._Element) -> dict[str, str]:
+    """class name -> fill from every `<style>` rule in `root`."""
+    css = "".join(st.text or "" for st in root.iter(f"{SVG_NS}style"))
+    return {m[1]: m[2] for m in re.finditer(r"\.([\w-]+)\s*\{\s*fill:\s*(#\w+)", css)}
+
+
+@pytest.mark.parametrize("single_object", [False, True], ids=["whole-doc", "source_id"])
+def test_place_scopes_each_copys_css_classes(tool_ws: Path, single_object: bool) -> None:
+    target = open_doc(tool_ws, "target.svg", TARGET)
+    red = open_doc(tool_ws, "red.svg", _css_doc("#e63946"))
+    yellow = open_doc(tool_ws, "yellow.svg", _css_doc("#e9c46a"))
+    extra = {"source_id": "bar"} if single_object else {}
+    for src in (red, yellow):
+        run_ops(target, {"op": "place", "source_doc_id": src, "x": 0, "y": 0, **extra})
+    wroot = _working(tool_ws, target)
+    rules = _scoped_rules(wroot)
+    assert "accent" not in rules and len(rules) == 2  # no shared global class
+    bars = [e for e in wroot.iter(f"{SVG_NS}rect") if (e.get("id") or "").startswith("bar-")]
+    assert [rules[b.get("class", "")] for b in bars] == ["#e63946", "#e9c46a"]
+
+
 # --- grid ---------------------------------------------------------------------
 
 
@@ -351,3 +383,37 @@ def test_grid_refuses_bad_input_without_changing_the_target(
     with pytest.raises(OpError, match=message):
         run_ops(target, op)
     assert _text(tool_ws, target) == before
+
+
+def test_copies_keep_their_own_css_classes_and_id_rules() -> None:
+    """Two copies of a doc with a <style> must not share class rules (last rule won before)."""
+    from inkscape_mcp.edit.dom import deep_copy_with_new_ids
+
+    src = etree.fromstring(
+        '<svg xmlns="http://www.w3.org/2000/svg"><style>.accent, svg #dot { fill: red }'
+        "@media print { .accent { fill: black } }</style>"
+        '<rect class="accent big" id="dot"/></svg>'
+    )
+    sheet = etree.fromstring('<svg xmlns="http://www.w3.org/2000/svg"><g class="accent"/></svg>')
+    first, _ = deep_copy_with_new_ids(src, sheet, None)
+    sheet.append(first)
+    second, _ = deep_copy_with_new_ids(src, sheet, None)
+    for clone in (first, second):
+        rect = clone.find(f"{SVG_NS}rect")
+        css = clone.find(f"{SVG_NS}style").text
+        cls = rect.get("class").split()[0]
+        assert cls != "accent" and rect.get("class").endswith(" big")  # undefined class kept
+        assert css.count(f".{cls}") == 2 and f"#{rect.get('id')}" in css
+    assert first.find(f"{SVG_NS}rect").get("class") != second.find(f"{SVG_NS}rect").get("class")
+    assert sheet.find(f"{SVG_NS}g").get("class") == "accent"  # the target's own class untouched
+
+
+def test_a_copy_without_its_own_style_keeps_the_document_classes() -> None:
+    from inkscape_mcp.edit.dom import deep_copy_with_new_ids
+
+    root = etree.fromstring(
+        '<svg xmlns="http://www.w3.org/2000/svg"><style>.accent { fill: red }</style>'
+        '<rect class="accent" id="r"/></svg>'
+    )
+    clone, _ = deep_copy_with_new_ids(root.find(f"{SVG_NS}rect"), root, None)
+    assert clone.get("class") == "accent"

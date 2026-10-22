@@ -20,13 +20,27 @@ Action = Literal["list", "create", "restore", "prune", "reload"]
 MAX_LABEL_LEN = 256
 
 DESCRIPTION = (
-    "Undo/redo safety net. Every edit already writes one snapshot. action='list' shows them; "
+    "Undo/redo safety net. Every edit already writes one snapshot of the state BEFORE that edit "
+    "(restoring it undoes that edit and all later ones). action='list' shows them; "
     "'create' checkpoints now (optional label); 'restore' rolls the working copy back to "
     "`snapshot_id` (itself reversible: it snapshots first); 'prune' reclaims old snapshots and "
     "live frames; 'reload' re-reads the source file under the same doc_id (pre-reload snapshot "
     "taken). "
     "Example: history(doc_id, action='restore', snapshot_id='snap-0003')"
 )
+
+
+SNAPSHOT_NOTE = (
+    "Each snapshot is the document state BEFORE the edit named in its label. Restoring it returns "
+    "to that earlier state, undoing that edit and every later one. Restore is itself reversible."
+)
+
+
+def _state_of(label: str | None) -> str:
+    """Plain-words state a snapshot holds ('before: X' stays; others are named checkpoints)."""
+    if label and label.startswith("before:"):
+        return label
+    return f"saved as {label or 'unlabeled'!r}"
 
 
 @guarded(limit_msg="input file exceeds the configured size limit")
@@ -49,11 +63,13 @@ def history(
         payload = {
             "doc_id": doc_id,
             "count": len(snaps),
+            "note": SNAPSHOT_NOTE,
             "snapshots": [
                 {
                     "id": s.snapshot_id,
                     "seq": s.seq,
                     "label": s.label,
+                    "restoring": f"returns to the state {_state_of(s.label)}",
                     "operation_id": s.operation_id,
                     "bytes": s.size_bytes,
                 }
@@ -72,6 +88,8 @@ def history(
         payload = {
             "doc_id": doc_id,
             "restored_from": res.restored_from,
+            "note": "document is now back at that snapshot's state; undo this with "
+            "pre_restore_snapshot_id",
             "pre_restore_snapshot_id": res.pre_restore_snapshot_id,
             "operation_id": res.operation_id,
         }

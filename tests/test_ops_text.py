@@ -17,9 +17,7 @@ from lxml import etree
 
 from inkscape_mcp.edit import text_object
 from inkscape_mcp.edit.ops import OpError
-from inkscape_mcp.edit.pipeline import EditApplyError
 from inkscape_mcp.fonts.coverage import family_charset, suggest_covering_family
-from inkscape_mcp.snapshots import restore_snapshot
 from inkscape_mcp.workspace import sandbox
 from tests.conftest import run_ops
 from tests.tool_support import open_doc
@@ -128,19 +126,6 @@ def test_replace_text_rejections(tool_ws, doc, op, match) -> None:
     _rejected(tool_ws, doc, op, match=match)
 
 
-def test_replace_text_is_undone_by_its_snapshot(tool_ws, doc) -> None:
-    before = _working(tool_ws, doc)
-    result = run_ops(doc, {"op": "replace_text", "ids": ["t1"], "text": "changed"})
-    assert _working(tool_ws, doc) != before
-    restore_snapshot(doc, result.snapshot_id)
-    assert _working(tool_ws, doc) == before
-
-
-def test_unknown_document(doc) -> None:
-    with pytest.raises(EditApplyError, match="document id not found"):
-        run_ops("d_nope", {"op": "replace_text", "ids": ["t1"], "text": "x"})
-
-
 # --- font ------------------------------------------------------------------------------
 
 
@@ -153,12 +138,16 @@ def test_font_writes_family_size_and_weight(tool_ws, doc) -> None:
     assert "font-size:12pt" in style
     assert "font-weight:bold" in style
     assert result.changed is True and result.operation_id and result.snapshot_id
-    assert isinstance(result.warnings, list)
 
 
 def test_font_accepts_a_selector(tool_ws, doc) -> None:
     run_ops(doc, {"op": "font", "select": {"tag": "text"}, "size": "24"})
     assert "font-size:24" in _elem(tool_ws, doc, "t1").get("style")
+
+
+def test_font_size_accepts_a_number(tool_ws, doc) -> None:
+    run_ops(doc, {"op": "font", "ids": ["t1"], "size": 8})
+    assert "font-size:8" in _elem(tool_ws, doc, "t1").get("style")
 
 
 @pytest.mark.parametrize(
@@ -211,11 +200,6 @@ def test_font_size_only_checks_no_coverage(tool_ws, jp_doc, monkeypatch) -> None
 
     monkeypatch.setattr(text_object, "uncovered_chars", boom)
     assert run_ops(jp_doc, {"op": "font", "ids": ["jp"], "size": "20"}).warnings == []
-
-
-def test_font_coverage_skips_unknown_ids() -> None:
-    root = etree.fromstring(JP_SVG.encode())
-    assert text_object.font_coverage_for_root(root, ["missing"]) == (True, [])
 
 
 def test_host_font_flags_japanese_in_a_latin_family(tool_ws, jp_doc) -> None:

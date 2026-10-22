@@ -34,11 +34,19 @@ import difflib
 import re
 import uuid
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Self
 
 from fastmcp.exceptions import ToolError
 from lxml import etree
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 
 from inkscape_mcp.config import get_settings
 from inkscape_mcp.document.inspect import (
@@ -63,6 +71,7 @@ from inkscape_mcp.edit.dom import (
     TargetNotFound,
     all_ids,
     find_by_id,
+    fmt_num,
     load_working_tree,
 )
 from inkscape_mcp.edit.pipeline import EditApplyError, EditResult, apply_edit
@@ -76,6 +85,16 @@ from inkscape_mcp.workspace.risk import RiskClass
 from inkscape_mcp.workspace.subprocess_exec import ProcessError
 
 _logger = get_logger("edit.ops")
+
+#: A CSS length: a bare number (agents send ``3``) or a string (``"3px"``). Numbers become plain
+#: number strings (``3.0`` -> ``"3"``) so the engines keep taking ``str``.
+if TYPE_CHECKING:
+    Length = str | None
+else:
+    Length = Annotated[
+        float | str | None,
+        AfterValidator(lambda v: fmt_num(v) if isinstance(v, float) else v),
+    ]
 
 #: Hard cap on the number of ops in one call. A call is a deliberate composition, not an unbounded
 #: program: this bounds the in-memory work, the Operation Record size, and the blast radius of one
@@ -133,7 +152,7 @@ class Selector(BaseModel):
     `tag` is an exact local element name; `fill` / `stroke` match the EFFECTIVE cascade-resolved
     paint; `text` is a case-insensitive substring; `id_prefix` an id prefix; `bbox` an intersection
     box. `accurate_bbox` opts into geometry-accurate boxes (one read-only Inkscape query) so
-    transformed / path / text objects can match a `bbox`. More than `max_matches` matches rejects
+    path / text / group objects can match a `bbox`. More than `max_matches` matches rejects
     the op.
     """
 
@@ -268,7 +287,11 @@ def _ordered_ids(tree: etree._ElementTree) -> list[str]:
 
 def _similar(oid: str, present: set[str]) -> str:
     matches = difflib.get_close_matches(oid, sorted(present), n=3, cutoff=0.6)
-    return f" (similar: {', '.join(matches)})" if matches else ""
+    if matches:
+        return f" (similar: {', '.join(matches)})"
+    if len(present) <= 8:
+        return f" (ids in document: {', '.join(sorted(present)) or 'none'})"
+    return "; call inspect(include=['objects']) for ids"
 
 
 class _Run:
@@ -453,8 +476,6 @@ class _Op(BaseModel):
     CREATES: ClassVar[bool] = False
     #: Report ids that appear because of this op (False where the engine re-ids the whole tree).
     CAPTURE: ClassVar[bool] = True
-    #: Needs the Inkscape engine (only described in a dry run).
-    ENGINE: ClassVar[bool] = False
     #: Only available when `raw_action_enabled` is on.
     RAW_ACTION: ClassVar[bool] = False
 
@@ -511,10 +532,11 @@ class CreateRect(_Create):
     ry: float | None = None
     fill: str | None = None
     stroke: str | None = None
-    stroke_width: str | None = None
+    stroke_width: Length = None
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_create_rect(
+        return create_engine.create_rect(
+            run.tree,
             self.x,
             self.y,
             self.width,
@@ -526,7 +548,7 @@ class CreateRect(_Create):
             fill=self.fill,
             stroke=self.stroke,
             stroke_width=self.stroke_width,
-        )(run.tree)
+        )
 
 
 class CreateCircle(_Create):
@@ -540,10 +562,11 @@ class CreateCircle(_Create):
     r: float
     fill: str | None = None
     stroke: str | None = None
-    stroke_width: str | None = None
+    stroke_width: Length = None
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_create_circle(
+        return create_engine.create_circle(
+            run.tree,
             self.cx,
             self.cy,
             self.r,
@@ -552,7 +575,7 @@ class CreateCircle(_Create):
             fill=self.fill,
             stroke=self.stroke,
             stroke_width=self.stroke_width,
-        )(run.tree)
+        )
 
 
 class CreateEllipse(_Create):
@@ -567,10 +590,11 @@ class CreateEllipse(_Create):
     ry: float
     fill: str | None = None
     stroke: str | None = None
-    stroke_width: str | None = None
+    stroke_width: Length = None
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_create_ellipse(
+        return create_engine.create_ellipse(
+            run.tree,
             self.cx,
             self.cy,
             self.rx,
@@ -580,7 +604,7 @@ class CreateEllipse(_Create):
             fill=self.fill,
             stroke=self.stroke,
             stroke_width=self.stroke_width,
-        )(run.tree)
+        )
 
 
 class CreateLine(_Create):
@@ -594,10 +618,11 @@ class CreateLine(_Create):
     x2: float
     y2: float
     stroke: str | None = None
-    stroke_width: str | None = None
+    stroke_width: Length = None
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_create_line(
+        return create_engine.create_line(
+            run.tree,
             self.x1,
             self.y1,
             self.x2,
@@ -606,7 +631,7 @@ class CreateLine(_Create):
             object_id=self.id,
             stroke=self.stroke,
             stroke_width=self.stroke_width,
-        )(run.tree)
+        )
 
 
 class CreatePolygon(_Create):
@@ -618,17 +643,18 @@ class CreatePolygon(_Create):
     points: list[tuple[float, float]]
     fill: str | None = None
     stroke: str | None = None
-    stroke_width: str | None = None
+    stroke_width: Length = None
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_create_polygon(
+        return create_engine.create_polygon(
+            run.tree,
             self.points,
             parent_id=self.parent,
             object_id=self.id,
             fill=self.fill,
             stroke=self.stroke,
             stroke_width=self.stroke_width,
-        )(run.tree)
+        )
 
 
 class CreatePolyline(_Create):
@@ -640,17 +666,18 @@ class CreatePolyline(_Create):
     points: list[tuple[float, float]]
     fill: str | None = None
     stroke: str | None = None
-    stroke_width: str | None = None
+    stroke_width: Length = None
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_create_polyline(
+        return create_engine.create_polyline(
+            run.tree,
             self.points,
             parent_id=self.parent,
             object_id=self.id,
             fill=self.fill,
             stroke=self.stroke,
             stroke_width=self.stroke_width,
-        )(run.tree)
+        )
 
 
 class CreatePath(_Create):
@@ -662,17 +689,18 @@ class CreatePath(_Create):
     d: str
     fill: str | None = None
     stroke: str | None = None
-    stroke_width: str | None = None
+    stroke_width: Length = None
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_create_path(
+        return create_engine.create_path(
+            run.tree,
             self.d,
             parent_id=self.parent,
             object_id=self.id,
             fill=self.fill,
             stroke=self.stroke,
             stroke_width=self.stroke_width,
-        )(run.tree)
+        )
 
 
 class CreateText(_Create):
@@ -686,11 +714,12 @@ class CreateText(_Create):
     text: str
     fill: str | None = None
     stroke: str | None = None
-    stroke_width: str | None = None
+    stroke_width: Length = None
     anchor: Literal["start", "middle", "end"] | None = None
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_create_text(
+        return create_engine.create_text(
+            run.tree,
             self.x,
             self.y,
             self.text,
@@ -700,7 +729,7 @@ class CreateText(_Create):
             stroke=self.stroke,
             stroke_width=self.stroke_width,
             anchor=self.anchor,
-        )(run.tree)
+        )
 
 
 class CreateGroup(_Create):
@@ -709,7 +738,7 @@ class CreateGroup(_Create):
     op: Literal["create_group"]
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_create_group(parent_id=self.parent, object_id=self.id)(run.tree)
+        return create_engine.create_group(run.tree, parent_id=self.parent, object_id=self.id)
 
 
 class CreateUse(_Create):
@@ -724,14 +753,15 @@ class CreateUse(_Create):
     transform: str | None = None
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_create_use(
+        return create_engine.create_use(
+            run.tree,
             self.href,
             parent_id=self.parent,
             object_id=self.id,
             x=self.x,
             y=self.y,
             transform=self.transform,
-        )(run.tree)
+        )
 
 
 class LinearGradient(_Op):
@@ -748,14 +778,15 @@ class LinearGradient(_Op):
     id: str | None = None
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_add_linear_gradient(
+        return create_engine.add_linear_gradient(
+            run.tree,
             [s.model_dump(exclude_none=True) for s in self.stops],
             x1=self.x1,
             y1=self.y1,
             x2=self.x2,
             y2=self.y2,
             object_id=self.id,
-        )(run.tree)
+        )
 
 
 class RadialGradient(_Op):
@@ -773,7 +804,8 @@ class RadialGradient(_Op):
     id: str | None = None
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_add_radial_gradient(
+        return create_engine.add_radial_gradient(
+            run.tree,
             [s.model_dump(exclude_none=True) for s in self.stops],
             cx=self.cx,
             cy=self.cy,
@@ -781,7 +813,7 @@ class RadialGradient(_Op):
             fx=self.fx,
             fy=self.fy,
             object_id=self.id,
-        )(run.tree)
+        )
 
 
 class Group(_Targeted):
@@ -793,7 +825,7 @@ class Group(_Targeted):
     id: str | None = None
 
     def apply(self, run: _Run) -> str:
-        return create_engine.make_group_objects(run.targets(self), object_id=self.id)(run.tree)
+        return create_engine.group_objects(run.tree, run.targets(self), object_id=self.id)
 
 
 class Reparent(_Targeted):
@@ -806,7 +838,7 @@ class Reparent(_Targeted):
 
     def apply(self, run: _Run) -> str:
         parent = self.parent
-        return run.each(self, lambda oid: create_engine.make_reparent_object(oid, parent)(run.tree))
+        return run.each(self, lambda oid: create_engine.reparent_object(run.tree, oid, parent))
 
 
 # --- style ------------------------------------------------------------------
@@ -822,7 +854,7 @@ class Fill(_Targeted):
     opacity: float | None = None
 
     def apply(self, run: _Run) -> str:
-        return style_engine.set_fill_mutate(run.targets(self), self.color, self.opacity)(run.tree)
+        return style_engine.set_fill(run.tree, run.targets(self), self.color, self.opacity)
 
 
 class Stroke(_Targeted):
@@ -832,13 +864,13 @@ class Stroke(_Targeted):
 
     op: Literal["stroke"]
     color: str | None = None
-    width: str | None = None
+    width: Length = None
     opacity: float | None = None
 
     def apply(self, run: _Run) -> str:
-        return style_engine.set_stroke_mutate(
-            run.targets(self), self.color, self.width, self.opacity
-        )(run.tree)
+        return style_engine.set_stroke(
+            run.tree, run.targets(self), self.color, self.width, self.opacity
+        )
 
 
 class Opacity(_Targeted):
@@ -848,7 +880,7 @@ class Opacity(_Targeted):
     opacity: float
 
     def apply(self, run: _Run) -> str:
-        return style_engine.set_opacity_mutate(run.targets(self), self.opacity)(run.tree)
+        return style_engine.set_opacity(run.tree, run.targets(self), self.opacity)
 
 
 class ReplaceColor(_Targeted):
@@ -861,9 +893,9 @@ class ReplaceColor(_Targeted):
     to_color: str
 
     def apply(self, run: _Run) -> str:
-        return style_engine.replace_color_mutate(
-            self.from_color, self.to_color, run.optional_scope(self)
-        )(run.tree)
+        return style_engine.replace_color(
+            run.tree, self.from_color, self.to_color, run.optional_scope(self)
+        )
 
 
 class Palette(_Targeted):
@@ -875,7 +907,7 @@ class Palette(_Targeted):
     mapping: dict[str, str]
 
     def apply(self, run: _Run) -> str:
-        return style_engine.apply_palette_mutate(self.mapping, run.optional_scope(self))(run.tree)
+        return style_engine.apply_palette(run.tree, self.mapping, run.optional_scope(self))
 
 
 class Font(_Targeted):
@@ -883,12 +915,13 @@ class Font(_Targeted):
 
     op: Literal["font"]
     family: str | None = None
-    size: str | None = None
+    size: str | float | None = None
     weight: str | None = None
 
     def apply(self, run: _Run) -> str:
         ids = run.targets(self)
-        summary = text_engine.make_set_font(ids, self.family, self.size, self.weight)(run.tree)
+        size = self.size if self.size is None or isinstance(self.size, str) else f"{self.size:g}"
+        summary = text_engine.set_font(run.tree, ids, self.family, size, self.weight)
         if self.family is not None:
             _ok, details = text_engine.font_coverage_for_root(run.tree.getroot(), ids)
             for d in details:
@@ -912,7 +945,7 @@ class ReplaceText(_Targeted):
 
     def apply(self, run: _Run) -> str:
         text = self.text
-        return run.each(self, lambda oid: text_engine.make_replace_text(oid, text)(run.tree))
+        return run.each(self, lambda oid: text_engine.replace_text(run.tree, oid, text))
 
 
 class Duplicate(_Targeted):
@@ -928,7 +961,7 @@ class Duplicate(_Targeted):
         if self.new_id is not None and len(ids) != 1:
             raise run.fail(f"'new_id' needs exactly one target, got {len(ids)}")
         new_id = self.new_id
-        return "; ".join(text_engine.make_duplicate_object(oid, new_id)(run.tree) for oid in ids)
+        return "; ".join(text_engine.duplicate_object(run.tree, oid, new_id) for oid in ids)
 
 
 class Rename(_Targeted):
@@ -942,7 +975,7 @@ class Rename(_Targeted):
         ids = run.targets(self)
         if len(ids) != 1:
             raise run.fail(f"rename needs exactly one target, got {len(ids)}")
-        return text_engine.make_rename_object(ids[0], self.new_id, self.label)(run.tree)
+        return text_engine.rename_object(run.tree, ids[0], self.new_id, self.label)
 
 
 class Delete(_Targeted):
@@ -953,7 +986,7 @@ class Delete(_Targeted):
     op: Literal["delete"]
 
     def apply(self, run: _Run) -> str:
-        return text_engine.make_delete_objects(run.targets(self))(run.tree)
+        return text_engine.delete_objects(run.tree, run.targets(self))
 
 
 # --- transform --------------------------------------------------------------
@@ -1045,8 +1078,6 @@ class NormalizeViewbox(_Op):
 class FitToContent(_Op):
     """Set the root viewBox to the content bounding box (measured by Inkscape)."""
 
-    ENGINE: ClassVar[bool] = True
-
     op: Literal["fit_to_content"]
 
     def apply(self, run: _Run) -> str:
@@ -1076,7 +1107,7 @@ class SetSvg(_Op):
     svg: str
 
     def apply(self, run: _Run) -> str:
-        return compose_engine.make_set_document_svg(_checked_svg(self.svg))(run.tree)
+        return compose_engine.set_document_svg(run.tree, _checked_svg(self.svg))
 
 
 class InsertSvg(_Op):
@@ -1092,9 +1123,9 @@ class InsertSvg(_Op):
     unwrap: bool = True
 
     def apply(self, run: _Run) -> str:
-        return compose_engine.make_insert_svg_fragment(
-            _checked_svg(self.svg), self.parent, self.unwrap
-        )(run.tree)
+        return compose_engine.insert_svg_fragment(
+            run.tree, _checked_svg(self.svg), self.parent, self.unwrap
+        )
 
 
 class Place(_Op):
@@ -1126,12 +1157,16 @@ class Place(_Op):
         else:
             elem = source_root
             label = self.source_doc_id
-        holder: list[str] = []
-        mutate = collection_engine.make_place_document(
-            copy.deepcopy(elem), label, self.x, self.y, self.scale, result_holder=holder
+        summary, group_id = collection_engine.place_document(
+            run.tree,
+            copy.deepcopy(elem),
+            label,
+            self.x,
+            self.y,
+            self.scale,
+            source_root=source_root if self.source_id is not None else None,
         )
-        summary = mutate(run.tree)
-        run.override = holder[0] if holder else None
+        run.override = group_id
         return summary
 
 
@@ -1157,7 +1192,8 @@ class Grid(_Op):
         pairs = collection_engine.resolve_grid_assets(
             doc_ids=self.doc_ids, source_ids=self.source_ids, source_doc_id=self.source_doc_id
         )
-        mutate, plan = collection_engine.make_compose_grid(
+        summary, plan = collection_engine.compose_grid(
+            run.tree,
             pairs,
             self.rows,
             self.cols,
@@ -1166,7 +1202,6 @@ class Grid(_Op):
             scale_to_fit=self.scale_to_fit,
             padding=self.padding,
         )
-        summary = mutate(run.tree)
         run.override = plan[0].group_id if plan else None
         return summary
 
@@ -1178,7 +1213,6 @@ class _PathOp(_Targeted):
     """A path geometry op run by Inkscape on the CURRENT in-memory tree."""
 
     RISK: ClassVar[RiskClass] = RiskClass.HIGH
-    ENGINE: ClassVar[bool] = True
     RAW_ACTION: ClassVar[bool] = True
     CAPTURE: ClassVar[bool] = False
     #: the `edit.paths` op token
@@ -1270,9 +1304,9 @@ class OptimizeWeb(_Op):
         return RiskClass.HIGH if self.aggressive else self.RISK
 
     def apply(self, run: _Run) -> str:
-        return optimize_engine.optimize_web_mutate(
-            self.precision, self.keep_ids, aggressive=self.aggressive
-        )(run.tree)
+        return optimize_engine.optimize_web(
+            run.tree, self.precision, self.keep_ids, aggressive=self.aggressive
+        )
 
 
 #: The discriminated union of every typed op. pydantic selects the concrete model by the `op` tag,
@@ -1402,7 +1436,8 @@ def check_ops(
     if risk == RiskClass.HIGH and not dry_run and not (approval_token and approval_token.strip()):
         first = next(i for i, op in enumerate(ops) if op.effective_risk() == RiskClass.HIGH)
         raise OpError(
-            f"ops[{first}] {ops[first].op} is HIGH risk; re-call with approval_token",
+            f"ops[{first}] {ops[first].op} is HIGH risk; re-call with approval_token"
+            " (dry_run=true shows the plan; history(action='restore') undoes it)",
             op_index=first,
         )
     return risk
@@ -1424,7 +1459,7 @@ def _render_artifact(
                 .relative_to(Path(entry.root))
                 .as_posix()
             )
-        return render_preview(doc_id).artifact_path
+        return render_preview(doc_id).workspace_relative_path
     except _RENDER_FAILURES as exc:
         _logger.warning(
             "inline render unavailable",
@@ -1512,14 +1547,12 @@ __all__ = [
     "DEFAULT_MAX_MATCHES",
     "MAX_OPS",
     "CreatedRef",
-    "EditContext",
     "Op",
     "OpError",
     "OpOutcome",
     "OpsResult",
     "Selector",
     "Stop",
-    "check_ops",
     "ops_risk",
     "parse_ops",
     "run_ops",

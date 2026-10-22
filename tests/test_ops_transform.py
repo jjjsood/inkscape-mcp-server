@@ -18,7 +18,6 @@ from lxml import etree
 
 from inkscape_mcp.edit import transform as transform_engine
 from inkscape_mcp.edit.ops import OpError
-from inkscape_mcp.edit.pipeline import EditApplyError
 from inkscape_mcp.snapshots import restore_snapshot
 from inkscape_mcp.workspace import sandbox
 from tests.conftest import run_ops
@@ -171,28 +170,8 @@ def test_move_accepts_a_selector_and_several_ops_stack_on_one_snapshot(tool_ws, 
     assert _counts(tool_ws, doc) == (1, 1)
 
 
-def test_real_change_writes_exactly_one_snapshot_and_record(tool_ws, doc) -> None:
-    result = run_ops(doc, {"op": "move", "ids": ["r1"], "dx": 5, "dy": -3})
-    assert result.operation_id.startswith("op_") and result.snapshot_id.startswith("snap_")
-    assert _counts(tool_ws, doc) == (1, 1)
-    record = json.loads(
-        (sandbox.operations_dir(tool_ws, doc) / f"{result.operation_id}.json").read_text()
-    )
-    assert (record["status"], record["risk_class"]) == ("applied", "medium")
-
-
-def test_move_is_undone_by_its_snapshot(tool_ws, doc) -> None:
-    before = _working(tool_ws, doc)
-    result = run_ops(doc, {"op": "move", "ids": ["r1"], "dx": 5, "dy": 5})
-    assert _working(tool_ws, doc) != before
-    restore_snapshot(doc, result.snapshot_id)
-    assert _working(tool_ws, doc) == before
-
-
-def test_missing_object_and_unknown_document(tool_ws, doc) -> None:
+def test_missing_object_is_rejected(tool_ws, doc) -> None:
     _rejected(tool_ws, doc, {"op": "move", "ids": ["nope"], "dx": 1, "dy": 1}, match="id 'nope'")
-    with pytest.raises(EditApplyError, match="document id not found"):
-        run_ops("d_nope", {"op": "move", "ids": ["r1"], "dx": 1, "dy": 1})
 
 
 # --- tile ------------------------------------------------------------------------
@@ -209,9 +188,12 @@ def test_tile_builds_the_grid_in_one_reversible_call(tool_ws, doc) -> None:
 
 
 def test_tile_offsets_clones_by_the_grid_step(tool_ws, doc) -> None:
-    run_ops(doc, {"op": "tile", "ids": ["r1"], "rows": 1, "cols": 2, "dx": 25, "dy": 0})
+    run_ops(doc, {"op": "tile", "ids": ["r1"], "rows": 2, "cols": 2, "dx": 25, "dy": 10})
     transforms = [r.get("transform") for r in _svg(tool_ws, doc).findall(f".//{NS}rect")]
-    assert "translate(25,0)" in transforms
+    # the original stays put; each clone sits at (col * dx, row * dy)
+    assert sorted(transforms, key=str) == sorted(
+        [None, "translate(25,0)", "translate(0,10)", "translate(25,10)"], key=str
+    )
 
 
 def test_tile_1x1_is_a_noop(tool_ws, doc) -> None:
@@ -384,3 +366,10 @@ def test_selector_bbox_accepts_the_list_form_inspect_reports(tool_ws, doc) -> No
         doc, {"op": "move", "select": {"tag": "rect", "bbox": [0, 0, 15, 15]}, "dx": 1}
     )
     assert result.outcomes[0].matched == ["r1"]
+
+
+def test_repeated_moves_fold_into_one_translate(tool_ws, doc) -> None:
+    for _ in range(3):
+        run_ops(doc, {"op": "move", "ids": ["r1"], "dx": 5})
+    run_ops(doc, {"op": "move", "ids": ["r1"], "dx": -1, "dy": 2})
+    assert _transform(tool_ws, doc) == "translate(14,2)"

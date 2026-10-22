@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from inkscape_mcp.config import get_settings
+from inkscape_mcp.config import Settings, get_settings
 from inkscape_mcp.live import dbus_backend
 from inkscape_mcp.live.dbus_backend import (
     DBusTransport,
@@ -25,12 +25,17 @@ from inkscape_mcp.live.dbus_backend import (
     _variant_string,
 )
 from inkscape_mcp.live.protocol import LiveCommand
+from inkscape_mcp.live.selection import NO_FREEZE_REQUIRED, best_available
+from inkscape_mcp.live.session import LiveSessionManager
+from inkscape_mcp.live.socket_backend import ExtensionSocketTransport
 from inkscape_mcp.live.transport import (
     LiveCapabilityUnsupported,
+    LiveConnectionError,
     LiveError,
     RenderRegion,
+    TransportProbe,
 )
-from inkscape_mcp.workspace.subprocess_exec import ProcessResult
+from inkscape_mcp.workspace.subprocess_exec import ProcessError, ProcessResult
 
 
 @pytest.fixture
@@ -99,10 +104,6 @@ def _actions(fake: FakeGdbus) -> list[str]:
 
 
 # --- capability advertisement ----------------------------------------------
-
-
-def test_no_freeze_flag_is_set() -> None:
-    assert DBusTransport.no_freeze is True
 
 
 def test_capability_set_is_action_expressible_surface() -> None:
@@ -189,7 +190,7 @@ def test_get_active_document_parses_export(
 ) -> None:
     svg_text = (
         '<svg xmlns="http://www.w3.org/2000/svg" '
-        'xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.0.dtd" '
+        'xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" '
         'sodipodi:docname="poster.svg">'
         '<rect id="r1"/><circle id="c1"/></svg>'
     )
@@ -383,3 +384,125 @@ def test_live_export_no_freeze_roundtrip(settings: object) -> None:
         assert png[:8] == b"\x89PNG\r\n\x1a\n"
     finally:
         transport.disconnect()
+
+
+# --- activation failures + export temp-dir hygiene ----------------------------
+
+
+def _failing_activate(*, rc: int = 0, timed_out: bool = False) -> object:
+    def run(args: list[str], timeout_s: float | None = None) -> ProcessResult:
+        return ProcessResult(
+            args=args, returncode=rc, stdout="", stderr="boom", duration_s=0.0, timed_out=timed_out
+        )
+
+    return run
+
+
+@pytest.mark.parametrize(
+    "fake",
+    [_failing_activate(rc=1), _failing_activate(timed_out=True), _failing_activate(rc=-9)],
+    ids=["rc-nonzero", "timed-out", "killed"],
+)
+def test_activate_failure_is_clean_connection_error(
+    settings: object, monkeypatch: pytest.MonkeyPatch, fake: object
+) -> None:
+    monkeypatch.setattr(dbus_backend, "_session_bus_present", lambda: True)
+    monkeypatch.setattr(dbus_backend, "_gdbus", lambda: "gdbus")
+    monkeypatch.setattr(dbus_backend, "run_process", fake)
+    transport = DBusTransport(settings)  # type: ignore[arg-type]
+    with pytest.raises(LiveConnectionError, match="rejected a DBus action"):
+        transport.apply_to_selection(style={"fill": "#000000"}, transform=None)
+
+
+def test_activate_process_error_is_clean_connection_error(
+    settings: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(args: list[str], timeout_s: float | None = None) -> ProcessResult:
+        raise ProcessError("spawn failed")
+
+    monkeypatch.setattr(dbus_backend, "_gdbus", lambda: "gdbus")
+    monkeypatch.setattr(dbus_backend, "run_process", boom)
+    transport = DBusTransport(settings)  # type: ignore[arg-type]
+    with pytest.raises(LiveConnectionError):
+        transport.get_document_svg()
+
+
+@pytest.mark.parametrize(
+    ("payload", "fail_export"),
+    [(b"<svg xmlns='http://www.w3.org/2000/svg'/>", False), (b"", True)],
+    ids=["success", "activate-fails"],
+)
+def test_export_temp_dir_is_removed(
+    settings: object,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    payload: bytes,
+    fail_export: bool,
+) -> None:
+    fake = FakeGdbus(export_payload=payload)
+    _install(monkeypatch, fake)
+    if fail_export:
+        monkeypatch.setattr(dbus_backend, "run_process", _failing_activate(rc=1))
+    made: list[Path] = []
+    real_mkdtemp = dbus_backend.tempfile.mkdtemp
+
+    def tracking_mkdtemp(**kwargs: str) -> str:
+        path = real_mkdtemp(dir=tmp_path, **kwargs)
+        made.append(Path(path))
+        return path
+
+    monkeypatch.setattr(dbus_backend.tempfile, "mkdtemp", tracking_mkdtemp)
+    transport = DBusTransport(settings)  # type: ignore[arg-type]
+    if fail_export:
+        with pytest.raises(LiveConnectionError):
+            transport.get_document_svg()
+    else:
+        assert "svg" in transport.get_document_svg()
+    assert len(made) == 1
+    assert not made[0].exists()
+
+
+# --- positive no-freeze selection path ---------------------------------------
+
+
+def _socket_available(settings: object) -> TransportProbe:
+    return TransportProbe(
+        name=ExtensionSocketTransport.name,
+        available=True,
+        rank=ExtensionSocketTransport.rank,
+        supported_commands=[c.value for c in ExtensionSocketTransport.supported_commands],
+        detail="patched",
+    )
+
+
+def test_no_freeze_prefers_dbus_over_available_socket(
+    settings: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install(monkeypatch, FakeGdbus())
+    monkeypatch.setattr(ExtensionSocketTransport, "probe", _socket_available)
+
+    # Read mode: the higher-ranked socket wins; no-freeze mode: only DBus qualifies.
+    read = best_available(settings)  # type: ignore[arg-type]
+    assert read is not None and read.name == "extension-socket"
+    chosen = best_available(settings, NO_FREEZE_REQUIRED, no_freeze=True)  # type: ignore[arg-type]
+    assert chosen is not None and chosen.name == "dbus"
+
+
+def test_session_connect_no_freeze_succeeds_with_fake_gdbus(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" '
+        'xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" '
+        'sodipodi:docname="live.svg"><rect id="r1"/></svg>'
+    )
+    _install(monkeypatch, FakeGdbus(export_payload=svg.encode()))
+    monkeypatch.setattr(ExtensionSocketTransport, "probe", _socket_available)
+    mgr = LiveSessionManager(Settings(workspace_roots=[tmp_path], live_enabled=True))
+
+    status = mgr.connect(prefer="no_freeze")
+
+    assert status.connected is True
+    assert status.transport == "dbus"
+    assert mgr.require_transport().name == "dbus"
+    mgr.disconnect()

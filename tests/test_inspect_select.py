@@ -129,11 +129,6 @@ def test_matching_uses_the_css_cascade(css, filters, expected) -> None:
     assert _ids(find_objects(css, **filters)) == expected
 
 
-def test_group_with_the_inherited_fill_matches_too(css) -> None:
-    hits = _ids(find_objects(css, fill="#00cc66"))
-    assert "inherited" in hits and "ownpaint" not in hits
-
-
 def test_reported_fill_stays_the_per_element_token(css) -> None:
     """The cascade is for MATCHING only; class/inherited-only objects report fill=None."""
     fills = {o.object_id: o.fill for o in find_objects(css).objects}
@@ -192,8 +187,11 @@ def _rows(app, doc, **args):
 
 
 def test_select_passes_every_filter_through(tool_app, mixed) -> None:
-    rows = _rows(tool_app, mixed, select={"tag": "rect", "fill": "#3366CC"})["objects"]
-    assert {r[0] for r in rows} == {"blue1", "blue2"}
+    data = call(
+        tool_app, "inspect", {"doc_id": mixed, "select": {"tag": "rect", "fill": "#3366CC"}}
+    )
+    assert {r[0] for r in data.data["objects"]["objects"]} == {"blue1", "blue2"}
+    assert "summary" not in data.data  # select implies include=[objects] only
     by_bbox = _rows(tool_app, mixed, select={"bbox": {"x": 0, "y": 0, "width": 5, "height": 5}})
     assert {r[0] for r in by_bbox["objects"]} == {"blue1", "poly1"}
 
@@ -205,8 +203,5 @@ def test_object_rows_for_a_mixed_document(tool_app, mixed) -> None:
     assert set(rows) == ALL_IDS
     assert rows["blue1"][3] == "#3366CC"
     assert rows["p1"][2] is None  # a path has no analytic box
-
-
-def test_empty_selection_is_an_empty_list(tool_app, mixed) -> None:
-    objects = _rows(tool_app, mixed, select={"tag": "circle"})
-    assert objects == {"count": 0, "columns": ["id", "tag", "bbox", "fill"]}
+    empty = _rows(tool_app, mixed, select={"tag": "circle"})
+    assert empty == {"count": 0, "columns": ["id", "tag", "bbox", "fill"]}

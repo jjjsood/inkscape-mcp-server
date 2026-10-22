@@ -26,12 +26,17 @@ messages.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from PIL import Image
 from pydantic import BaseModel, Field
 
-from inkscape_mcp.config import Settings, get_settings
+from inkscape_mcp.config import Settings, resolve_settings
+from inkscape_mcp.document.inspect import inspect_summary
 from inkscape_mcp.logging_setup import get_logger
+from inkscape_mcp.registry import get_registry
 from inkscape_mcp.render.batch import ExportSpec
-from inkscape_mcp.render.cli import RenderResult, export_document
+from inkscape_mcp.render.cli import RenderResult, _target_raster_dims, export_document
 
 _logger = get_logger("render.profiles")
 
@@ -45,10 +50,6 @@ DEFAULT_WEB_WIDTH_PX = 1024
 
 #: Default icon set sizes (px, square). A conventional favicon/app-icon ladder.
 DEFAULT_ICON_SIZES: tuple[int, ...] = (16, 32, 48, 64, 128, 256)
-
-#: Default density multipliers for the responsive web set. 1x/2x/3x covers the standard
-#: web/retina ladder; the base width is multiplied by each to mint the responsive PNG set.
-DEFAULT_WEB_SCALES: tuple[int, ...] = (1, 2, 3)
 
 #: Print-profile Inkscape export options. These are REAL, verified Inkscape 1.4 flags
 #: whose output is observably different from a plain PDF export — for ANY document, not just
@@ -130,10 +131,6 @@ class ProfileSizeError(Exception):
     """
 
 
-def _settings(settings: Settings | None) -> Settings:
-    return settings if settings is not None else get_settings()
-
-
 def _compose_prefix(caller_prefix: str | None, profile_key: str | None) -> str | None:
     """Join a caller-supplied `name_prefix` with the profile's own per-file key.
 
@@ -156,7 +153,7 @@ def _artifact(
 ) -> ProfileArtifact:
     """Adapt a CLI `RenderResult` into a `ProfileArtifact` (both resolvable paths preserved)."""
     return ProfileArtifact(
-        path=result.artifact_path,
+        path=result.workspace_relative_path,
         workspace_relative_path=result.workspace_relative_path,
         format=result.format,
         width_px=result.width_px,
@@ -197,7 +194,7 @@ def export_web_profile(
     Raises `ProfileSizeError` if a resolved width or scale is non-positive; `SandboxViolation` for
     an out-of-workspace `out_dir`.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     resolved = _resolve_web_widths(width_px, widths, scales)
 
     artifacts: list[ProfileArtifact] = []
@@ -284,7 +281,7 @@ def profile_specs(
     Mirrors `export_web_profile` / `create_icon_set` / `export_print_profile` (same size validation,
     same order) without touching Inkscape. Raises `ProfileSizeError` for an invalid size.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     if name == "web":
         resolved = _resolve_web_widths(
             width_px if width_px is not None else DEFAULT_WEB_WIDTH_PX, widths, scales
@@ -297,6 +294,18 @@ def profile_specs(
     return [ExportSpec(format="pdf")]
 
 
+def _square_icon(doc_id: str, size: int, result: RenderResult) -> RenderResult:
+    """Pad the exported PNG (centred, transparent) to `size` x `size` so icons are always square."""
+    if (result.width_px, result.height_px) == (size, size):
+        return result
+    out = Path(get_registry().get(doc_id).root) / result.workspace_relative_path
+    with Image.open(out) as im:
+        canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        canvas.paste(im.convert("RGBA"), ((size - im.width) // 2, (size - im.height) // 2))
+    canvas.save(out, format="PNG")
+    return result.model_copy(update={"width_px": size, "height_px": size})
+
+
 def create_icon_set(
     doc_id: str,
     sizes: list[int] | None = None,
@@ -304,7 +313,7 @@ def create_icon_set(
     name_prefix: str | None = None,
     settings: Settings | None = None,
 ) -> ProfileResult:
-    """Produce a multi-size square PNG icon set from the source document.
+    """Produce a multi-size square PNG icon set (non-square docs padded centred, transparent).
 
     Each requested size yields one PNG via `export_document(doc_id, "png", width_px=size)`. Sizes
     default to `DEFAULT_ICON_SIZES`. Every requested size is validated BEFORE any Inkscape
@@ -316,22 +325,26 @@ def create_icon_set(
 
     Raises `SandboxViolation` for an out-of-workspace `out_dir`.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     # Validated up front so an oversized/invalid request is rejected before Inkscape is ever
     # invoked (and so a partial icon set is never written).
     requested = _icon_sizes(sizes, s)
 
     artifacts: list[ProfileArtifact] = []
+    get_registry().get(doc_id)  # unknown doc -> KeyError, as export_document does
+    summary = inspect_summary(doc_id)
     for size in requested:
+        # Fit inside size x size: a tall doc is exported narrower so its height is `size`.
+        _, h = _target_raster_dims(summary, size)
         result = export_document(
             doc_id,
             "png",
-            width_px=size,
+            width_px=size if h <= size else max(1, round(size * size / h)),
             out_dir=out_dir,
             name_prefix=_compose_prefix(name_prefix, f"icon-{size}"),
             settings=s,
         )
-        artifacts.append(_artifact(result, requested_size_px=size))
+        artifacts.append(_artifact(_square_icon(doc_id, size, result), requested_size_px=size))
     _logger.info("icon set exported", extra={"doc_id": doc_id, "sizes": requested})
     return ProfileResult(doc_id=doc_id, profile=ICON, artifacts=artifacts)
 
@@ -356,7 +369,7 @@ def export_print_profile(
 
     Raises `SandboxViolation` for an out-of-workspace `out_dir`.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     pdf = export_document(
         doc_id,
         "pdf",

@@ -27,7 +27,7 @@ def test_unknown_id_names_the_op_and_the_id(tool_app, tool_ws) -> None:
 def test_high_risk_op_asks_for_an_approval_token(tool_app, tool_ws) -> None:
     doc = open_doc(tool_ws)
     msg = _fail(tool_app, "edit", {"doc_id": doc, "ops": [{"op": "delete", "ids": ["r1"]}]})
-    assert msg == "ops[0] delete is HIGH risk; re-call with approval_token"
+    assert msg.startswith("ops[0] delete is HIGH risk; re-call with approval_token (dry_run=true")
 
 
 def test_unknown_op_lists_the_valid_ones_and_missing_field_is_named(tool_app, tool_ws) -> None:
@@ -100,3 +100,17 @@ def test_unknown_doc_id_lists_open_ids(tool_app, tool_ws) -> None:
     doc = open_doc(tool_ws)
     msg = _fail(tool_app, "inspect", {"doc_id": "d_gone"})
     assert msg.startswith("document id not found; open ids: ") and doc in msg
+    assert "not a path" in msg
+
+
+def test_source_path_as_doc_id_names_the_real_doc_id(tool_app, tool_ws) -> None:
+    older = open_doc(tool_ws, "a.svg")
+    doc = open_doc(tool_ws, "logo.svg")
+    # a path is still rejected (doc_id stays strict) but the error names the right id
+    for given in ("logo.svg", "./logo.svg", str(tool_ws / "logo.svg")):
+        msg = _fail(tool_app, "inspect", {"doc_id": given})
+        assert f"'logo.svg' is open as doc_id {doc!r}; pass that doc_id" in msg
+        assert str(tool_ws) not in msg
+    # unrelated unknown value: list falls back, most recently opened first
+    msg = _fail(tool_app, "inspect", {"doc_id": "nope.svg"})
+    assert "open ids: " in msg and msg.index(doc) < msg.index(older)

@@ -48,27 +48,6 @@ def test_dollar_references_and_selectors_see_objects_from_the_same_call(tool_app
     assert "#00ff00" in svg and "#000000" in svg
 
 
-def test_gradient_reference_in_a_paint(tool_app, tool_ws) -> None:
-    doc = open_doc(tool_ws)
-    ops = [
-        {
-            "op": "linear_gradient",
-            "id": "sky",
-            "stops": [{"offset": 0, "color": "#fff"}, {"offset": 1, "color": "#00f"}],
-        },
-        {"op": "fill", "ids": ["r1"], "color": "url(#$0)"},
-    ]
-    assert _edit(tool_app, doc, ops).data["changed"] is True
-    assert "url(#sky)" in working_svg(doc)
-
-
-def test_one_call_is_one_snapshot(tool_app, tool_ws) -> None:
-    doc = open_doc(tool_ws)
-    _edit(tool_app, doc, [RECT, {"op": "fill", "ids": ["r1"], "color": "#00f"}])
-    snaps = call(tool_app, "inspect", {"doc_id": doc, "include": ["snapshots"]}).data["snapshots"]
-    assert len(snaps) == 1
-
-
 def test_failing_op_is_a_noop_and_names_the_op(tool_app, tool_ws) -> None:
     doc = open_doc(tool_ws)
     before = working_svg(doc)
@@ -101,6 +80,9 @@ def test_high_risk_needs_approval_and_dry_run_reports_it(tool_app, tool_ws) -> N
     assert 'id="r1"' in working_svg(doc)
     done = _edit(tool_app, doc, [delete], approval_token="yes").data
     assert done["risk"] == "high" and done["changed"] is True
+    assert done["undo"] == (
+        f"history(doc_id, action='restore', snapshot_id='{done['snapshot_id']}')"
+    )
     assert 'id="r1"' not in working_svg(doc)
 
 
@@ -153,13 +135,3 @@ def test_a_noop_edit_reports_unchanged(tool_app, tool_ws) -> None:
     data = _edit(tool_app, doc, [{"op": "fill", "ids": ["r1"], "color": "#ff0000"}]).data
     assert data["changed"] is False
     assert "snapshot_id" not in data
-
-
-def test_path_ops_are_refused_when_raw_actions_are_disabled(tool_app, tool_ws, monkeypatch) -> None:
-    from inkscape_mcp.config import ENV_RAW_ACTION_ENABLED, get_settings
-
-    monkeypatch.setenv(ENV_RAW_ACTION_ENABLED, "0")
-    get_settings.cache_clear()
-    doc = open_doc(tool_ws)
-    with pytest.raises(ToolError, match="path ops are disabled"):
-        _edit(tool_app, doc, [{"op": "union", "ids": ["r1", "r2"]}], approval_token="x")

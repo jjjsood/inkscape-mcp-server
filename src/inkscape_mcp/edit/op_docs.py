@@ -108,7 +108,19 @@ OP_EXAMPLES: dict[str, dict[str, Any]] = {
     "optimize_web": {"op": "optimize_web", "precision": 3},
 }
 
-#: Group -> op names, in presentation order (matches the table in docs/rework-plan.md).
+#: Extra per-op guidance appended to the `note` of `help(op=...)`.
+OP_NOTES: dict[str, str] = {
+    "replace_color": (
+        "Without ids/select it is document-wide (`<style>` rules included). With ids/select, a "
+        "colour that comes from a CSS class/id rule is changed IN the rule when every element "
+        "using that rule is targeted; if the class is shared with untargeted elements the targets "
+        "get an inline override instead and the rule is left alone. Targeting the root <svg> id "
+        "means document-wide; targeting a <style> id rewrites that stylesheet's colours."
+    ),
+}
+OP_NOTES["palette"] = OP_NOTES["replace_color"]
+
+#: Group -> op names, in presentation order.
 OP_GROUPS: dict[str, list[str]] = {
     "create": [
         "create_rect",
@@ -185,7 +197,12 @@ def op_reference(name: str) -> dict[str, Any]:
         "creates_id": cls.CREATES or None,
         "fields": fields,
         "example": OP_EXAMPLES[name],
-        "note": "fields ending in ? are optional; 'ids' can be replaced by 'select'",
+        "note": " ".join(
+            [
+                "fields ending in ? are optional; 'ids' can be replaced by 'select'.",
+                OP_NOTES.get(name, ""),
+            ]
+        ).strip(),
     }
 
 

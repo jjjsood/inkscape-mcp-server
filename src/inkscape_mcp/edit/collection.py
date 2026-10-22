@@ -2,7 +2,7 @@
 
 Pure, framework-free helpers behind the SMALL TYPED collection tools (ADR-002 — NOT a portmanteau):
 
-- :func:`make_compose_grid` builds the reversible ``mutate`` closure that lays N ALREADY-RESOLVED
+- :func:`compose_grid` lays N ALREADY-RESOLVED
   source subtrees out in a ``rows`` x ``cols`` grid in a target document, each asset deep-copied
   (re-id'd, intra-clone refs rewritten) and wrapped in a ``<g>`` cell group with a translate +
   optional scale-to-fit transform. It reuses the EXACT placement primitives ``tile`` uses
@@ -25,6 +25,7 @@ short style tokens) — never a host path. Source-subtree extraction is bounded 
 
 from __future__ import annotations
 
+import copy
 import math
 import re
 
@@ -34,6 +35,9 @@ from pydantic import BaseModel
 
 from inkscape_mcp.document.inspect import DocumentNotFound, InspectionError, _load_tree
 from inkscape_mcp.edit.dom import (
+    _CSS_CLASS_RE,
+    _CSS_ID_RE,
+    _CSS_RULE_RE,
     EditError,
     all_ids,
     content_bbox,
@@ -42,23 +46,20 @@ from inkscape_mcp.edit.dom import (
     fmt_num,
     parse_viewbox,
     prepend_transform,
+    require_finite,
 )
-from inkscape_mcp.edit.pipeline import MutateFn
 from inkscape_mcp.registry import doc_not_found_message
 
 __all__ = [
-    "MAX_CELLS",
     "ConsistencyProperty",
     "ConsistencySignals",
     "ConsistencyVerdict",
-    "GridCell",
     "build_consistency_verdict",
+    "compose_grid",
     "consistency_signals",
     "dominant_id_naming",
     "dominant_stroke_width",
-    "id_naming_style",
-    "make_compose_grid",
-    "make_place_document",
+    "place_document",
     "resolve_grid_assets",
     "viewbox_signature",
 ]
@@ -84,12 +85,6 @@ class GridCell(BaseModel):
     source: str
 
 
-def _require_finite(name: str, value: float) -> None:
-    """Reject a non-finite numeric input with a stable, host-path-free :class:`EditError`."""
-    if not math.isfinite(value):
-        raise EditError(f"{name} must be finite")
-
-
 def _num(raw: str | None) -> float:
     """Parse an attribute into a float (``None``/blank is 0.0); raises ``ValueError`` on garbage."""
     if raw is None:
@@ -100,7 +95,8 @@ def _num(raw: str | None) -> float:
     return float(text)
 
 
-def make_compose_grid(
+def compose_grid(
+    tree: etree._ElementTree,
     cells: list[tuple[etree._Element, str]],
     rows: int,
     cols: int,
@@ -109,8 +105,8 @@ def make_compose_grid(
     gap: float = 0.0,
     scale_to_fit: bool = True,
     padding: float = 0.0,
-) -> tuple[MutateFn, list[GridCell]]:
-    """Build a ``mutate`` closure that lays N DIFFERENT assets out in a ``rows`` x ``cols`` grid.
+) -> tuple[str, list[GridCell]]:
+    """Lay N DIFFERENT assets out in a ``rows`` x ``cols`` grid in ``tree``.
 
     ``cells`` is the ALREADY-RESOLVED, ordered list of ``(source_element, source_label)`` pairs —
     the tool layer extracts each source subtree (possibly from a DIFFERENT document) and the engine
@@ -124,12 +120,11 @@ def make_compose_grid(
     The grid fills ROW-MAJOR; supplying fewer than ``rows*cols`` assets simply leaves trailing cells
     empty (a contact sheet of N≤rows*cols assets). Bounds (sec.12): ``rows``/``cols`` ≥ 1 and their
     product ≤ :data:`MAX_CELLS`; ``cell`` > 0; ``gap``/``padding`` ≥ 0 and finite; the asset count
-    must not exceed the cell count. Raises :class:`EditError` on any violation BEFORE the closure is
-    handed to the pipeline, so a bad request never reaches a snapshot.
+    must not exceed the cell count. Raises :class:`EditError` on any violation BEFORE the tree is
+    touched, so a bad request never reaches a snapshot.
 
-    Returns ``(mutate, planned_cells)`` where ``planned_cells`` is the ordered :class:`GridCell`
-    placement plan (its ``group_id`` values are filled in when ``mutate`` runs, since unique-id
-    minting needs the live target tree).
+    Returns ``(summary, placed_cells)`` where ``placed_cells`` is the ordered :class:`GridCell`
+    placement plan with each cell's new ``group_id`` filled in.
     """
     if rows < 1 or cols < 1:
         raise EditError("grid rows and cols must each be >= 1")
@@ -137,8 +132,8 @@ def make_compose_grid(
         raise EditError(f"grid too large: {rows}x{cols} exceeds {MAX_CELLS} cells")
     if not (math.isfinite(cell) and cell > 0):
         raise EditError("grid cell must be a finite number greater than 0")
-    _require_finite("gap", gap)
-    _require_finite("padding", padding)
+    require_finite("gap", gap)
+    require_finite("padding", padding)
     if gap < 0 or padding < 0:
         raise EditError("grid gap and padding must be >= 0")
     if not cells:
@@ -157,50 +152,77 @@ def make_compose_grid(
         for i, (_elem, label) in enumerate(cells)
     ]
 
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        stride = cell + gap
-        for entry, (source, _label) in zip(plan, cells, strict=True):
-            clone, top_id = deep_copy_with_new_ids(source, root, None)
-            wrapper = etree.SubElement(root, f"{_SVG}g")
-            group_id = f"cell-{entry.row}-{entry.col}-{top_id}"
-            wrapper.set("id", group_id)
-            wrapper.append(clone)
-            entry.group_id = group_id
+    root = tree.getroot()
+    stride = cell + gap
+    for entry, (source, _label) in zip(plan, cells, strict=True):
+        clone, top_id = deep_copy_with_new_ids(source, root, None)
+        wrapper = etree.SubElement(root, f"{_SVG}g")
+        group_id = f"cell-{entry.row}-{entry.col}-{top_id}"
+        wrapper.set("id", group_id)
+        wrapper.append(clone)
+        entry.group_id = group_id
 
-            origin_x = entry.col * stride + padding
-            origin_y = entry.row * stride + padding
+        origin_x = entry.col * stride + padding
+        origin_y = entry.row * stride + padding
 
-            # Optional uniform scale-to-fit, applied INSIDE the translate (so the asset scales about
-            # the cell origin, then is moved into place). Downscale only by default.
-            if scale_to_fit:
-                bbox = content_bbox(clone)
-                if bbox is not None:
-                    _x, _y, bw, bh = bbox
-                    longest = max(bw, bh)
-                    if longest > 0:
-                        factor = inner / longest
-                        if factor < 1.0:
-                            prepend_transform(wrapper, f"scale({fmt_num(factor)})")
-            prepend_transform(wrapper, f"translate({fmt_num(origin_x)},{fmt_num(origin_y)})")
+        # Optional uniform scale-to-fit, applied INSIDE the translate (so the asset scales about
+        # the cell origin, then is moved into place). Downscale only by default.
+        if scale_to_fit:
+            bbox = content_bbox(clone)
+            if bbox is not None:
+                _x, _y, bw, bh = bbox
+                longest = max(bw, bh)
+                if longest > 0:
+                    factor = inner / longest
+                    if factor < 1.0:
+                        prepend_transform(wrapper, f"scale({fmt_num(factor)})")
+        prepend_transform(wrapper, f"translate({fmt_num(origin_x)},{fmt_num(origin_y)})")
 
-        return f"composed {len(plan)} asset(s) into a {rows}x{cols} grid"
-
-    return mutate, plan
+    return f"composed {len(plan)} asset(s) into a {rows}x{cols} grid", plan
 
 
-def make_place_document(
+def _carry_css_rules(source: etree._Element, source_root: etree._Element) -> etree._Element:
+    """Return ``source`` with the source document's CSS rules it depends on bundled in.
+
+    A single object placed out of a document would otherwise lose the ``<style>`` rules its
+    ``class`` / ``#id`` selectors point at. The rules whose class or id selectors match the object's
+    subtree are copied into a synthetic ``<g>`` next to a copy of the object, so
+    :func:`dom.deep_copy_with_new_ids` scopes them to the placed copy like a whole-document place.
+    ``source`` is returned unchanged when it is the root or no rule applies.
+    """
+    if source is source_root:
+        return source
+    nodes = [n for n in source.iter() if isinstance(n.tag, str)]
+    classes = {c for n in nodes for c in (n.get("class") or "").split()}
+    ids = {n.get("id") for n in nodes}
+    rules = [
+        m[0].strip()
+        for st in source_root.iter(f"{_SVG}style")
+        for m in _CSS_RULE_RE.finditer(st.text or "")
+        if classes.intersection(_CSS_CLASS_RE.findall(m[1]))
+        or ids.intersection(_CSS_ID_RE.findall(m[1]))
+    ]
+    if not rules:
+        return source
+    holder = etree.Element(f"{_SVG}g")
+    etree.SubElement(holder, f"{_SVG}style").text = "\n".join(rules)
+    holder.append(copy.deepcopy(source))
+    return holder
+
+
+def place_document(
+    tree: etree._ElementTree,
     source: etree._Element,
     label: str,
     x: float,
     y: float,
     scale: float = 1.0,
     *,
-    result_holder: list[str] | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that PLACES one already-resolved source subtree into a target doc.
+    source_root: etree._Element | None = None,
+) -> tuple[str, str]:
+    """PLACE one already-resolved source subtree into ``tree``; returns ``(summary, group_id)``.
 
-    The single-asset counterpart of :func:`make_compose_grid`: ``source`` is one resolved
+    The single-asset counterpart of :func:`compose_grid`: ``source`` is one resolved
     element — a whole source document's ROOT or a named object, possibly from a DIFFERENT document —
     deep-copied (every id re-minted, intra-clone refs rewritten via
     :func:`dom.deep_copy_with_new_ids`) and wrapped in a ``<g>`` whose transform translates it to
@@ -209,40 +231,36 @@ def make_place_document(
     (ADR-005); the tool layer routes it through ``apply_edit`` for a snapshot + Operation Record.
 
     Bounds (sec.12): ``x`` / ``y`` finite; ``scale`` finite and > 0. Raises :class:`EditError` on
-    any violation BEFORE the closure runs, so a bad request never reaches a snapshot. When
-    ``result_holder`` is supplied the new wrapper-group id is written into it
-    (``result_holder[:] = [group_id]``) so the tool layer returns it without re-inspecting the tree.
+    any violation BEFORE the tree is touched, so a bad request never reaches a snapshot. The new
+    wrapper-group id is returned so the tool layer need not re-inspect the tree.
     """
-    _require_finite("x", x)
-    _require_finite("y", y)
+    require_finite("x", x)
+    require_finite("y", y)
     if not (math.isfinite(scale) and scale > 0):
         raise EditError("place scale must be a finite number greater than 0")
 
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        clone, top_id = deep_copy_with_new_ids(source, root, None)
-        wrapper = etree.SubElement(root, f"{_SVG}g")
-        # deep_copy minted top_id unique, but the wrapper id must ALSO be unique vs. the live tree.
-        existing = all_ids(root)
-        base = f"placed-{top_id}"
-        group_id = base
-        n = 1
-        while group_id in existing:
-            group_id = f"{base}-{n}"
-            n += 1
-        wrapper.set("id", group_id)
-        wrapper.append(clone)
-        if scale != 1.0:
-            prepend_transform(wrapper, f"scale({fmt_num(scale)})")
-        prepend_transform(wrapper, f"translate({fmt_num(x)},{fmt_num(y)})")
-        if result_holder is not None:
-            result_holder[:] = [group_id]
-        return (
-            f"placed {label!r} as {group_id!r} at "
-            f"({fmt_num(x)},{fmt_num(y)}) scale {fmt_num(scale)}"
-        )
-
-    return mutate
+    root = tree.getroot()
+    if source_root is not None:
+        source = _carry_css_rules(source, source_root)
+    clone, top_id = deep_copy_with_new_ids(source, root, None)
+    wrapper = etree.SubElement(root, f"{_SVG}g")
+    # deep_copy minted top_id unique, but the wrapper id must ALSO be unique vs. the live tree.
+    existing = all_ids(root)
+    base = f"placed-{top_id}"
+    group_id = base
+    n = 1
+    while group_id in existing:
+        group_id = f"{base}-{n}"
+        n += 1
+    wrapper.set("id", group_id)
+    wrapper.append(clone)
+    if scale != 1.0:
+        prepend_transform(wrapper, f"scale({fmt_num(scale)})")
+    prepend_transform(wrapper, f"translate({fmt_num(x)},{fmt_num(y)})")
+    summary = (
+        f"placed {label!r} as {group_id!r} at ({fmt_num(x)},{fmt_num(y)}) scale {fmt_num(scale)}"
+    )
+    return summary, group_id
 
 
 # --- Cross-document consistency verdict -------------------------------------

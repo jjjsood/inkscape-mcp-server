@@ -1,25 +1,23 @@
-"""Prompt smoke tests over the in-memory MCP client (architecture §4.1).
+"""Prompts over the in-memory MCP client (architecture §4.1).
 
-The four export/recolor prompts, ``live_canvas_assist``, and the two
-authoring prompts (``compose_artwork`` / ``restyle_artwork``) must RESOLVE and RENDER over an actual
-MCP client — not merely appear in ``list_prompts``. The stale server surfaced 0 of 5, so this proves
-discoverability *and* render via ``get_prompt``, and locks the count at 7.
-
-Prompts add ZERO authority (ADR-002/003): each must point at the typed, gated tool surface and must
-never mention a raw-Action escape hatch or arbitrary-code path.
-
-Note on arguments: four prompts are zero-arg; ``live_canvas_assist``, ``compose_artwork``, and
-``restyle_artwork`` each take a required ``goal`` string, so we supply a minimal goal for those to
-drive the render. All seven must resolve with no argument *error* and render non-empty guidance.
+Every prompt must RESOLVE and RENDER over an actual MCP client — not merely appear in
+``list_prompts`` — and the registered set is locked. Prompts add ZERO authority (ADR-002/003): they
+never mention a raw-Action / arbitrary-code escape hatch, and every tool, op, field and enum value
+they reference must exist on the registered surface (a drift guard: renaming an op or a field
+fails here instead of leaving the guidance pointing at nothing).
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
+from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from fastmcp import Client
 
+from inkscape_mcp.edit.op_docs import op_models
 from inkscape_mcp.server import mcp, register_tools
 
 register_tools()
@@ -34,21 +32,14 @@ _EXPECTED = {
     "compose_artwork",
     "restyle_artwork",
 }
-
-# Per-prompt arguments. Four are zero-arg; `live_canvas_assist`, `compose_artwork`, and
-# `restyle_artwork` each require a `goal`.
-_PROMPT_ARGS: dict[str, dict[str, str]] = {
-    "prepare_web_export": {},
-    "prepare_icon_set": {},
-    "prepare_print_export": {},
-    "theme_recoloring": {},
-    "live_canvas_assist": {"goal": "smoke test"},
-    "compose_artwork": {"goal": "smoke test"},
-    "restyle_artwork": {"goal": "smoke test"},
-}
+_GOAL_PROMPTS = ("live_canvas_assist", "compose_artwork", "restyle_artwork")
 
 # Substrings that would betray a raw-Action / arbitrary-code escape hatch (case-insensitive).
-_FORBIDDEN = ("run_raw_action", "raw action", "run_action")
+_FORBIDDEN = ("run_raw_action", "raw action", "run_action", "--actions", "actions(")
+
+
+def _args(name: str, goal: str = "smoke test") -> dict[str, str]:
+    return {"goal": goal} if name in _GOAL_PROMPTS else {}
 
 
 def _render(name: str, args: dict[str, str]) -> str:
@@ -66,27 +57,72 @@ def _render(name: str, args: dict[str, str]) -> str:
     return asyncio.run(go())
 
 
+def _words(node: Any) -> Iterator[str]:
+    """Every property name and string enum/const value anywhere in a JSON schema."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "properties":
+                yield from value
+            elif key == "enum":
+                yield from (v for v in value if isinstance(v, str))
+            elif key == "const" and isinstance(value, str):
+                yield value
+            yield from _words(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _words(item)
+
+
+@pytest.fixture(scope="module")
+def surface() -> dict[str, set[str]]:
+    tools = asyncio.run(mcp.list_tools())
+    schemas = [t.parameters for t in tools] + [m.model_json_schema() for m in op_models().values()]
+    return {
+        "tools": {t.name for t in tools},
+        "ops": set(op_models()),
+        "prompts": {p.name for p in asyncio.run(mcp.list_prompts())},
+        "vocab": set(_words(schemas)),
+    }
+
+
 @pytest.mark.parametrize("name", sorted(_EXPECTED))
 def test_prompt_resolves_and_renders_non_empty(name: str) -> None:
-    # Each prompt resolves over the client with no argument error and renders non-empty guidance.
-    text = _render(name, _PROMPT_ARGS[name])
+    text = _render(name, _args(name))
     assert text.strip(), f"prompt {name!r} rendered empty guidance"
 
 
-def test_prompt_count_locked_at_seven() -> None:
-    async def go() -> set[str]:
-        async with Client(mcp) as client:
-            prompts = await client.list_prompts()
-            return {p.name for p in prompts}
-
-    names = asyncio.run(go())
-    assert len(names) == 7
-    assert names == _EXPECTED
+def test_prompt_set_is_locked() -> None:
+    assert {p.name for p in asyncio.run(mcp.list_prompts())} == _EXPECTED
 
 
 @pytest.mark.parametrize("name", sorted(_EXPECTED))
 def test_prompt_grants_no_raw_action_path(name: str) -> None:
-    # Prompts add no authority: work flows through the typed gated tools (ADR-002/003).
-    text = _render(name, _PROMPT_ARGS[name]).lower()
+    text = _render(name, _args(name)).lower()
     for forbidden in _FORBIDDEN:
         assert forbidden not in text, f"prompt {name!r} mentions a raw-Action path: {forbidden!r}"
+
+
+@pytest.mark.parametrize("name", sorted(_EXPECTED))
+def test_prompt_references_only_the_registered_surface(name: str, surface) -> None:
+    body = _render(name, _args(name))
+    known = surface["tools"] | surface["ops"] | surface["prompts"] | surface["vocab"]
+    # `tool(...)` calls; `url(#id)` is the CSS paint function, not a tool.
+    calls = set(re.findall(r"`(\w+)\(", body)) - {"url"}
+    assert calls <= surface["tools"], f"unknown tools: {calls - surface['tools']}"
+    ops = set(re.findall(r"'op': '(\w+)'", body))
+    assert ops <= surface["ops"], f"unknown ops: {ops - surface['ops']}"
+    # Backticked identifiers and `'key': ` / `key=` argument names: a tool, op, prompt, field or
+    # enum value. `'key': 'value'` / `key='value'` values must be enum/const values too, except the
+    # free-form `format` string.
+    idents = set(re.findall(r"`(\w+)`", body))
+    pairs = re.findall(r"(?:'(\w+)':\s*|\b(\w+)=)('\w+')?", body)
+    keys = {a or b for a, b, _ in pairs}
+    values = {v.strip("'") for a, b, v in pairs if v and (a or b) != "format"}
+    unknown = (idents | keys | values) - known
+    assert not unknown, f"prompt {name!r} references names not on the surface: {sorted(unknown)}"
+
+
+@pytest.mark.parametrize("name", _GOAL_PROMPTS)
+def test_goal_is_woven_in_and_blank_goal_degrades(name: str) -> None:
+    assert "draw a blue logo" in _render(name, _args(name, "draw a blue\n  logo"))
+    assert "(no goal provided)" in _render(name, _args(name, "   "))

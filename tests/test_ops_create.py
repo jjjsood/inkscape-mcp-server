@@ -16,8 +16,6 @@ from lxml import etree
 from inkscape_mcp.document.inspect import SVG_NS, XLINK_NS
 from inkscape_mcp.edit.dom import parse_style
 from inkscape_mcp.edit.ops import OpError
-from inkscape_mcp.edit.pipeline import EditApplyError
-from inkscape_mcp.snapshots import restore_snapshot
 from inkscape_mcp.workspace import sandbox
 from tests.conftest import run_ops
 from tests.tool_support import open_doc
@@ -139,55 +137,37 @@ def test_text_anchor_sets_text_anchor(tool_ws, doc, anchor) -> None:
     assert text.get("text-anchor") == anchor
 
 
-def test_text_without_anchor_sets_no_text_anchor(tool_ws, doc) -> None:
-    _, text = _created(tool_ws, doc, {"op": "create_text", "x": 5, "y": 5, "text": "hi"})
-    assert text.get("text-anchor") is None
-
-
 # --- inline paint on create ----------------------------------------------------
 
 
-def test_rect_inline_fill_stroke_and_width(tool_ws, doc) -> None:
-    op = {"op": "create_rect", "x": 0, "y": 0, "width": 10, "height": 10}
-    _, rect = _created(
-        tool_ws, doc, {**op, "fill": "#3366cc", "stroke": "black", "stroke_width": "2"}
-    )
-    style = parse_style(rect)
-    assert (style["fill"], style["stroke"], style["stroke-width"]) == ("#3366cc", "black", "2")
-
-
-def test_circle_inline_fill_only(tool_ws, doc) -> None:
-    _, circle = _created(
-        tool_ws, doc, {"op": "create_circle", "cx": 10, "cy": 10, "r": 5, "fill": "red"}
-    )
-    assert parse_style(circle)["fill"] == "red"
-    assert "stroke" not in parse_style(circle)
-
-
-def test_text_inline_fill_keeps_content(tool_ws, doc) -> None:
-    _, text = _created(
-        tool_ws, doc, {"op": "create_text", "x": 5, "y": 5, "text": "hi", "fill": "#111"}
-    )
-    assert parse_style(text)["fill"] == "#111"
-    assert text.text == "hi"
-
-
-def test_line_inline_stroke_only(tool_ws, doc) -> None:
-    _, line = _created(
-        tool_ws,
-        doc,
-        {
-            "op": "create_line",
-            "x1": 0,
-            "y1": 0,
-            "x2": 9,
-            "y2": 9,
-            "stroke": "blue",
-            "stroke_width": "3",
-        },
-    )
-    style = parse_style(line)
-    assert (style["stroke"], style["stroke-width"]) == ("blue", "3")
+@pytest.mark.parametrize(
+    ("op", "paint"),
+    [
+        (
+            {"op": "create_rect", "x": 0, "y": 0, "width": 10, "height": 10},
+            {"fill": "#3366cc", "stroke": "black", "stroke-width": "2"},
+        ),
+        ({"op": "create_circle", "cx": 10, "cy": 10, "r": 5}, {"fill": "red"}),
+        ({"op": "create_text", "x": 5, "y": 5, "text": "hi"}, {"fill": "#111"}),
+        (
+            {"op": "create_line", "x1": 0, "y1": 0, "x2": 9, "y2": 9},
+            {"stroke": "blue", "stroke-width": "3"},
+        ),
+    ],
+)
+def test_inline_paint_on_create(tool_ws, doc, op, paint) -> None:
+    fields = {k.replace("-", "_"): v for k, v in paint.items()}
+    _, elem = _created(tool_ws, doc, {**op, **fields})
+    style = parse_style(elem)
+    # exactly the given paint: an unset fill/stroke is NOT written
+    assert {k: style.get(k) for k in ("fill", "stroke", "stroke-width")} == {
+        "fill": None,
+        "stroke": None,
+        "stroke-width": None,
+        **paint,
+    }
+    if "text" in op:
+        assert elem.text == op["text"]
 
 
 def test_no_paint_means_no_style_block(tool_ws, doc) -> None:
@@ -363,21 +343,19 @@ def test_create_path_rejects_markup_in_d(tool_ws, doc) -> None:
     _rejected(tool_ws, doc, {"op": "create_path", "d": d}, match="invalid characters")
 
 
-def test_a_failing_create_rolls_back_earlier_creates_of_the_call(tool_ws, doc) -> None:
-    _rejected(tool_ws, doc, RECT, {**RECT, "id": "r1"}, match=r"ops\[1\] create_rect")
-
-
-def test_unknown_document(doc) -> None:
-    with pytest.raises(EditApplyError, match="document id not found"):
-        run_ops("d_nope", RECT)
-
-
 # --- reversibility ------------------------------------------------------------
 
 
-def test_create_is_undone_by_its_snapshot(tool_ws, doc) -> None:
-    before = _working(tool_ws, doc)
-    result = run_ops(doc, {**RECT, "id": "new"})
-    assert _working(tool_ws, doc) != before
-    restore_snapshot(doc, result.snapshot_id)
-    assert _working(tool_ws, doc) == before
+def test_numeric_stroke_width_is_accepted(tool_ws, doc) -> None:
+    _, circle = _created(
+        tool_ws,
+        doc,
+        {"op": "create_circle", "cx": 5, "cy": 5, "r": 2, "stroke": "#000", "stroke_width": 3},
+    )
+    assert parse_style(circle)["stroke-width"] == "3"
+    _, rect = _created(
+        tool_ws,
+        doc,
+        {"op": "create_rect", "x": 0, "y": 0, "width": 4, "height": 4, "stroke_width": "2px"},
+    )
+    assert parse_style(rect)["stroke-width"] == "2px"

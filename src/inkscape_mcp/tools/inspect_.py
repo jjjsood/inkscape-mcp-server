@@ -57,6 +57,8 @@ def _object_row(ref: ObjectRef, detail: Detail) -> Any:
     if detail == "full":
         row: dict[str, Any] = {"id": ref.object_id, "tag": ref.tag, "bbox": box}
         row.update(fill=ref.fill, stroke=ref.stroke, text=ref.text)
+        if ref.transform is not None:
+            row["transform"] = ref.transform
         return row
     return [ref.object_id, ref.tag, box, ref.fill]
 
