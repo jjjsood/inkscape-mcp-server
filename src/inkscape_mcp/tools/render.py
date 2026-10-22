@@ -15,9 +15,9 @@ from inkscape_mcp.render.cli import (
     is_safe_object_id,
     render_preview,
 )
-from inkscape_mcp.tools.v2._result import guarded, inline_png, ok, require_doc
+from inkscape_mcp.tools._result import guarded, inline_png, ok, require_doc
 
-_logger = get_logger("tools.v2.render")
+_logger = get_logger("tools.render")
 
 Target = Literal["page", "object", "frame"]
 

@@ -67,7 +67,7 @@ jobs:
       # tool/prompt counts) and a resource-read serialization break (E9-01). Headless-safe: the
       # Inkscape-gated calls skip when no binary is on PATH, so the counts + resource reads +
       # pure-DOM tools gate the build on all three OS here.
-      - name: Surface smoke — full MCP primitive surface (64/5/13)
+      - name: Surface smoke — full MCP primitive surface (10/7/17)
         run: uv run python scripts/ci_surface_smoke.py
 
   # ---------------------------------------------------------------------------

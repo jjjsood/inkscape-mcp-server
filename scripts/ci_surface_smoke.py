@@ -44,33 +44,24 @@ from pathlib import Path
 from typing import Any
 
 # --- Expected surface (THE single source of truth — update deliberately per epic) ------------
-#: Confirmed surface as of (64/5/13 + `fit_to_content`/`tile` tools, the
-#: `inkscape://documents` resource plus 14 creation/defs/grouping tools:
-#: create_rect/circle/ellipse/line/polygon/polyline/path/text, add_linear_gradient,
-#: add_radial_gradient, create_group, group_objects, reparent_object, create_use; and the
-#: 4 document tools: create_document, reload_document, set_document_svg, insert_svg_fragment).
-#: (headless shell engine) adds NO new MCP surface. Adds 1 read-only discovery tool
-#: (find_objects). Adds 1 read-only discoverability tool (how_do_i) and an additive `intents`
-#: section on the capabilities matrix (no new tool beyond how_do_i). Adds its read/verify and
-#: collection tools (stat_artifact[s], compose_grid + the *_set tools, delete_object, …) and
-#: adds 2 more (place_document, live_arm_socket) → 97. (The typed-batch `apply_edits` and the
-#: `transform_objects` selector tool, both added later, were removed again by the op-kernel rework
-#: — their job is now `edit/ops.py`.) A future epic that changes the tool/prompt/resource set
-#: bumps the matching constant; the diff pinpoints what moved.
-EXPECTED_TOOLS = 97
+#: The ten result-oriented tools (`open`, `inspect`, `edit`, `render`, `export`, `history`, `help`,
+#: `live`, `live_edit`, `actions`), with the live and raw-action flags on (set below). A future
+#: change to the tool/prompt/resource set bumps the matching constant; the diff shows what moved.
+EXPECTED_TOOLS = 10
 #: 5 prior prompts (export/recolor x4 + live_canvas_assist) + 2 authoring
 #: prompts (compose_artwork, restyle_artwork) = 7. No new @mcp.tool — tool count is unchanged.
 EXPECTED_PROMPTS = 7
 #: Resources are static + 7 document templates; MCP reports static + templated separately, so we
 #: assert their SUM (a template registered as a plain resource, or vice-versa, still has to add up).
-#: adds the static `inkscape://runtime/intents` resource; adds the static
-#: `inkscape://prompts` index resource → 9 static + 7 templates = 16.
-EXPECTED_RESOURCES = 16
+#: 10 static (incl. `inkscape://ops`) + 7 templates = 17.
+EXPECTED_RESOURCES = 17
 
-#: The 8 static resource URIs (no ``{placeholder}``) — read directly.
+#: The static resource URIs (no ``{placeholder}``) — read directly.
 STATIC_RESOURCE_URIS = (
     "inkscape://runtime/capabilities",
     "inkscape://runtime/intents",
+    "inkscape://ops",
+    "inkscape://prompts",
     "inkscape://live/session",
     "inkscape://live/selection",
     "inkscape://live/view",
@@ -142,15 +133,12 @@ def _resource_text(read_result: Any) -> str:
 
 
 def _result_dict(call_result: Any) -> dict[str, Any]:
-    """Get a tool call result as a plain dict (prefer the structured content channel)."""
-    structured = getattr(call_result, "structured_content", None)
-    if isinstance(structured, dict):
-        return structured
-    data = getattr(call_result, "data", None)
-    if isinstance(data, dict):
-        return data
-    if data is not None and hasattr(data, "model_dump"):
-        return dict(data.model_dump())
+    """Get a tool call result as a plain dict (the tools return one compact JSON text block)."""
+    for block in getattr(call_result, "content", None) or []:
+        text = getattr(block, "text", None)
+        if text:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else {}
     return {}
 
 
@@ -230,37 +218,43 @@ async def _call_readonly_tools(client: Any, doc_id: str) -> int:
     when no binary is on PATH so the smoke stays green on a headless runner.
     """
     calls: list[tuple[str, dict[str, Any], bool]] = [
-        # Diagnostics (pure-Python probe; degrades gracefully with no Inkscape).
-        ("diagnose_runtime", {}, False),
-        ("list_capabilities", {}, False),
-        ("list_actions", {}, False),
-        # Intent → tool discoverability: read-only guidance, no engine, no mutation.
-        ("how_do_i", {"goal": "draw a rectangle"}, False),
+        # Diagnostics and guidance (pure-Python probe; degrades gracefully with no Inkscape).
+        ("help", {"topic": "diagnose"}, False),
+        ("help", {"topic": "capabilities"}, False),
+        ("help", {"topic": "ops"}, False),
+        ("help", {"op": "create_rect"}, False),
+        ("help", {"goal": "draw a rectangle"}, False),
         # Read-only document inspection / validation / quality (direct DOM, no engine).
-        ("inspect_document", {"doc_id": doc_id}, False),
-        ("validate_document", {"doc_id": doc_id}, False),
-        ("quality_report", {"doc_id": doc_id}, False),
-        # Dry-run path ops (HIGH-risk tools, but dry_run validates only — no engine, no mutation).
-        ("simplify_path", {"doc_id": doc_id, "object_ids": ["r1"], "dry_run": True}, False),
         (
-            "boolean_union",
-            {"doc_id": doc_id, "object_ids": ["r1", "r2"], "dry_run": True},
+            "inspect",
+            {"doc_id": doc_id, "include": ["summary", "objects", "validate", "quality"]},
             False,
         ),
-        # Dry-run batch export: validates specs + projects sizes, writes nothing (no engine).
+        ("inspect", {"doc_id": doc_id, "select": {"tag": "rect"}}, False),
+        ("history", {"doc_id": doc_id, "action": "list"}, False),
+        # Dry-run edit with a path op: validates and plans only (no engine, no mutation).
         (
-            "export_batch",
-            {"doc_id": doc_id, "specs": [{"format": "png", "width_px": 32}], "dry_run": True},
+            "edit",
+            {"doc_id": doc_id, "ops": [{"op": "union", "ids": ["r1", "r2"]}], "dry_run": True},
             False,
         ),
-        # Web optimize: pure-DOM, reversible; lands only on the throwaway working copy (no engine,
-        # original fixture untouched).
-        ("svg_web_optimize", {"doc_id": doc_id}, False),
+        # Dry-run export: validates targets + projects sizes, writes nothing (no engine).
+        (
+            "export",
+            {
+                "doc_id": doc_id,
+                "targets": [{"kind": "file", "format": "png", "width_px": 32}],
+                "dry_run": True,
+            },
+            False,
+        ),
+        # Web optimize: pure-DOM, reversible; lands only on the throwaway working copy.
+        ("edit", {"doc_id": doc_id, "ops": [{"op": "optimize_web"}]}, False),
         # Action-chain validation needs the version-keyed capability map (probes Inkscape), so a
         # successful (allowlisted + present) chain requires the binary. Guarded.
         (
-            "validate_action_chain",
-            {"steps": [{"action": "select-by-id", "args": ["r1"]}]},
+            "actions",
+            {"action": "validate", "steps": [{"action": "select-by-id", "args": ["r1"]}]},
             True,
         ),
     ]
@@ -268,13 +262,13 @@ async def _call_readonly_tools(client: Any, doc_id: str) -> int:
     failures = 0
     for name, args, needs_inkscape in calls:
         if needs_inkscape and not _HAS_INKSCAPE:
-            print(f"skip: {name} (no inkscape on PATH)", flush=True)
+            print(f"skip: {name} {args.get('action', '')} (no inkscape on PATH)", flush=True)
             continue
         try:
             result = await client.call_tool(name, args)
         except Exception as exc:
             failures += 1
-            print(f"tool CALL FAILED: {name}: {exc!r}", file=sys.stderr, flush=True)
+            print(f"tool CALL FAILED: {name} {args}: {exc!r}", file=sys.stderr, flush=True)
             continue
         # A structured result is enough; surface a one-line marker proving it was reachable.
         _result_dict(result)
@@ -291,6 +285,9 @@ async def _run() -> int:
         import os
 
         os.environ["INKSCAPE_MCP_WORKSPACE_ROOTS"] = tmp
+        # The full surface: `live`/`live_edit` and `actions` are gated off by default.
+        os.environ["INKSCAPE_MCP_LIVE_ENABLED"] = "1"
+        os.environ["INKSCAPE_MCP_RAW_ACTION_ENABLED"] = "1"
         fixture = Path(tmp) / "fixture.svg"
         fixture.write_text(_FIXTURE_SVG, encoding="utf-8")
 
@@ -306,10 +303,10 @@ async def _run() -> int:
             failures += await _assert_counts(client)
 
             # Open the fixture so the templated document/* resources have a real doc_id to bind.
-            open_result = await client.call_tool("open_document", {"path": str(fixture)})
+            open_result = await client.call_tool("open", {"path": str(fixture)})
             doc_id = _result_dict(open_result).get("doc_id")
             if not doc_id:
-                print("FATAL: open_document returned no doc_id", file=sys.stderr, flush=True)
+                print("FATAL: open returned no doc_id", file=sys.stderr, flush=True)
                 return 1
             print(f"fixture opened: doc_id={doc_id}", flush=True)
 

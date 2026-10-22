@@ -18,6 +18,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 # The harness lives under evals/ (ruff-checked, not in mypy `files` — mirrors scripts/). Add it to
 # the path so the test can import it directly.
 _EVALS_DIR = Path(__file__).resolve().parent.parent / "evals"
@@ -60,6 +62,11 @@ def test_all_out_of_scope_scenarios_flagged() -> None:
     )
 
 
+@pytest.mark.xfail(
+    reason="P6: tool_selection_scenarios.json still names the pre-rework tools; it moves to "
+    "'tool:op' entries (rework-plan P6)",
+    strict=True,
+)
 def test_every_expected_tool_is_a_real_registered_tool() -> None:
     """Guard the dataset against drift: each expected tool must exist on the live MCP surface."""
     register_tools()

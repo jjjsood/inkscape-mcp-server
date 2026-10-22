@@ -21,10 +21,10 @@ from inkscape_mcp.live.render import render_live_view
 from inkscape_mcp.live.scene import get_live_scene
 from inkscape_mcp.live.transport import BBox, LiveMutationResult, LiveTransport
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
-from inkscape_mcp.tools.v2._live import ensure_connected, live_png
-from inkscape_mcp.tools.v2._result import guarded, ok
+from inkscape_mcp.tools._live import ensure_connected, live_png
+from inkscape_mcp.tools._result import guarded, ok
 
-_logger = get_logger("tools.v2.live_edit")
+_logger = get_logger("tools.live_edit")
 
 Action = Literal["apply", "insert_svg", "set_text"]
 Observe = Literal["none", "diff", "render"]

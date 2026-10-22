@@ -1,523 +1,261 @@
-"""Export tools: `render_preview`, `capture_frame`, `list_frames`, `export_document`,
-`export_object`.
-
-Thin MCP layer over the CLI render/export engine (`inkscape_mcp.render.cli`). Inkscape engine
-per ADR-005. All are risk class **low**: they write only to the per-document artifact / exports
-dir and never overwrite the original or the working copy, so no Operation Record or
-snapshot is required.
-
-Client-facing errors are raised as `ToolError` with stable, host-path-free messages (sec.12):
-unknown document id -> "document id not found"; bad / missing object id -> a stable message;
-limit / process failures -> stable messages. Returned artifact paths follow ONE LOCATION CONTRACT
-: `artifact_path` and `workspace_relative_path` carry the SAME value, always relative to the
-WORKSPACE ROOT, openable by a single join to the root — never an absolute host path.
+"""`export`: write results out. Files, profiles (web / icons / print) and save-as, for one document
+or a set, in one call.
 """
 
-from __future__ import annotations
+from typing import Annotated, Any, Literal
 
+from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.tools import ToolResult
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
-from inkscape_mcp.document.inspect import DocumentNotFound, InspectionError, inspect_objects
-from inkscape_mcp.logging_setup import get_logger, log_tool_call
-from inkscape_mcp.render.cli import (
-    InvalidObjectId,
-    RenderError,
-    is_safe_object_id,
+from inkscape_mcp import quality as quality_engine
+from inkscape_mcp.document.save import save_document_as
+from inkscape_mcp.logging_setup import get_logger, log_export
+from inkscape_mcp.render.batch import ExportSpec, export_batch
+from inkscape_mcp.render.inline import resolve_artifact_abspath
+from inkscape_mcp.render.profiles import (
+    ProfileResult,
+    create_icon_set,
+    export_print_profile,
+    export_web_profile,
 )
-from inkscape_mcp.render.cli import (
-    capture_frame as _capture_frame,
-)
-from inkscape_mcp.render.cli import (
-    export_document as _export_document,
-)
-from inkscape_mcp.render.cli import (
-    export_object as _export_object,
-)
-from inkscape_mcp.render.cli import (
-    list_frames as _list_frames,
-)
-from inkscape_mcp.render.cli import (
-    render_preview as _render_preview,
-)
-from inkscape_mcp.render.inline import inline_image, with_inline
-from inkscape_mcp.server import mcp
-from inkscape_mcp.workspace.limits import LimitExceeded
-from inkscape_mcp.workspace.paths import SandboxViolation
-from inkscape_mcp.workspace.subprocess_exec import ProcessError
+from inkscape_mcp.tools._result import guarded, ok, require_doc, to_tool_error
 
 _logger = get_logger("tools.export")
 
-#: Whole-document export formats accepted by `export_document`.
-_DOCUMENT_FORMATS = frozenset({"png", "pdf", "svg"})
-#: Single-object export formats accepted by `export_object`.
-_OBJECT_FORMATS = frozenset({"png", "pdf", "svg"})
+LIMIT_MSG = "export exceeds the configured size or dimension limit"
 
 
-class PreviewResult(BaseModel):
-    """Result of `render_preview`: a resolvable PNG path plus its TRUE raster size.
+class FileTarget(BaseModel):
+    """One file: `format` png | pdf | svg; `object_id` clips to one object; `width_px` (png)."""
 
-    ONE LOCATION CONTRACT: `artifact_path` and `workspace_relative_path` carry the SAME
-    value — the file relative to the WORKSPACE ROOT (carries the
-    `.inkscape-mcp/documents/<doc_id>/...` base) — so you open it by a single join to the workspace
-    root with no `find`/`stat`. `artifact_path` is kept only for back-compat and now means exactly
-    the same thing. `width_px`/`height_px` are the on-disk raster dimensions.
-    """
+    model_config = ConfigDict(extra="forbid")
 
-    doc_id: str
-    artifact_path: str
-    workspace_relative_path: str
+    kind: Literal["file"]
     format: str
-    width_px: int
-    height_px: int
-    #: STALENESS SIGNAL: True iff the working copy changed after this preview was made, so
-    #: it no longer reflects the current document. Computed at produce time (artifact mtime vs.
-    #: working-copy mtime) by `inkscape_mcp.render.cli.compute_stale`; a freshly rendered preview
-    #: reflects the current working copy, so this is False.
-    stale: bool = False
-    #: CONTENT-TRUTH: `opaque_px` is the count of drawn (non-transparent) pixels in the PNG
-    #: and `all_blank` is True iff nothing was drawn, so a caller can prove the render is not blank
-    #: straight from the result. None if verification was skipped/failed.
-    opaque_px: int | None = None
-    all_blank: bool | None = None
+    object_id: str | None = None
+    width_px: int | None = None
 
 
-class FrameResult(BaseModel):
-    """Result of `capture_frame`: a `render_preview`-style PNG plus its series + index.
+class ProfileTarget(BaseModel):
+    """A ready-made set. web: responsive PNGs + SVG (`width_px` | `widths` | `scales`); icons:
+    square PNGs (`sizes`, default 16..256); print: one print-ready PDF."""
 
-    `artifact_path` / `workspace_relative_path` carry the SAME root-relative value, opened
-    by a single join to the workspace root. `series` is the (sanitized) series folder under
-    `artifacts/frames/`; `frame_index` is the 1-based position within that series.
-    `width_px`/`height_px` are the on-disk raster dimensions.
-    """
+    model_config = ConfigDict(extra="forbid")
 
-    doc_id: str
-    artifact_path: str
-    workspace_relative_path: str
-    format: str
-    width_px: int
-    height_px: int
-    series: str
-    frame_index: int
-    #: STALENESS SIGNAL: True iff the working copy changed after this frame was captured.
-    #: Computed at produce time (artifact mtime vs. working-copy mtime); a freshly captured frame
-    #: reflects the current working copy, so this is False.
-    stale: bool = False
+    kind: Literal["profile"]
+    name: Literal["web", "icons", "print"]
+    width_px: int | None = None
+    widths: list[int] | None = None
+    scales: list[int] | None = None
+    sizes: list[int] | None = None
 
 
-class FrameInfo(BaseModel):
-    """One frame in a series listing: its index and resolvable workspace path."""
+class SaveAsTarget(BaseModel):
+    """Write the working copy to a workspace file. Overwriting needs overwrite + approval_token."""
 
-    frame_index: int
-    artifact_path: str
-    workspace_relative_path: str
+    model_config = ConfigDict(extra="forbid")
 
-
-class FrameListResult(BaseModel):
-    """Result of `list_frames`: a series' frames ordered by index (empty if the series is unused).
-
-    Each entry is resolvable by a single join to the workspace root.
-    """
-
-    doc_id: str
-    series: str
-    frames: list[FrameInfo]
+    kind: Literal["save_as"]
+    dest_path: str
+    overwrite: bool = False
 
 
-class ExportResult(BaseModel):
-    """Result of `export_document` / `export_object`.
+Target = Annotated[FileTarget | ProfileTarget | SaveAsTarget, Field(discriminator="kind")]
 
-    ONE LOCATION CONTRACT: `artifact_path` and `workspace_relative_path` carry the SAME
-    value — the file relative to the WORKSPACE ROOT (a managed output carries the
-    `.inkscape-mcp/documents/<doc_id>/...` base; an `out_dir` output is its in-workspace relative
-    path) — so you open it by a single join to the workspace root with no `find`/`stat`, for EVERY
-    output. `artifact_path` is kept only for back-compat and now means exactly the same thing.
-    `width_px`/`height_px` are the TRUE on-disk raster dimensions for raster (PNG) exports
-    and `None` for vector (PDF/SVG) outputs.
-    """
-
-    doc_id: str
-    artifact_path: str
-    workspace_relative_path: str
-    format: str
-    width_px: int | None
-    height_px: int | None
-    #: STALENESS SIGNAL: True iff the working copy changed after this export was produced.
-    #: Computed at produce time (artifact mtime vs. working-copy mtime); a freshly produced export
-    #: reflects the current working copy, so this is False.
-    stale: bool = False
-    #: CONTENT-TRUTH, computed at produce time from the just-written artifact:
-    #: raster (PNG) outputs carry `opaque_px` (drawn non-transparent pixel count) + `all_blank`
-    #: (True iff nothing was drawn); PDF outputs carry `is_vector` (no embedded raster image) +
-    #: `fonts_outlined` (no embedded font — text outlined to paths; true vector when both hold).
-    #: Each field is None for outputs it does not apply to, or when verification was skipped/failed.
-    opaque_px: int | None = None
-    all_blank: bool | None = None
-    is_vector: bool | None = None
-    fonts_outlined: bool | None = None
+DESCRIPTION = (
+    "Write results to files in the workspace. `targets` is a list of: "
+    "{kind:'file', format:'png|pdf|svg', object_id?, width_px?}, "
+    "{kind:'profile', name:'web|icons|print', ...} or {kind:'save_as', dest_path, overwrite?}. "
+    "doc_id may be a list to export a set (files are prefixed with each doc_id). dry_run=true "
+    "plans and projects sizes without writing; byte_budget caps the total. Returns each "
+    "artifact's workspace path, size and pixel dimensions. "
+    "Example: export(doc_id, targets=[{'kind':'file','format':'png','width_px':1024},"
+    "{'kind':'file','format':'svg'}])"
+)
 
 
-def _model_output_schema(model: type[BaseModel]) -> dict[str, object]:
-    """Derive the `outputSchema` FastMCP would emit for a bare ``model`` return.
-
-    The inline-image tools (`render_preview` / `capture_frame` / `export_document` /
-    `export_object`) annotate their return as ``<Model> | ToolResult`` so they can optionally append
-    an MCP image block. FastMCP cannot auto-derive an `outputSchema` from that union (the
-    `ToolResult` arm is unserializable), so the wire tool would carry a NULL schema and the client
-    loses structured-output validation. We pass this schema EXPLICITLY to `@mcp.tool(...)`; it is
-    byte-for-byte what FastMCP derives for the bare ``model`` (same `TypeAdapter` serialization +
-    `compress_schema(prune_titles=True)` it uses internally), so the structured content the tools
-    already return — the model's `model_dump()` — validates against it unchanged. No DATA change.
-    """
-    from fastmcp.utilities.json_schema import compress_schema
-    from pydantic import TypeAdapter
-
-    schema = TypeAdapter(model).json_schema(mode="serialization")
-    return compress_schema(schema, prune_titles=True)
+def _bytes(doc_id: str, relative_path: str | None) -> int | None:
+    if not relative_path:
+        return None
+    path = resolve_artifact_abspath(doc_id, relative_path)
+    return path.stat().st_size if path is not None else None
 
 
-def _map_failure(exc: Exception) -> ToolError:
-    """Map an engine exception to a stable, host-path-free `ToolError`."""
-    if isinstance(exc, (KeyError, DocumentNotFound)):
-        return ToolError("document id not found")
-    if isinstance(exc, SandboxViolation):
-        # Already a SAFE public message (no host path) — e.g. "path rejected: outside workspace".
-        return ToolError(str(exc))
-    if isinstance(exc, LimitExceeded):
-        return ToolError("export exceeds the configured size or dimension limit")
-    if isinstance(exc, InvalidObjectId):
-        return ToolError("object id is not valid")
-    if isinstance(exc, ProcessError):
-        # CAPABILITY-ABSENT: the Inkscape engine could not be launched (e.g. no binary on
-        # this runtime). Name the discovery tool so the agent can see what this runtime supports
-        # rather than retrying blindly. Stable + host-path-free (sec.12).
-        return ToolError(
-            "render/export failed: the Inkscape engine is unavailable on this runtime; "
-            "call list_capabilities to see what this runtime supports"
-        )
-    if isinstance(exc, RenderError):
-        return ToolError("render/export failed")
-    return ToolError("render/export failed")
+def _artifact(doc_id: str, kind: str, path: str | None, fmt: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "doc_id": doc_id,
+        "kind": kind,
+        "path": path,
+        "format": fmt,
+        "bytes": _bytes(doc_id, path),
+        **extra,
+    }
 
 
-@mcp.tool(output_schema=_model_output_schema(PreviewResult))
-def render_preview(
+def _profile(
+    doc_id: str, t: ProfileTarget, out_dir: str | None, prefix: str | None
+) -> ProfileResult:
+    if t.name == "web":
+        kwargs: dict[str, Any] = {"widths": t.widths, "scales": t.scales}
+        if t.width_px is not None:
+            kwargs["width_px"] = t.width_px
+        return export_web_profile(doc_id, out_dir=out_dir, name_prefix=prefix, **kwargs)
+    if t.name == "icons":
+        return create_icon_set(doc_id, sizes=t.sizes, out_dir=out_dir, name_prefix=prefix)
+    return export_print_profile(doc_id, out_dir=out_dir, name_prefix=prefix)
+
+
+def _export_one(
     doc_id: str,
-    width_px: int | None = None,
-    name: str | None = None,
-    inline: bool = True,
-    max_output_bytes: int | None = None,
-) -> PreviewResult | ToolResult:
-    """Render a PNG preview of the whole document into the artifacts dir.
-
-        When to use: a quick visual check of the whole document. For a final file use `export_document`;
-        for one object use `export_object`; for an ordered run series use `capture_frame`.
-
-        Key params: `width_px` scales the raster (height follows the document aspect ratio); omit for
-        intrinsic size. Oversized requests are rejected before Inkscape runs. `name` tags the file
-        (successive calls do NOT clobber, — each render gets a unique frame name). INLINE RASTER
-    : by default the PNG is also returned as an MCP image block so the agent SEES it without
-        a second `Read` — do NOT `Read` the returned path (it is server-side, not on your
-        filesystem); gated by `max_output_bytes` (~5 MiB default) and skipped for an oversized
-        render; `inline=False` returns only the structured result.
-
-        Return shape: `PreviewResult` — `artifact_path` / `workspace_relative_path` (same root-relative
-        value), `format`, `width_px`/`height_px` (TRUE on-disk size), `stale`. With an inline
-        image, a `ToolResult` carrying the same structured fields plus the image block.
-
-        Example: `render_preview(doc_id, width_px=512)`
-
-        Risk class: low (render/export to artifact dir; no original overwrite).
-    """
-    try:
-        result = _render_preview(doc_id, width_px=width_px, name=name)
-    except (KeyError, DocumentNotFound, LimitExceeded, RenderError, ProcessError) as exc:
-        _logger.error("render_preview failed", extra={"doc_id": doc_id, "detail": str(exc)})
-        raise _map_failure(exc) from exc
-
-    log_tool_call(_logger, tool="render_preview", doc_id=doc_id)
-    preview = PreviewResult(
-        doc_id=result.doc_id,
-        artifact_path=result.artifact_path,
-        workspace_relative_path=result.workspace_relative_path,
-        format=result.format,
-        width_px=result.width_px if result.width_px is not None else 0,
-        height_px=result.height_px if result.height_px is not None else 0,
-        stale=result.stale,
-        opaque_px=result.opaque_px,
-        all_blank=result.all_blank,
-    )
-    image = inline_image(
-        doc_id=doc_id,
-        workspace_relative_path=preview.workspace_relative_path,
-        fmt=preview.format,
-        inline=inline,
-        max_output_bytes=max_output_bytes,
-    )
-    return with_inline(preview, image)
-
-
-@mcp.tool(output_schema=_model_output_schema(FrameResult))
-def capture_frame(
-    doc_id: str,
-    series: str | None = None,
-    width_px: int | None = None,
-    label: str | None = None,
-    inline: bool = True,
-    max_output_bytes: int | None = None,
-) -> FrameResult | ToolResult:
-    """Capture the next numbered PNG screenshot in a per-run frame series.
-
-        When to use: documenting a scripted edit sequence step-by-step. For a one-off check use
-        `render_preview`; to gather a finished series use `list_frames`.
-
-        Key params: `series` (sanitized; defaults to `run`) groups frames into a folder under
-        `artifacts/frames/<series>/`; the index is derived from the filesystem (highest existing
-        `frame-NNN` + 1) — monotonic, survives a restart, never clobbers. `label` is folded into the
-        frame name. Renders the whole canvas exactly like `render_preview` (no UI chrome). INLINE RASTER
-    : the PNG is returned inline by default (gated by `max_output_bytes`); `inline=False`
-        returns only the structured result. Do NOT `Read` the returned path — view the inline image
-        (the path is server-side, workspace-relative, not on your filesystem).
-
-        Return shape: `FrameResult` — `artifact_path` / `workspace_relative_path` (same value),
-        `format`, `width_px`/`height_px`, `series`, `frame_index` (1-based), `stale`. With an inline
-        image, a `ToolResult` carrying the same fields plus the image block.
-
-        Example: `capture_frame(doc_id, series="cleanup", label="after-simplify")`
-
-        Risk class: low (render to the managed artifacts dir; no original overwrite, no Operation
-        Record).
-    """
-    try:
-        result = _capture_frame(doc_id, series=series, width_px=width_px, label=label)
-    except (KeyError, DocumentNotFound, LimitExceeded, RenderError, ProcessError) as exc:
-        _logger.error("capture_frame failed", extra={"doc_id": doc_id, "detail": str(exc)})
-        raise _map_failure(exc) from exc
-
-    log_tool_call(_logger, tool="capture_frame", doc_id=doc_id, series=result.series)
-    frame = FrameResult(
-        doc_id=result.doc_id,
-        artifact_path=result.artifact_path,
-        workspace_relative_path=result.workspace_relative_path,
-        format=result.format,
-        width_px=result.width_px if result.width_px is not None else 0,
-        height_px=result.height_px if result.height_px is not None else 0,
-        series=result.series,
-        frame_index=result.frame_index,
-        stale=result.stale,
-    )
-    image = inline_image(
-        doc_id=doc_id,
-        workspace_relative_path=frame.workspace_relative_path,
-        fmt=frame.format,
-        inline=inline,
-        max_output_bytes=max_output_bytes,
-    )
-    return with_inline(frame, image)
+    targets: list[Target],
+    *,
+    out_dir: str | None,
+    prefix: str | None,
+    byte_budget: int | None,
+    dry_run: bool,
+    approval_token: str | None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {"artifacts": [], "plan": []}
+    files = [t for t in targets if isinstance(t, FileTarget)]
+    batch_done = False
+    for index, target in enumerate(targets):
+        try:
+            if isinstance(target, FileTarget):
+                if batch_done:
+                    continue
+                batch_done = True
+                specs = [
+                    ExportSpec(format=f.format, width_px=f.width_px, object_id=f.object_id)
+                    for f in files
+                ]
+                batch = export_batch(
+                    doc_id,
+                    specs,
+                    dry_run=dry_run,
+                    byte_budget=byte_budget,
+                    out_dir=out_dir,
+                    name_prefix=prefix,
+                )
+                if dry_run:
+                    result["plan"].extend(
+                        {
+                            "format": i.format,
+                            "width_px": i.width_px,
+                            "object_id": i.object_id,
+                            "projected_bytes": i.projected_bytes,
+                        }
+                        for i in batch.items
+                    )
+                    result["projected_bytes"] = batch.projected_total_bytes
+                    result["within_budget"] = batch.within_budget
+                else:
+                    result["artifacts"].extend(
+                        _artifact(
+                            doc_id,
+                            "file",
+                            i.workspace_relative_path,
+                            i.format,
+                            width_px=i.width_px,
+                            object_id=i.object_id,
+                        )
+                        for i in batch.items
+                    )
+            elif isinstance(target, ProfileTarget):
+                if dry_run:
+                    result["plan"].append({"profile": target.name})
+                    continue
+                prof = _profile(doc_id, target, out_dir, prefix)
+                result["artifacts"].extend(
+                    _artifact(
+                        doc_id,
+                        f"profile:{target.name}",
+                        a.workspace_relative_path,
+                        a.format,
+                        width_px=a.width_px,
+                        height_px=a.height_px,
+                    )
+                    for a in prof.artifacts
+                )
+            else:
+                if dry_run:
+                    result["plan"].append(
+                        {"save_as": target.dest_path, "overwrite": target.overwrite or None}
+                    )
+                    continue
+                saved = save_document_as(
+                    doc_id,
+                    target.dest_path,
+                    overwrite=target.overwrite,
+                    approval_token=approval_token,
+                )
+                result["saved"] = {
+                    "path": saved.saved_path,
+                    "overwritten": saved.overwritten or None,
+                    "operation_id": saved.operation_id,
+                }
+        except Exception as exc:
+            reason = to_tool_error(exc, limit_msg=LIMIT_MSG)
+            raise ToolError(f"{doc_id} targets[{index}] ({target.kind}): {reason}") from exc
+    return result
 
 
-@mcp.tool
-def list_frames(doc_id: str, series: str | None = None) -> FrameListResult:
-    """List the frames of a `capture_frame` series, ordered by index.
-
-    When to use: gathering a whole run's PNGs at the end without re-deriving paths. To produce
-    frames use `capture_frame`.
-
-    Key params: `series` is sanitized identically to `capture_frame` (defaults to `run`).
-
-    Return shape: `FrameListResult` — `doc_id`, `series`, and `frames` (each a `FrameInfo` with
-    `frame_index` + a resolvable `workspace_relative_path`), ordered by index; empty when the series
-    has no frames yet.
-
-    Example: `list_frames(doc_id, series="cleanup")`
-
-    Risk class: low (read-only listing of the managed artifacts dir).
-    """
-    try:
-        listing = _list_frames(doc_id, series=series)
-    except (KeyError, DocumentNotFound) as exc:
-        raise _map_failure(exc) from exc
-
-    log_tool_call(_logger, tool="list_frames", doc_id=doc_id, count=len(listing.frames))
-    return FrameListResult(
-        doc_id=doc_id,
-        series=listing.series,
-        frames=[
-            FrameInfo(
-                frame_index=ref.frame_index,
-                artifact_path=ref.artifact_path,
-                workspace_relative_path=ref.workspace_relative_path,
-            )
-            for ref in listing.frames
-        ],
-    )
-
-
-@mcp.tool(output_schema=_model_output_schema(ExportResult))
-def export_document(
-    doc_id: str,
-    format: str,
-    width_px: int | None = None,
+@guarded(limit_msg=LIMIT_MSG)
+def export(
+    doc_id: str | list[str],
+    targets: list[Target],
     out_dir: str | None = None,
     name_prefix: str | None = None,
-    inline: bool = True,
-    max_output_bytes: int | None = None,
-) -> ExportResult | ToolResult:
-    """Export the whole document to PNG, PDF, or SVG.
+    byte_budget: int | None = None,
+    dry_run: bool = False,
+    approval_token: str | None = None,
+) -> ToolResult:
+    if not targets:
+        raise ToolError("targets must contain at least one target")
+    ids = [doc_id] if isinstance(doc_id, str) else list(doc_id)
+    if not ids:
+        raise ToolError("doc_id must name at least one document")
+    multi = not isinstance(doc_id, str)
+    if multi:
+        quality_engine.require_unique_doc_ids(ids)
+    for one in ids:  # fail on an unknown id before writing anything
+        require_doc(one)
+    if multi and any(isinstance(t, SaveAsTarget) for t in targets):
+        raise ToolError("save_as writes one document; call export once per doc_id for save_as")
 
-    When to use: producing a final file of the whole document. For one object use `export_object`;
-    for many sizes/formats at once use `export_batch`; for a web/print bundle use the profile tools.
-
-    Key params: `format` is one of "png"/"pdf"/"svg" (others rejected). PNG honors `width_px`
-    (pixel-capped before Inkscape runs); PDF/SVG are vector and ignore it. `out_dir` writes
-    into a caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is
-    sandbox-checked (out-of-workspace is rejected with "path rejected: outside workspace");
-    `name_prefix` tags the filename. INLINE RASTER: a PNG is returned inline by default
-    (gated by `max_output_bytes`); PDF/SVG are never embedded; `inline=False` opts out. For an
-    inlined PNG, view the image — do NOT `Read` the returned path (server-side, workspace-relative,
-    not on your filesystem).
-
-    Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value),
-    `format`, `width_px`/`height_px` (TRUE size for PNG, None for vector), `stale`. With an inline
-    image, a `ToolResult` carrying the same fields plus the image block.
-
-    Example: `export_document(doc_id, "png", width_px=1024)`
-
-    Risk class: low (render/export to a sandbox-checked dir; no original overwrite).
-    """
-    fmt = format.lower().strip()
-    if fmt not in _DOCUMENT_FORMATS:
-        raise ToolError(
-            "unsupported export format (expected one of: png, pdf, svg); "
-            "call list_capabilities to see the supported export formats"
+    per_doc = {
+        one: _export_one(
+            one,
+            targets,
+            out_dir=out_dir,
+            prefix=name_prefix if name_prefix is not None else (one if multi else None),
+            byte_budget=byte_budget,
+            dry_run=dry_run,
+            approval_token=approval_token,
         )
-    try:
-        result = _export_document(
-            doc_id, fmt, width_px=width_px, out_dir=out_dir, name_prefix=name_prefix
-        )
-    except (
-        KeyError,
-        DocumentNotFound,
-        SandboxViolation,
-        LimitExceeded,
-        RenderError,
-        ProcessError,
-    ) as exc:
-        _logger.error("export_document failed", extra={"doc_id": doc_id, "detail": str(exc)})
-        raise _map_failure(exc) from exc
-
-    log_tool_call(_logger, tool="export_document", doc_id=doc_id, format=fmt)
-    export = ExportResult(
-        doc_id=result.doc_id,
-        artifact_path=result.artifact_path,
-        workspace_relative_path=result.workspace_relative_path,
-        format=result.format,
-        width_px=result.width_px,
-        height_px=result.height_px,
-        stale=result.stale,
-        opaque_px=result.opaque_px,
-        all_blank=result.all_blank,
-        is_vector=result.is_vector,
-        fonts_outlined=result.fonts_outlined,
-    )
-    image = inline_image(
-        doc_id=doc_id,
-        workspace_relative_path=export.workspace_relative_path,
-        fmt=export.format,
-        inline=inline,
-        max_output_bytes=max_output_bytes,
-    )
-    return with_inline(export, image)
+        for one in ids
+    }
+    artifacts = [a for r in per_doc.values() for a in r["artifacts"]]
+    payload: dict[str, Any] = {"artifacts": artifacts}
+    if dry_run:
+        payload = {
+            "dry_run": True,
+            "plan": {one: r["plan"] for one, r in per_doc.items()}
+            if multi
+            else per_doc[ids[0]]["plan"],
+            "projected_bytes": sum(r.get("projected_bytes", 0) for r in per_doc.values()),
+            "within_budget": all(r.get("within_budget", True) for r in per_doc.values()),
+        }
+    else:
+        payload["count"] = len(artifacts)
+        payload["total_bytes"] = sum(a["bytes"] or 0 for a in artifacts)
+        saved = {one: r["saved"] for one, r in per_doc.items() if "saved" in r}
+        if saved:
+            payload["saved"] = saved[ids[0]] if not multi else saved
+    log_export(_logger, tool="export", docs=len(ids), targets=len(targets), dry_run=dry_run)
+    return ok(payload)
 
 
-@mcp.tool(output_schema=_model_output_schema(ExportResult))
-def export_object(
-    doc_id: str,
-    object_id: str,
-    format: str = "png",
-    width_px: int | None = None,
-    out_dir: str | None = None,
-    name_prefix: str | None = None,
-    inline: bool = True,
-    max_output_bytes: int | None = None,
-) -> ExportResult | ToolResult:
-    """Export a single object (by id) to PNG, PDF, or SVG.
-
-    When to use: exporting one object, clipped to its own bbox (get the id from `find_objects`). For
-    the whole document use `export_document`; for many at once use `export_batch`.
-
-    Key params: `object_id` must exist and match the safe SVG-id charset (else rejected before it
-    reaches Inkscape). `format` is one of "png"/"pdf"/"svg". `out_dir` writes into a
-    caller-chosen dir — a relative `out_dir` anchors to the workspace ROOT and is sandbox-checked
-    (out-of-workspace is rejected with "path rejected: outside workspace"); `name_prefix` tags the
-    filename. INLINE RASTER: a PNG is returned inline by default (gated by
-    `max_output_bytes`); PDF/SVG never embedded; `inline=False` opts out. For an inlined PNG, view
-    the image — do NOT `Read` the returned path (server-side, workspace-relative, not on your
-    filesystem).
-
-    Return shape: `ExportResult` — `artifact_path` / `workspace_relative_path` (same value),
-    `format`, `width_px`/`height_px` (TRUE size for PNG, None for vector), `stale`. With an inline
-    image, a `ToolResult` carrying the same fields plus the image block.
-
-    Example: `export_object(doc_id, "logo", "svg")`
-
-    Risk class: low (render/export to a sandbox-checked dir; no original overwrite).
-    """
-    fmt = format.lower().strip()
-    if fmt not in _OBJECT_FORMATS:
-        raise ToolError(
-            "unsupported export format (expected one of: png, pdf, svg); "
-            "call list_capabilities to see the supported export formats"
-        )
-
-    # Validate the id BEFORE it can reach argv: safe charset + actually present in the document.
-    if not is_safe_object_id(object_id):
-        raise ToolError("object id is not valid")
-    try:
-        objects = inspect_objects(doc_id)
-    except DocumentNotFound as exc:
-        raise ToolError("document id not found") from exc
-    except InspectionError as exc:
-        raise ToolError("document could not be parsed safely") from exc
-    if not any(obj.id == object_id for obj in objects.objects):
-        raise ToolError("object id not found in document")
-
-    try:
-        result = _export_object(
-            doc_id, object_id, fmt, width_px=width_px, out_dir=out_dir, name_prefix=name_prefix
-        )
-    except (
-        KeyError,
-        DocumentNotFound,
-        SandboxViolation,
-        LimitExceeded,
-        RenderError,
-        ProcessError,
-        InvalidObjectId,
-    ) as exc:
-        _logger.error("export_object failed", extra={"doc_id": doc_id, "detail": str(exc)})
-        raise _map_failure(exc) from exc
-
-    log_tool_call(_logger, tool="export_object", doc_id=doc_id, object_id=object_id, format=fmt)
-    export = ExportResult(
-        doc_id=result.doc_id,
-        artifact_path=result.artifact_path,
-        workspace_relative_path=result.workspace_relative_path,
-        format=result.format,
-        width_px=result.width_px,
-        height_px=result.height_px,
-        stale=result.stale,
-        opaque_px=result.opaque_px,
-        all_blank=result.all_blank,
-        is_vector=result.is_vector,
-        fonts_outlined=result.fonts_outlined,
-    )
-    image = inline_image(
-        doc_id=doc_id,
-        workspace_relative_path=export.workspace_relative_path,
-        fmt=export.format,
-        inline=inline,
-        max_output_bytes=max_output_bytes,
-    )
-    return with_inline(export, image)
+def register(mcp: FastMCP) -> None:
+    mcp.tool(name="export", description=DESCRIPTION, output_schema=None)(export)

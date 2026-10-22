@@ -16,10 +16,10 @@ from inkscape_mcp.document.inspect import ObjectRef
 from inkscape_mcp.edit.ops import Selector
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
 from inkscape_mcp.render.cli import list_frames
-from inkscape_mcp.tools.v2._result import guarded, ok, require_doc
+from inkscape_mcp.tools._result import guarded, ok, require_doc
 from inkscape_mcp.validate import validate_document
 
-_logger = get_logger("tools.v2.inspect")
+_logger = get_logger("tools.inspect")
 
 Section = Literal[
     "summary",

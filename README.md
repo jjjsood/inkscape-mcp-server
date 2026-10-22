@@ -230,8 +230,6 @@ the `claude mcp add` / generic-host forms) is in
 | `INKSCAPE_MCP_ENGINE_MODE` | `per_call` | Engine transport for render/export/path/boolean/action-chain (ADR-007). `per_call` spawns a fresh Inkscape per call (default, always correct); `shell` routes those ops through one warm, long-lived `inkscape --shell` worker per document with an **automatic per-call fallback** on any fault. Faster for multi-op batches; any value other than `shell` floors to `per_call`. A private headless worker, **not** a channel to your live GUI. |
 | `INKSCAPE_MCP_ENGINE_MAX_PROCESSES` | `2` | Max concurrent warm shell workers when `engine_mode=shell` (LRU-evicted). Floored at 1. |
 | `INKSCAPE_MCP_ENGINE_IDLE_TIMEOUT_S` | `300` | Seconds before an idle warm shell worker is reaped. Floored at 1. |
-| `INKSCAPE_MCP_TOOL_PROFILE` | `full` | Tool-disclosure profile. `full` leaves the flag-allowed surface unchanged; `core` narrows `tools/list` to the curated essential authoring set (`document`/`find`/`create`/`style`/`transform`/`export`/`snapshots` modules) to cut per-turn model-context cost (~60% fewer `tools/list` tokens). Only **narrows** within the flag-allowed surface (sec.12 / ADR-003); a stray value floors to `full`. |
-| `INKSCAPE_MCP_TOOL_DESC` | `full` | Tool-DESCRIPTION mode, orthogonal to `INKSCAPE_MCP_TOOL_PROFILE` (which trims tool COUNT — this trims description LENGTH). `full` serves each tool's complete docstring; `short` serves a DERIVED short form (the first "what it does" line + the `Risk class:` line), cutting ~86% of the description bytes (~23k tokens) off every `tools/list`. The short form is always derived from the canonical docstring (no second copy) and the JSON `inputSchema` (param names/types) is untouched, so callers keep full argument detail; `llms.txt` / `llms-full.txt` always carry the full catalog. A stray value floors to `full`. |
 
 ## Tool reference
 
@@ -289,17 +287,6 @@ group (66 with both off). The self-describing `list_capabilities.tool_count` / `
 report the **active** post-filter surface, since they read the same `mcp.list_tools()` the transforms
 filter. The generated `llms.txt` manifest still documents the FULL catalog (generated with both flags
 forced on).
-
-**Minimal `core` profile.** For a still-smaller default model-context footprint, the opt-in
-`INKSCAPE_MCP_TOOL_PROFILE` env (`full` default · `core`) narrows `tools/list` further to a curated
-essential authoring set — the `document` / `find` / `create` / `style` / `transform` / `export` /
-`snapshots` modules (open/inspect/find/create-*/style/transform/export/snapshot). Spike finding: the
-default 85-tool surface is ~76k tokens of `tools/list` every turn; the 40-tool core set is ~31k —
-a ~60% per-turn saving. The profile only **NARROWS** within the flag-allowed surface (it disables the
-non-core tools by name; it can never expose a tool the live/advanced flags hide — sec.12 / ADR-003),
-reuses the same `disable(...)` machinery, and is idempotent + re-evaluatable. A stray value floors to
-`full`. `tool_count` / `tools[]` report the active surface; `llms.txt` still documents the FULL
-catalog (generated with profile `full`). Everything outside core stays reachable by selecting `full`.
 
 ### System & diagnostics — *low*
 

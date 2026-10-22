@@ -8,12 +8,9 @@ the unsafe-version-key guard, and the low-risk discovery tool registration.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-
-import pytest
 
 from inkscape_mcp.actions import capability_map as cmap
 from inkscape_mcp.actions.capability_map import (
@@ -28,7 +25,6 @@ from inkscape_mcp.actions.capability_map import (
 )
 from inkscape_mcp.config import Settings
 from inkscape_mcp.runtime.probe import Capabilities
-from inkscape_mcp.server import mcp
 from inkscape_mcp.workspace import sandbox
 
 
@@ -157,47 +153,8 @@ def test_corrupt_map_file_degrades_to_none(tmp_path: Path) -> None:
     assert load_action_map("1.4.3", settings=s) is None
 
 
-# --- tool registration ------------------------------------------------------
-
-
-def test_discovery_tools_registered() -> None:
-    names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert "list_actions" in names
-    assert "discover_extensions" in names
-
-
 def test_version_key_helper() -> None:
     assert cmap._version_key("Inkscape 1.4.3 (abc)") == "1.4.3"
     assert cmap._version_key("Inkscape 1.2") == "1.2"
     assert cmap._version_key(None) == UNKNOWN_VERSION
     assert cmap._version_key("../evil") == UNKNOWN_VERSION
-
-
-# ---: list_actions can omit the bulky full action array -------------------
-
-
-def test_list_actions_include_all_actions_toggle(monkeypatch: pytest.MonkeyPatch) -> None:
-    """include_all_actions=False drops the big `actions` array but keeps the count + subsets."""
-    from inkscape_mcp.actions.capability_map import ActionDiscovery
-    from inkscape_mcp.tools import actions as actions_tool
-
-    sample = ActionDiscovery(
-        inkscape_available=True,
-        inkscape_version="Inkscape 1.4.3",
-        actions=[f"act-{i}" for i in range(1006)],
-        action_count=1006,
-        allowlisted=["path-union", "select-by-id"],
-        available=["path-union", "select-by-id"],
-    )
-    monkeypatch.setattr(actions_tool, "_discover_actions", lambda: sample)
-    monkeypatch.setattr(actions_tool, "persist_action_map", lambda *a, **k: None)
-    monkeypatch.setattr(actions_tool, "get_or_build_action_map", lambda *a, **k: None)
-
-    full = actions_tool.list_actions()
-    assert len(full.actions) == 1006  # default keeps back-compat (full list)
-
-    slim = actions_tool.list_actions(include_all_actions=False)
-    assert slim.actions == []
-    assert slim.action_count == 1006  # the host total stays truthful
-    assert slim.allowlisted == ["path-union", "select-by-id"]
-    assert slim.available == ["path-union", "select-by-id"]

@@ -121,7 +121,7 @@ def test_missing_arguments(v2_app, v2_ws) -> None:
 
 
 def test_list_and_extensions_are_read_only(v2_app, monkeypatch) -> None:
-    monkeypatch.setattr("inkscape_mcp.tools.v2.actions.persist_action_map", lambda *_a, **_k: None)
+    monkeypatch.setattr("inkscape_mcp.tools.actions.persist_action_map", lambda *_a, **_k: None)
     listing = _actions(v2_app, action="list", all=False)
     assert "actions" not in listing
     assert isinstance(_actions(v2_app, action="extensions"), dict)

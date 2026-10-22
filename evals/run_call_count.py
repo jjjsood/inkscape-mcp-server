@@ -3,18 +3,16 @@
 
 Drives scripted scenarios through the in-memory FastMCP `Client` against the registered server and
 records, per scenario, the number of tool calls, the total response bytes the model would receive,
-and how many calls failed. Used to compare the surface before/after the rework
-(docs/rework-plan.md). Scenarios are written per surface (`legacy` = the pre-rework 99-tool
-surface; `v2` = the 10 result-oriented tools in `inkscape_mcp.tools.v2`).
+and how many calls failed. Used to compare against the pre-rework surface (docs/rework-plan.md:
+scenario A cost 5 calls, B 6, C 4 there).
 
 Without an Inkscape binary the render/export steps fail; they are still COUNTED (the call a real
 agent would make) and flagged `failed` so the report stays honest.
 
 Usage::
 
-    uv run python evals/run_call_count.py                  # human table, surface=legacy
+    uv run python evals/run_call_count.py                  # human table
     uv run python evals/run_call_count.py --json
-    uv run python evals/run_call_count.py --surface v2
 """
 
 from __future__ import annotations
@@ -58,57 +56,7 @@ def _doc_id(ctx: dict[str, Any], result: Any) -> None:
     ctx["doc_id"] = data["doc_id"]
 
 
-def legacy_scenarios(workdir: Path) -> list[Scenario]:
-    """Minimal realistic call sequences on the pre-rework surface (one tool call per element)."""
-    (workdir / "logo.svg").write_text(SAMPLE_SVG, encoding="utf-8")
-    palette = {"#ff0000": "#3366cc"}
-    return [
-        Scenario(
-            "A",
-            "Draw a logo, export PNG + SVG",
-            [
-                Step("create_document", lambda c: {"width": 200, "height": 120}, _doc_id),
-                Step(
-                    "create_rect",
-                    lambda c: {
-                        "doc_id": c["doc_id"],
-                        "x": 0,
-                        "y": 0,
-                        "width": 200,
-                        "height": 120,
-                        "fill": "#3366cc",
-                        "object_id": "bg",
-                    },
-                ),
-                Step(
-                    "create_circle",
-                    lambda c: {"doc_id": c["doc_id"], "cx": 100, "cy": 60, "r": 30, "fill": "#fff"},
-                ),
-                Step(
-                    "create_text",
-                    lambda c: {"doc_id": c["doc_id"], "x": 20, "y": 100, "text": "Logo"},
-                ),
-                Step("render_preview", lambda c: {"doc_id": c["doc_id"], "width_px": 400}),
-                Step("export_document", lambda c: {"doc_id": c["doc_id"], "format": "png"}),
-                Step("export_document", lambda c: {"doc_id": c["doc_id"], "format": "svg"}),
-            ],
-        ),
-        Scenario(
-            "B",
-            "Recolor an existing file, export for web",
-            [
-                Step("open_document", lambda c: {"path": str(workdir / "logo.svg")}, _doc_id),
-                Step("inspect_document", lambda c: {"doc_id": c["doc_id"]}),
-                Step("apply_palette", lambda c: {"doc_id": c["doc_id"], "mapping": palette}),
-                Step("render_preview", lambda c: {"doc_id": c["doc_id"], "width_px": 400}),
-                Step("svg_web_optimize", lambda c: {"doc_id": c["doc_id"]}),
-                Step("export_web_profile", lambda c: {"doc_id": c["doc_id"]}),
-            ],
-        ),
-    ]
-
-
-def v2_scenarios(workdir: Path) -> list[Scenario]:
+def scenarios_for(workdir: Path) -> list[Scenario]:
     """The same tasks on the result-oriented surface: one call per outcome, not per element."""
     (workdir / "logo.svg").write_text(SAMPLE_SVG, encoding="utf-8")
     return [
@@ -178,13 +126,9 @@ def v2_scenarios(workdir: Path) -> list[Scenario]:
 
 
 #: Scenario C (live: inspect selection, recolor, render) needs the in-memory live transport from
-#: tests/conftest.py, so it is counted statically. legacy: live_connect, live_inspect_selection,
-#: live_apply_to_selection, live_render_view = 4 calls. v2: `live` observes (and connects) and
-#: `live_edit` recolors and renders = 2 calls.
-STATIC = {
-    "legacy": {"C": {"title": "Live: inspect selection, recolor, render", "calls": 4}},
-    "v2": {"C": {"title": "Live: inspect selection, recolor, render", "calls": 2}},
-}
+#: tests/conftest.py, so it is counted statically: `live` observes (and connects), `live_edit`
+#: recolors and renders = 2 calls (the pre-rework surface needed 4).
+STATIC = {"C": {"title": "Live: inspect selection, recolor, render", "calls": 2}}
 
 
 def response_bytes(result: Any) -> int:
@@ -199,21 +143,15 @@ def response_bytes(result: Any) -> int:
     return total
 
 
-async def run(surface: str, workdir: Path) -> list[dict[str, Any]]:
+async def run(workdir: Path) -> list[dict[str, Any]]:
     from fastmcp import Client
     from fastmcp.exceptions import ToolError
 
-    if surface == "legacy":
-        from inkscape_mcp.server import mcp as app
-        from inkscape_mcp.server import register_tools
+    from inkscape_mcp.server import mcp as app
+    from inkscape_mcp.server import register_tools
 
-        register_tools()
-        scenarios = legacy_scenarios(workdir)
-    else:
-        from inkscape_mcp.tools.v2 import build_app
-
-        app = build_app()
-        scenarios = v2_scenarios(workdir)
+    register_tools()
+    scenarios = scenarios_for(workdir)
 
     report: list[dict[str, Any]] = []
     async with Client(app) as client:
@@ -242,7 +180,7 @@ async def run(surface: str, workdir: Path) -> list[dict[str, Any]]:
                     "response_bytes": total_bytes,
                 }
             )
-    for key, info in STATIC[surface].items():
+    for key, info in STATIC.items():
         report.append(
             {
                 "scenario": key,
@@ -258,7 +196,6 @@ async def run(surface: str, workdir: Path) -> list[dict[str, Any]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--surface", default="legacy", choices=["legacy", "v2"])
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
@@ -267,11 +204,10 @@ def main() -> int:
     )
     os.environ["INKSCAPE_MCP_WORKSPACE_ROOTS"] = str(workdir)
 
-    report = asyncio.run(run(args.surface, workdir))
+    report = asyncio.run(run(workdir))
     if args.json:
         print(json.dumps(report, indent=2))
         return 0
-    print(f"surface: {args.surface}")
     for row in report:
         extra = (
             " (static)"

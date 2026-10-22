@@ -42,15 +42,13 @@ class ToolInfo(BaseModel):
 
     Sourced from the LIVE FastMCP registry (`mcp.list_tools()`), so the index can never describe a
     tool that is not registered or miss one that is. Carries the tool's name plus its one-line
-    purpose (first docstring line) and risk class (parsed from the `Risk class:` docstring line —
-    same derivation `scripts/gen_llms_txt.py` uses for `llms.txt`).
+    purpose (first description line) and its worst-case risk class (`runtime.capabilities.risk_for`,
+    the same source `scripts/gen_llms_txt.py` uses for `llms.txt`).
     """
 
     name: str = Field(description="Registered MCP tool name (the `@mcp.tool` callable).")
     purpose: str = Field(description="One-line purpose — the first non-empty docstring line.")
-    risk: str = Field(
-        description="Risk class parsed from the tool docstring (low/medium/high/restricted)."
-    )
+    risk: str = Field(description="Worst-case risk class of the tool (low/medium/high).")
 
 
 class Capabilities(BaseModel):

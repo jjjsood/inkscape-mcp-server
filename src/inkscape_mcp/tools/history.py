@@ -10,9 +10,9 @@ from inkscape_mcp import retention
 from inkscape_mcp import snapshots as snapshots_engine
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
 from inkscape_mcp.registry import get_registry
-from inkscape_mcp.tools.v2._result import doc_summary, guarded, ok, require_doc
+from inkscape_mcp.tools._result import doc_summary, guarded, ok, require_doc
 
-_logger = get_logger("tools.v2.history")
+_logger = get_logger("tools.history")
 
 Action = Literal["list", "create", "restore", "prune", "reload"]
 

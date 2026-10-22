@@ -1,809 +1,168 @@
-"""Live tools (05/06) — detect, connect, read, render, sync a running Inkscape.
+"""`live`: observe and steer a running Inkscape (read-only; changes go through `live_edit`).
 
-Thin `@mcp.tool` layer over the live package (`inkscape_mcp.live.*`). Every tool is constrained to
-the fixed semantic surface — no arbitrary code, no raw Action strings (ADR-003). The live gate is
-ON by default (X1, operator decision 2026-06-14; set the env falsy to opt out):
-`check_live_support`/`live_status` always answer (read-only), but connecting and reading require the
-master gate on plus an established session, and absence is reported cleanly rather than as an error
-path. Headless tools are wholly unaffected when live is unavailable.
-
-Client-facing failures are raised as `ToolError` with stable, host-path-free messages (sec.12).
+The session connects on demand: any observing action attaches to the best transport first.
 """
 
-from __future__ import annotations
-
 import contextlib
-from typing import Annotated
+from typing import Any, Literal
 
+from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
-from pydantic import BaseModel, Field
+from fastmcp.tools import ToolResult
 
-from inkscape_mcp.edit.dom import EditError
-from inkscape_mcp.live import admin as _admin
-from inkscape_mcp.live.admin import (
-    HelperInstallResult,
-    LiveSupport,
-    SocketArmResult,
-    map_live_error,
-)
-from inkscape_mcp.live.diff import LiveDiffError, LiveDiffResult, diff_live_operation
-from inkscape_mcp.live.edit import (
-    FAST_RENDER_SCALE,
-    LiveEditResult,
-    LiveExportResult,
-    build_style,
-    build_transform,
-    export_live_selection,
-    run_live_mutation,
-    set_live_viewport,
-    validate_region,
-    validate_render_scale,
-    validate_svg_fragment,
-    validate_text,
-    validate_viewport,
-)
+from inkscape_mcp.live import admin
+from inkscape_mcp.live.diff import diff_live_operation
+from inkscape_mcp.live.edit import export_live_selection, set_live_viewport, validate_viewport
 from inkscape_mcp.live.events import (
     DEFAULT_POLL_INTERVAL_S,
     DEFAULT_WAIT_TIMEOUT_S,
     wait_for_change,
 )
-from inkscape_mcp.live.loop import LiveSessionStepResult, StepAction, run_session_step
-from inkscape_mcp.live.protocol import LiveCommand
-from inkscape_mcp.live.render import LiveRenderResult, render_live_view
+from inkscape_mcp.live.render import render_live_view
 from inkscape_mcp.live.scene import get_live_scene
-from inkscape_mcp.live.session import LiveSession, get_session_manager
-from inkscape_mcp.live.sync import LiveSyncError, LiveSyncResult, sync_live_to_workspace
-from inkscape_mcp.live.transport import (
-    BBox,
-    LiveChange,
-    LiveDocumentRef,
-    LiveError,
-    LiveMutationResult,
-    LiveScene,
-    LiveSelection,
-    LiveSelectionInspection,
-    LiveTransport,
-    LiveViewportResult,
-    SceneSelectionItem,
-)
+from inkscape_mcp.live.session import get_session_manager
+from inkscape_mcp.live.transport import BBox
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
-from inkscape_mcp.server import mcp
-from inkscape_mcp.workspace.risk import PolicyViolation
+from inkscape_mcp.tools._live import Region, ensure_connected, frame_params, live_png
+from inkscape_mcp.tools._result import compact, guarded, ok
 
 _logger = get_logger("tools.live")
 
-
-class LiveSceneFrame(BaseModel):
-    """One captured live frame: the rendered PNG paired with the structured `LiveScene`.
-
-    The decisive "better than inkmcp" capture: a frame is never just pixels — it always carries the
-    machine-readable scene (selection ids + bboxes, viewport, canvas size, visible-object summary)
-    so the agent reasons over structure. Read-only — no document mutation, no Operation Record.
-    """
-
-    render: LiveRenderResult = Field(description="Rendered frame (workspace-relative PNG path).")
-    scene: LiveScene = Field(description="Structured scene paired with this frame (read-only).")
-
-
-def _validate_frame_params(
-    region_x: float | None,
-    region_y: float | None,
-    region_width: float | None,
-    region_height: float | None,
-    scale: float | None,
-    fast: bool,
-) -> tuple[object | None, float | None]:
-    """Validate the shared region/scale/fast frame params (+).
-
-    Returns the validated ``(region, scale)``. All four region parts are required together.
-    ``fast`` applies the documented loop downscale (`FAST_RENDER_SCALE`) when no explicit ``scale``
-    is given — an explicit ``scale`` always wins (full-res on demand). Raises `EditError` on a
-    partial region or an out-of-bounds scale.
-    """
-    region_parts = (region_x, region_y, region_width, region_height)
-    supplied = [p is not None for p in region_parts]
-    if any(supplied) and not all(supplied):
-        raise EditError("region requires all of region_x, region_y, region_width, region_height")
-    region = (
-        validate_region(region_x, region_y, region_width, region_height)  # type: ignore[arg-type]
-        if all(supplied)
-        else None
-    )
-    effective_scale = scale if scale is not None else (FAST_RENDER_SCALE if fast else None)
-    checked_scale = validate_render_scale(effective_scale) if effective_scale is not None else None
-    return region, checked_scale
-
-
-@mcp.tool
-def check_live_support() -> LiveSupport:
-    """Report which live transports are available on this host (read-only; no connection).
-
-    When to use: checking live readiness before `live_connect`. To install the socket helper use
-    `live_install_helper`; for the full runtime matrix use `list_capabilities`.
-
-    Key params: none. Probes the extension-socket bridge (any OS) and the DBus fast-path
-    (Linux/BSD) independently — never assuming one by OS. Safe regardless of whether live mode is
-    enabled or a session is running.
-
-    Return shape: `LiveSupport` — `live_enabled`, `any_available`, `best_transport`,
-    `helper_installed`, per-transport `transports` probes (best-first), and `notes`.
-
-    Example: `check_live_support()`
-
-    Risk class: low (read-only probe).
-    """
-    return _admin.check_live_support()
-
-
-@mcp.tool
-def live_connect(prefer: str = "read") -> LiveSession:
-    """Connect to a running Inkscape over the best-ranked available transport (enables live).
-
-    When to use: starting a live session before any other `live_*` tool. To probe first use
-    `check_live_support`; to tear down use `live_disconnect`.
-
-    Key params: `prefer` selects the profile. `read` (default) is the best READ-capable transport
-    (extension-socket primary; full selection/inspect surface) but is MODAL on the socket bridge —
-    the GUI freezes for the session. `no_freeze` drives the GUI WITHOUT freezing (Linux DBus
-    path): the export-based active-doc read, `live_render_view`, `live_set_viewport`, and
-    `live_apply_to_selection` are no-freeze; selection-id reads (`live_get_selection` /
-    `live_inspect_selection`) and `live_insert_svg` / `live_set_selected_text` are NOT available
-    over DBus and stay modal. Requires the master gate (`INKSCAPE_MCP_LIVE_ENABLED`). With no
-    transport available it fails cleanly without affecting headless tools.
-
-    Return shape: `LiveSession` — the chosen `transport`, active document, and connection state.
-
-    Example: `live_connect(prefer="no_freeze")`
-
-    Risk class: medium (establishes a transport; read-only thereafter).
-    """
-    if prefer not in ("read", "no_freeze"):
-        raise ToolError("prefer must be 'read' or 'no_freeze'")
-    try:
-        session = get_session_manager().connect(prefer=prefer)
-    except LiveError as exc:
-        _logger.error("live_connect failed", extra={"detail": str(exc)})
-        raise map_live_error(exc) from exc
-    log_tool_call(_logger, tool="live_connect", transport=session.transport, prefer=prefer)
-    return session
-
-
-@mcp.tool
-def live_disconnect() -> LiveSession:
-    """Disconnect the current live session (the X1 disable switch). Idempotent.
-
-    When to use: ending a live session (or as a hard kill switch). To start one use `live_connect`;
-    to check state use `live_status`.
-
-    Key params: none. Idempotent — safe to call with no session.
-
-    Return shape: `LiveSession` — the now-disconnected session state.
-
-    Example: `live_disconnect()`
-
-    Risk class: low (tears down the transport; no document mutation).
-    """
-    session = get_session_manager().disconnect()
-    log_tool_call(_logger, tool="live_disconnect")
-    return session
-
-
-@mcp.tool
-def live_status() -> LiveSession:
-    """Report live-session state: enabled, connected, active transport, available transports.
-
-    When to use: checking whether a session is live before issuing live tools. For per-host
-    transport detail use `check_live_support`.
-
-    Key params: none. Never raises — reports "not connected" / "none available" cleanly.
-
-    Return shape: `LiveSession` — `enabled`, `connected`, active transport, available transports.
-
-    Example: `live_status()`
-
-    Risk class: low (read-only).
-    """
-    return get_session_manager().status()
-
-
-@mcp.tool
-def live_install_helper() -> HelperInstallResult:
-    """Install the shipped extension-socket helper into the Inkscape user extensions dir.
-
-    When to use: one-time setup so a running Inkscape can expose the socket bridge. After install,
-    probe with `check_live_support` then `live_connect`.
-
-    Key params: none. Copies the fixed-purpose helper (`inkscape_mcp_live.py` + `.inx`). Requires
-    the master gate (live is opt-in). Touches no workspace document.
-
-    Return shape: `HelperInstallResult` — `installed_files` and `extensions_dir` (presented
-    `~`-relative, never an absolute host path/L5).
-
-    Example: `live_install_helper()`
-
-    Risk class: restricted (writes a server-bundled file under the Inkscape extensions dir).
-    """
-    return _admin.live_install_helper()
-
-
-@mcp.tool
-def live_arm_socket() -> SocketArmResult:
-    """Auto-arm the extension-socket helper so a programmatic launch gets the FULL live surface.
-
-    When to use: bringing up the FULL perceive/compose live command set without a human
-    Extensions-menu click — a programmatic launch otherwise yields only DBus's reduced
-    action set. After this returns `armed`, call `live_connect` (the socket bridge is then the best
-    transport). To install the helper files first use `live_install_helper`; to probe readiness use
-    `check_live_support`.
-
-    Key params: none. Installs the helper if absent, then LAUNCHES a headful Inkscape with the
-    helper effect auto-invoked so it binds its loopback socket and advertises a rendezvous — no menu
-    click. The socket bridge is the cross-platform primary (NOT bound to one OS). Requires the
-    master live gate. GUI-ONLY: the headful launch needs a display; on a HEADLESS host (CI / box,
-    no `DISPLAY`/`WAYLAND_DISPLAY`) it fails with a clear, stable message (this leg is documented as
-    deferred there) rather than spawning a doomed process. An already-armed session is reused.
-
-    Return shape: `SocketArmResult` — `armed`, `launched` (whether THIS call started Inkscape),
-    `helper_installed`, `transport`, and `notes`. No host path is carried (sec.12).
-
-    Example: `live_arm_socket()` then `live_connect()`
-
-    Risk class: restricted (launches a headful Inkscape process and writes a server-bundled helper).
-    """
-    return _admin.live_arm_socket()
-
-
-@mcp.tool
-def live_get_active_document() -> LiveDocumentRef:
-    """Identify the document open in the connected live instance (read-only).
-
-    When to use: confirming WHICH document the live GUI has open. For its full scene use
-    `live_get_scene`; for the current selection use `live_get_selection`.
-
-    Key params: none. Requires an established session (`live_connect`).
-
-    Return shape: `LiveDocumentRef` — the active live document's identity.
-
-    Example: `live_get_active_document()`
-
-    Risk class: low (read-only over an established live session).
-    """
-    try:
-        transport = get_session_manager().require_transport()
-        result = transport.get_active_document()
-    except LiveError as exc:
-        raise map_live_error(exc) from exc
-    log_tool_call(_logger, tool="live_get_active_document")
-    return result
-
-
-@mcp.tool
-def live_get_selection() -> LiveSelection:
-    """Read the current selection in the live instance as object ids (read-only).
-
-    When to use: getting the ids the user selected in the GUI. For their semantic detail use
-    `live_inspect_selection`; for the whole scene use `live_get_scene`. Not available over DBus
-    (`no_freeze`) — stays on the modal socket transport.
-
-    Key params: none. Requires an established session (`live_connect`).
-
-    Return shape: `LiveSelection` — `count` plus the selected object ids.
-
-    Example: `live_get_selection()`
-
-    Risk class: low (read-only).
-    """
-    try:
-        transport = get_session_manager().require_transport()
-        result = transport.get_selection()
-    except LiveError as exc:
-        raise map_live_error(exc) from exc
-    log_tool_call(_logger, tool="live_get_selection", count=result.count)
-    return result
-
-
-@mcp.tool
-def live_inspect_selection() -> LiveSelectionInspection:
-    """Inspect the selected objects in the live instance (semantic, by id; read-only).
-
-    When to use: getting structured detail (not just ids) of the GUI selection. For ids only use
-    `live_get_selection`; for the whole scene use `live_get_scene`. Not available over DBus
-    (`no_freeze`) — stays on the modal socket transport.
-
-    Key params: none. Requires an established session (`live_connect`).
-
-    Return shape: `LiveSelectionInspection` — `count` plus per-object inspection (the headless
-    object-inspection shape).
-
-    Example: `live_inspect_selection()`
-
-    Risk class: low (read-only).
-    """
-    try:
-        transport = get_session_manager().require_transport()
-        result = transport.inspect_selection()
-    except LiveError as exc:
-        raise map_live_error(exc) from exc
-    log_tool_call(_logger, tool="live_inspect_selection", count=result.count)
-    return result
-
-
-@mcp.tool
-def live_render_view(
-    region_x: float | None = None,
-    region_y: float | None = None,
-    region_width: float | None = None,
-    region_height: float | None = None,
+Action = Literal[
+    "check",
+    "connect",
+    "disconnect",
+    "status",
+    "install_helper",
+    "arm_socket",
+    "observe",
+    "wait",
+    "viewport",
+    "diff",
+    "export_selection",
+]
+Part = Literal["document", "selection", "inspect", "scene", "view"]
+Prefer = Literal["read", "no_freeze"]
+
+DESCRIPTION = (
+    "Look at (and steer the view of) a running Inkscape. action='observe' with include=[document, "
+    "selection, inspect, scene, view] returns those parts in one call ('view' is an inline PNG of "
+    "the canvas; region/scale/fast shape it); 'wait' blocks until something changes; 'viewport' "
+    "(mode, zoom, center_x/y, dx/dy) moves the view; 'diff' (operation_id) shows what a live_edit "
+    "changed; 'export_selection' renders the selection. Setup: check, connect, disconnect, "
+    "status, install_helper, arm_socket. Connects automatically. "
+    "Example: live(action='observe', include=['selection','inspect','view'], fast=true)"
+)
+
+
+def _observe(
+    include: list[Part], region: Region | None, scale: float | None, fast: bool
+) -> tuple[dict[str, Any], list[Any]]:
+    manager = ensure_connected()
+    transport = manager.require_transport()
+    checked_region, checked_scale = frame_params(region, scale, fast)
+    out: dict[str, Any] = {}
+    images: list[Any] = []
+    if "document" in include:
+        out["document"] = transport.get_active_document()
+    if "selection" in include:
+        out["selection"] = transport.get_selection()
+    if "inspect" in include:
+        out["inspect"] = transport.inspect_selection()
+    if "scene" in include:
+        out["scene"] = get_live_scene()
+    if "view" in include:
+        frame = render_live_view(region=checked_region, scale=checked_scale)  # type: ignore[arg-type]
+        out["view"] = {"scale": frame.scale, "region": frame.region or None}
+        images.append(live_png(frame.artifact_path))
+    return out, images
+
+
+@guarded()
+def live(
+    action: Action,
+    prefer: Prefer = "read",
+    include: list[Part] | None = None,
+    region: Region | None = None,
     scale: float | None = None,
     fast: bool = False,
-) -> LiveRenderResult:
-    """Rasterize the live canvas to a PNG in the live artifacts dir (visual feedback).
-
-    When to use: a pixels-only view of the live canvas. For pixels PLUS structured scene use
-    `live_get_scene`; for just the selection use `live_export_selection`.
-
-    Key params: with no region the whole canvas renders. Supply ALL four of
-    `region_x`/`region_y`/`region_width`/`region_height` (user units; w/h > 0) for a targeted bbox,
-    and optional `scale` (>0) to up/downscale. `fast=True` gives a cheap downscaled loop-preview; an
-    explicit `scale` always wins. Every numeric is finite-checked and bounded server-side before it
-    crosses the transport; the frame comes from the transport renderer, never an OS screenshot
-    (deterministic, cross-platform — ADR-006). Served from a per-session cache keyed on
-    `(doc_revision, viewport, scale)` so a stale frame is never returned after a change.
-
-    Return shape: `LiveRenderResult` — a workspace-relative PNG path plus render metadata.
-
-    Example: `live_render_view(fast=True)`
-
-    Risk class: low (render to artifact dir; view-only, no Operation Record).
-    """
-    try:
-        region, checked_scale = _validate_frame_params(
-            region_x, region_y, region_width, region_height, scale, fast
-        )
-        result = render_live_view(region=region, scale=checked_scale)  # type: ignore[arg-type]
-    except EditError as exc:
-        raise map_live_error(exc) from exc
-    except LiveError as exc:
-        raise map_live_error(exc) from exc
-    log_tool_call(_logger, tool="live_render_view", region=region is not None, scale=checked_scale)
-    return result
-
-
-@mcp.tool
-def live_get_scene(
-    region_x: float | None = None,
-    region_y: float | None = None,
-    region_width: float | None = None,
-    region_height: float | None = None,
-    scale: float | None = None,
-    fast: bool = False,
-) -> LiveSceneFrame:
-    """Capture one live frame as a PNG PLUS a structured, machine-readable `LiveScene`.
-
-    When to use: the core perception step — the agent reasons over STRUCTURE, not pixels. For
-    pixels-only use `live_render_view`; for one loop iteration use `live_session_step`.
-
-    Key params: region/scale/fast work exactly as `live_render_view` (all four region parts at once,
-    user units, w/h > 0; optional `scale` > 0; `fast=True` for the downscaled loop preview, explicit
-    `scale` wins). Frame rendered through the transport, never an OS screenshot
-    (deterministic, cross-platform — ADR-006); served from the per-session cache keyed on
-    `(doc_revision, viewport, scale)`. Scene pulled over the fixed `get_scene` command — no
-    code or raw Action path (ADR-003). Requires an established session. READ-ONLY (no Operation
-    Record, no approval).
-
-    Return shape: `LiveSceneFrame` — `render` (the PNG) plus `scene`: a `LiveScene` carrying the
-    active-document identity, selection (ids + bboxes), viewport (zoom/center/visible region), the
-    canvas size, and a visible-object summary.
-
-    Example: `live_get_scene(fast=True)`
-
-    Risk class: low (read-only perception; no document mutation, no Operation Record).
-    """
-    try:
-        region, checked_scale = _validate_frame_params(
-            region_x, region_y, region_width, region_height, scale, fast
-        )
-        render = render_live_view(region=region, scale=checked_scale)  # type: ignore[arg-type]
-        scene = get_live_scene()
-    except EditError as exc:
-        raise map_live_error(exc) from exc
-    except LiveError as exc:
-        raise map_live_error(exc) from exc
-    log_tool_call(
-        _logger,
-        tool="live_get_scene",
-        region=region is not None,
-        selection=scene.selection_count,
-        objects=scene.object_count,
-    )
-    return LiveSceneFrame(render=render, scene=scene)
-
-
-@mcp.tool
-def live_wait_for_change(
-    timeout_s: Annotated[float, Field(ge=0.0, le=60.0)] = DEFAULT_WAIT_TIMEOUT_S,
-    poll_interval_s: Annotated[float, Field(gt=0.0, le=60.0)] = DEFAULT_POLL_INTERVAL_S,
-) -> LiveChange:
-    """Block until the live state changes, or the bounded timeout elapses (read-only).
-
-    When to use: between `live_session_step` iterations so the loop reacts to the user's own GUI
-    edits instead of busy-rendering. To then re-perceive use `live_get_scene`.
-
-    Key params: `timeout_s` is clamped to at most 60s and `poll_interval_s` is floored, so the wait
-    never spins tightly nor blocks forever (it sleeps between cheap polls). Each poll pulls a CHEAP
-    state token (small revision marker + selection ids + coarse viewport — never the full doc or a
-    PNG; protocol v5), hashed + diffed against the last token. Requires a session; no
-    code/raw-Action path (ADR-003). NOTE: the socket helper runs on a snapshot, so within one call
-    it cannot observe later GUI edits; the token mechanism is transport-agnostic and detects user
-    edits on any transport that recomputes per poll.
-
-    Return shape: `LiveChange` — `changed`, `timed_out`, and the delta flags `selection_changed` /
-    `document_changed` / `viewport_changed` (more than one may fire).
-
-    Example: `live_wait_for_change(timeout_s=10)`
-
-    Risk class: low (read-only polling; no document mutation, no Operation Record).
-    """
-    try:
-        result = wait_for_change(timeout_s=timeout_s, poll_interval_s=poll_interval_s)
-    except LiveError as exc:
-        raise map_live_error(exc) from exc
-    log_tool_call(
-        _logger,
-        tool="live_wait_for_change",
-        changed=result.changed,
-        timed_out=result.timed_out,
-        selection=result.selection_changed,
-        document=result.document_changed,
-        viewport=result.viewport_changed,
-    )
-    return result
-
-
-@mcp.tool
-def live_set_viewport(
-    mode: str,
+    timeout_s: float = DEFAULT_WAIT_TIMEOUT_S,
+    poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
+    mode: str | None = None,
     zoom: float | None = None,
     center_x: float | None = None,
     center_y: float | None = None,
     dx: float | None = None,
     dy: float | None = None,
-) -> LiveViewportResult:
-    """Control the live canvas viewport: zoom / pan / fit-to-selection / fit-to-page.
-
-    When to use: framing the canvas before a render/capture. To then render use `live_render_view`;
-    to edit (not just view) use `live_apply_to_selection`.
-
-    Key params: `mode` is one of the fixed verbs `zoom` | `pan` | `fit_selection` | `fit_page` (no
-    raw Action or code path — ADR-003). `zoom` takes a positive `zoom` and optional
-    `center_x`/`center_y` to recentre; `pan` takes both `dx` and `dy` (a delta in user units);
-    `fit_selection`/`fit_page` take no numerics. Every numeric is finite-checked and bounded
-    server-side before it crosses the transport (sec.12). Requires a session. VIEW-ONLY (no
-    Operation Record, no approval).
-
-    Return shape: `LiveViewportResult` — the applied viewport state.
-
-    Example: `live_set_viewport("zoom", zoom=2.0)`
-
-    Risk class: low (view-only; no document mutation, no Operation Record).
-    """
-    try:
+    operation_id: str | None = None,
+) -> ToolResult:
+    images: list[Any] = []
+    payload: Any
+    if action == "check":
+        payload = admin.check_live_support()
+    elif action == "status":
+        payload = get_session_manager().status()
+    elif action == "connect":
+        manager = get_session_manager()
+        if manager.status().connected:
+            payload = manager.status()
+        else:
+            payload = manager.connect(prefer=prefer)
+    elif action == "disconnect":
+        payload = get_session_manager().disconnect()
+    elif action == "install_helper":
+        payload = admin.live_install_helper()
+    elif action == "arm_socket":
+        payload = admin.live_arm_socket()
+    elif action == "observe":
+        payload, images = _observe(include or ["selection"], region, scale, fast)
+    elif action == "wait":
+        if not 0.0 <= timeout_s <= 60.0:
+            raise ToolError("timeout_s must be between 0 and 60")
+        if not 0.0 < poll_interval_s <= 60.0:
+            raise ToolError("poll_interval_s must be > 0 and <= 60")
+        ensure_connected()
+        payload = wait_for_change(timeout_s=timeout_s, poll_interval_s=poll_interval_s)
+    elif action == "viewport":
+        if mode is None:
+            raise ToolError("action='viewport' requires mode (zoom, pan, fit_selection, fit_page)")
+        ensure_connected()
         kwargs = validate_viewport(
             mode=mode, zoom=zoom, center_x=center_x, center_y=center_y, dx=dx, dy=dy
         )
-        result = set_live_viewport(kwargs)
-    except EditError as exc:
-        raise map_live_error(exc) from exc
-    except LiveError as exc:
-        raise map_live_error(exc) from exc
-    return result
+        payload = set_live_viewport(kwargs)
+    elif action == "diff":
+        if not operation_id:
+            raise ToolError("action='diff' requires operation_id (from a live_edit result)")
+        selection = None
+        canvas = None
+        with contextlib.suppress(Exception):  # annotation only; no session is required
+            scene = get_live_scene()
+            selection = scene.selection
+            if scene.canvas.width is not None and scene.canvas.height is not None:
+                canvas = BBox(x=0.0, y=0.0, width=scene.canvas.width, height=scene.canvas.height)
+        diff = diff_live_operation(operation_id, selection=selection, canvas=canvas)
+        images.append(live_png(diff.artifact_path))
+        payload = diff
+    else:  # export_selection
+        ensure_connected()
+        exported = export_live_selection()
+        images.append(live_png(exported.artifact_path))
+        payload = exported
+
+    log_tool_call(_logger, tool="live", action=action)
+    return ok(_strip_paths(payload, images), *images)
 
 
-@mcp.tool
-def live_sync_to_workspace(dest_path: str) -> LiveSyncResult:
-    """Save the live document's current state into the workspace as a NEW tracked document.
-
-    When to use: capturing live work into the headless workspace so the typed tools can act on it.
-    For pixels-only feedback use `live_render_view`; to save a HEADLESS doc to disk use
-    `save_document_as`.
-
-    Key params: `dest_path` is the new workspace file; RELATIVE anchors to the first workspace root
-    (NOT the server CWD) and a not-yet-existing SUBFOLDER is created in-sandbox first (matching
-    `save_document_as`; a `..`-escaping / out-of-sandbox dest creates nothing and is rejected with
-    `path rejected: outside workspace`). Reads the live SVG and writes it through the policy layer
-    (sandbox + symlink guard), registers it (working copy), and records an Operation Record +
-    snapshot (ADR-004). An existing destination is REFUSED — sync never overwrites, so a live fault
-    cannot damage a workspace file. Requires an established session.
-
-    Return shape: `LiveSyncResult` — the new `doc_id`, `operation_id`, and snapshot links.
-
-    Example: `live_sync_to_workspace("from-live.svg")`
-
-    Risk class: medium (writes a new workspace document, reversible + recorded).
-    """
-    try:
-        result = sync_live_to_workspace(dest_path)
-    except LiveSyncError as exc:
-        _logger.error("live_sync_to_workspace failed", extra={"detail": str(exc)})
-        raise ToolError(str(exc)) from exc
-    except LiveError as exc:
-        raise map_live_error(exc) from exc
-    log_tool_call(
-        _logger,
-        tool="live_sync_to_workspace",
-        doc_id=result.doc_id,
-        operation_id=result.operation_id,
-    )
-    return result
+def _strip_paths(payload: Any, images: list[Any]) -> Any:
+    """Drop server-side artifact paths when the image itself is attached."""
+    if not any(i is not None for i in images):
+        return payload
+    data = compact(payload)
+    if isinstance(data, dict):
+        data.pop("artifact_path", None)
+    return data
 
 
-# --- live WRITE surface (semantic-only, approval-gated) -------------------
-
-
-@mcp.tool
-def live_apply_to_selection(
-    approval_token: str | None = None,
-    fill: str | None = None,
-    stroke: str | None = None,
-    stroke_width: str | None = None,
-    opacity: float | None = None,
-    dx: float | None = None,
-    dy: float | None = None,
-    scale: float | None = None,
-    rotate: float | None = None,
-) -> LiveEditResult:
-    """Apply a validated style and/or simple transform to the current live selection.
-
-    When to use: editing the GUI selection's style/transform live. To insert markup use
-    `live_insert_svg`; to edit text use `live_set_selected_text`; for headless edits use `set_fill`
-    / `move_object` / etc.
-
-    Key params: reuses the headless safe-edit semantics — `fill`/`stroke` colour-validated,
-    `stroke_width` a CSS length, `opacity` in [0, 1], transform composed from `dx`/`dy` (both
-    required together), `scale` (positive), `rotate` (degrees); at least one input required.
-    Semantic-only — no arbitrary code, no raw Action (ADR-003). Mutating a running user session is
-    HIGH risk: REQUIRES an explicit `approval_token` (refused without one).
-
-    Return shape: `LiveEditResult` — a Live Operation Record with before/after canvas renders,
-    syncable to a snapshot via `live_sync_to_workspace`.
-
-    Example: `live_apply_to_selection(approval_token="ok", fill="#3366cc")`
-
-    Risk class: high (approval-gated).
-    """
-    try:
-        style = build_style(fill=fill, stroke=stroke, stroke_width=stroke_width, opacity=opacity)
-        transform = build_transform(dx=dx, dy=dy, scale=scale, rotate=rotate)
-        if not style and transform is None:
-            raise EditError("supply at least one style or transform parameter")
-
-        def op(transport: LiveTransport) -> LiveMutationResult:
-            return transport.apply_to_selection(style=style, transform=transform)
-
-        result = run_live_mutation(
-            tool="live_apply_to_selection",
-            params={"style": style, "transform": transform},
-            required_command=LiveCommand.APPLY_TO_SELECTION,
-            op=op,
-            approval_token=approval_token,
-        )
-    except (PolicyViolation, EditError, LiveError) as exc:
-        _logger.error("live_apply_to_selection failed", extra={"detail": str(exc)})
-        raise map_live_error(exc) from exc
-    return result
-
-
-@mcp.tool
-def live_insert_svg(svg_fragment: str, approval_token: str | None = None) -> LiveEditResult:
-    """Insert an SVG fragment into the running document.
-
-    When to use: grafting composed markup into the live document. To style the selection use
-    `live_apply_to_selection`; for the headless equivalent use `insert_svg_fragment`.
-
-    Key params: `svg_fragment` is parsed through the normative safe parser (no entities, no external
-    DTD, no network) and size-bounded before it crosses the transport — only well-formed, safe
-    markup is inserted; no code path (ADR-003). Inserting into a running user session is HIGH risk:
-    REQUIRES an explicit `approval_token` (refused without one).
-
-    Return shape: `LiveEditResult` — a Live Operation Record with before/after canvas renders,
-    syncable to a snapshot.
-
-    Example: `live_insert_svg("<rect .../>", approval_token="ok")`
-
-    Risk class: high (approval-gated).
-    """
-    try:
-        fragment = validate_svg_fragment(svg_fragment)
-
-        def op(transport: LiveTransport) -> LiveMutationResult:
-            return transport.insert_svg(fragment)
-
-        result = run_live_mutation(
-            tool="live_insert_svg",
-            params={"fragment_bytes": len(fragment.encode("utf-8"))},
-            required_command=LiveCommand.INSERT_SVG,
-            op=op,
-            approval_token=approval_token,
-        )
-    except (PolicyViolation, EditError, LiveError) as exc:
-        _logger.error("live_insert_svg failed", extra={"detail": str(exc)})
-        raise map_live_error(exc) from exc
-    return result
-
-
-@mcp.tool
-def live_set_selected_text(text: str, approval_token: str | None = None) -> LiveEditResult:
-    """Replace the selected text object's content in the running document.
-
-    When to use: changing the selected text object's words live. To restyle the selection use
-    `live_apply_to_selection`; for the headless equivalent use `replace_text`.
-
-    Key params: `text` is length-bounded and control-character-rejected (the same guard as the
-    headless `replace_text`); it is stored as a text node, so no markup injection is possible.
-    Editing a running user session is HIGH risk: REQUIRES an explicit `approval_token` (refused
-    without one).
-
-    Return shape: `LiveEditResult` — a Live Operation Record with before/after canvas renders,
-    syncable to a snapshot.
-
-    Example: `live_set_selected_text("Hello", approval_token="ok")`
-
-    Risk class: high (approval-gated).
-    """
-    try:
-        safe_text = validate_text(text)
-
-        def op(transport: LiveTransport) -> LiveMutationResult:
-            return transport.set_selected_text(safe_text)
-
-        result = run_live_mutation(
-            tool="live_set_selected_text",
-            params={"text_len": len(safe_text)},
-            required_command=LiveCommand.SET_SELECTED_TEXT,
-            op=op,
-            approval_token=approval_token,
-        )
-    except (PolicyViolation, EditError, LiveError) as exc:
-        _logger.error("live_set_selected_text failed", extra={"detail": str(exc)})
-        raise map_live_error(exc) from exc
-    return result
-
-
-@mcp.tool
-def live_export_selection() -> LiveExportResult:
-    """Export just the current live selection to a PNG under the live artifacts dir.
-
-    When to use: a PNG of only the GUI selection. For the whole canvas use `live_render_view`; for
-    pixels plus structure use `live_get_scene`.
-
-    Key params: none. Read-only feedback (no mutation, no approval, no Operation Record), mirroring
-    `live_render_view`. Requires an established session.
-
-    Return shape: `LiveExportResult` — a workspace-relative PNG path under the live artifacts dir.
-
-    Example: `live_export_selection()`
-
-    Risk class: low (render to artifact dir).
-    """
-    try:
-        result = export_live_selection()
-    except LiveError as exc:
-        raise map_live_error(exc) from exc
-    return result
-
-
-@mcp.tool
-def live_diff_view(operation_id: str) -> LiveDiffResult:
-    """Produce a FOCUSED, annotated before/after visual diff of a live operation.
-
-    When to use: visualizing what one live mutation changed. To produce a mutation to diff use
-    `live_apply_to_selection` / `live_insert_svg` / `live_set_selected_text` (or
-    `live_session_step`, which calls this internally).
-
-    Key params: `operation_id` names the Live Operation Record. The tool REUSES the before/after
-    frames the mutation already captured (`run_live_mutation` persists `preview_before` /
-    `preview_after`), pixel-diffs them to a CHANGED-REGION bbox, and emits ONE annotated overlay
-    highlighting it plus the current selection outline (best-effort when a session is connected).
-    Frames are resolved VIA the `operation_id` (never a raw client path) and sandbox-validated under
-    the live artifacts dir before any bytes are read. Identical-dimension frames required; a size
-    mismatch is a stable error. ARTIFACT-ONLY — no mutation, no Operation Record routing, no
-    approval, no network.
-
-    Return shape: `LiveDiffResult` — a workspace-relative overlay PNG path, the `operation_id`, the
-    pixel-space `changed_bbox` (null when the frames are identical), and `highlighted_ids`; the diff
-    path is linked back onto the record's `diff_artifacts`.
-
-    Example: `live_diff_view(operation_id)`
-
-    Risk class: low (artifact-only; reads + annotates two existing frames, no mutation, no record).
-    """
-    # Best-effort: pull the current scene's selection bboxes + canvas to annotate the overlay.
-    # A connected session is NOT required — without one we still emit the changed-region highlight.
-    selection: list[SceneSelectionItem] | None = None
-    canvas: BBox | None = None
-    with contextlib.suppress(Exception):
-        scene = get_live_scene()
-        selection = scene.selection
-        if scene.canvas.width is not None and scene.canvas.height is not None:
-            canvas = BBox(x=0.0, y=0.0, width=scene.canvas.width, height=scene.canvas.height)
-    try:
-        result = diff_live_operation(operation_id, selection=selection, canvas=canvas)
-    except LiveDiffError as exc:
-        _logger.error("live_diff_view failed", extra={"detail": str(exc)})
-        raise ToolError(str(exc)) from exc
-    except LiveError as exc:
-        raise map_live_error(exc) from exc
-    log_tool_call(
-        _logger,
-        tool="live_diff_view",
-        operation_id=result.operation_id,
-        changed=result.changed_bbox is not None,
-        highlighted=len(result.highlighted_ids),
-    )
-    return result
-
-
-@mcp.tool
-def live_session_step(
-    action: StepAction | None = None,
-    approval_token: str | None = None,
-    fill: str | None = None,
-    stroke: str | None = None,
-    stroke_width: str | None = None,
-    opacity: float | None = None,
-    dx: float | None = None,
-    dy: float | None = None,
-    scale: float | None = None,
-    rotate: float | None = None,
-    svg_fragment: str | None = None,
-    text: str | None = None,
-) -> LiveSessionStepResult:
-    """Run ONE perceive→decide→act→observe iteration of the live-view loop.
-
-    When to use: the flagship loop step — call it repeatedly to drive a live edit loop (use
-    `live_wait_for_change` between steps to react to the user's edits). It COMPOSES the existing
-    live tools (ADR-006); for a single standalone edit call `live_apply_to_selection` /
-    `live_insert_svg` / `live_set_selected_text` directly. Each call is one bounded iteration — no
-    server-side autonomous run.
-
-    Key params: `action` is the AGENT's decision (this tool embeds no LLM), one of the FIXED set
-    `apply` | `insert_svg` | `set_text` (no raw-Action/code path — ADR-002/003; an out-of-enum
-    action is rejected). OMIT `action` for a PERCEIVE-ONLY step (mutates nothing, no Operation
-    Record). When acting: `apply` takes `fill`/`stroke`/`stroke_width`/`opacity` and/or
-    `dx`/`dy`/`scale`/`rotate`; `insert_svg` takes a safe-parsed `svg_fragment`; `set_text` takes a
-    control-char-checked `text`. The act runs through `run_live_mutation` (the SAME path as the
-    standalone tools); mutating a running session is HIGH risk and REQUIRES an explicit
-    `approval_token`. Requires a session.
-
-    Return shape: `LiveSessionStepResult` — always the PERCEIVE scene + frame; after an act also the
-    `operation_id`, a focused `live_diff_view` artifact, and the after scene/frame.
-
-    Example: `live_session_step(action="apply", approval_token="ok", fill="#3366cc")`
-
-    Risk class: high when it acts (routes through `run_live_mutation` — HIGH + approval); low when
-    perceive-only (read-only; no mutation, no Operation Record).
-    """
-    try:
-        result = run_session_step(
-            action=action,
-            approval_token=approval_token,
-            fill=fill,
-            stroke=stroke,
-            stroke_width=stroke_width,
-            opacity=opacity,
-            dx=dx,
-            dy=dy,
-            scale=scale,
-            rotate=rotate,
-            svg_fragment=svg_fragment,
-            text=text,
-        )
-    except (PolicyViolation, EditError, LiveError) as exc:
-        _logger.error("live_session_step failed", extra={"detail": str(exc)})
-        raise map_live_error(exc) from exc
-    except Exception as exc:
-        # Orchestrator composes many calls; never let an unexpected exception surface a host-path
-        # traceback to the client — fold it into the stable, host-path-free mapping.
-        _logger.error("live_session_step failed", extra={"detail": type(exc).__name__})
-        raise map_live_error(exc) from exc
-    return result
+def register(mcp: FastMCP) -> None:
+    mcp.tool(name="live", description=DESCRIPTION, output_schema=None)(live)

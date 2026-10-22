@@ -46,7 +46,7 @@ from inkscape_mcp.workspace.risk import PolicyViolation
 from inkscape_mcp.workspace.subprocess_exec import ProcessError
 from inkscape_mcp.workspace.xml_safety import UnsafeXMLError
 
-_logger = get_logger("tools.v2")
+_logger = get_logger("tools")
 
 DEFAULT_LIMIT_MSG = "input exceeds the configured size or dimension limit"
 _ENGINE_UNAVAILABLE = "inkscape engine unavailable"

@@ -15,11 +15,11 @@ from inkscape_mcp.edit.ops import run_ops
 from inkscape_mcp.live.sync import sync_live_to_workspace
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
 from inkscape_mcp.registry import get_registry
-from inkscape_mcp.tools.v2._live import ensure_connected
-from inkscape_mcp.tools.v2._result import doc_summary, guarded, inline_png, ok, to_tool_error
-from inkscape_mcp.tools.v2.edit import Detail, ops_payload
+from inkscape_mcp.tools._live import ensure_connected
+from inkscape_mcp.tools._result import doc_summary, guarded, inline_png, ok, to_tool_error
+from inkscape_mcp.tools.edit import Detail, ops_payload
 
-_logger = get_logger("tools.v2.open")
+_logger = get_logger("tools.open")
 
 PERSIST_HINT = (
     "Edits go to a managed working copy; your file is never changed. Use "

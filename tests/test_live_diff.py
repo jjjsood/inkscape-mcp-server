@@ -6,11 +6,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from fastmcp.exceptions import ToolError
 from PIL import Image
 
-from inkscape_mcp.config import ENV_LIVE_ENABLED, ENV_WORKSPACE_ROOTS, Settings, get_settings
-from inkscape_mcp.live import session as session_mod
+from inkscape_mcp.config import Settings
 from inkscape_mcp.live.diff import (
     LiveDiffError,
     compute_changed_bbox,
@@ -22,12 +20,9 @@ from inkscape_mcp.live.records import (
     new_live_operation,
     update_live_operation,
 )
-from inkscape_mcp.live.session import get_session_manager, reset_session_manager
 from inkscape_mcp.live.transport import BBox, SceneSelectionItem
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.risk import RiskClass
-
-from .conftest import FakeTransport
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -234,61 +229,3 @@ def test_diff_creates_no_operation_record(tmp_path: Path) -> None:
     after = list_live_operations(settings=s).count
     # No NEW Operation Record is created by the diff (artifact-only); only the existing op remains.
     assert before == after == 1
-
-
-# --- Tool layer ------------------------------------------------------------------
-
-
-@pytest.fixture
-def live_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv(ENV_LIVE_ENABLED, "1")
-    monkeypatch.setenv(ENV_WORKSPACE_ROOTS, str(tmp_path))
-    get_settings.cache_clear()
-    reset_session_manager()
-    monkeypatch.setattr(session_mod, "probe_transports", lambda settings=None: [])
-    monkeypatch.setattr(session_mod, "select_transport", lambda s, required: FakeTransport())
-    get_session_manager().connect()
-    return tmp_path
-
-
-def test_tool_live_diff_view_end_to_end(live_on: Path) -> None:
-    from inkscape_mcp.tools.live import live_diff_view
-
-    s = get_settings()
-    artifacts = sandbox.live_artifacts_dir(live_on)
-    _write_png(artifacts / "tb.png", (32, 32), (255, 255, 255))
-    _png_with_rect(artifacts / "ta.png", (32, 32), (255, 255, 255), (4, 4, 16, 16), (0, 0, 0))
-    op_id = _record_with_frames(live_on, s, before_name="tb.png", after_name="ta.png")
-
-    result = live_diff_view(op_id)
-    assert result.operation_id == op_id
-    assert result.changed_bbox is not None
-    assert (live_on / result.artifact_path).is_file()
-
-
-def test_tool_live_diff_view_unknown_op_raises_toolerror(live_on: Path) -> None:
-    from inkscape_mcp.tools.live import live_diff_view
-
-    with pytest.raises(ToolError):
-        live_diff_view("op_deadbeef")
-
-
-def test_tool_live_diff_view_registered() -> None:
-    import asyncio
-
-    from inkscape_mcp.server import mcp
-
-    names = {t.name for t in asyncio.run(mcp.list_tools())}
-    assert "live_diff_view" in names
-
-
-def test_tool_live_diff_view_size_mismatch_raises_toolerror(live_on: Path) -> None:
-    from inkscape_mcp.tools.live import live_diff_view
-
-    s = get_settings()
-    artifacts = sandbox.live_artifacts_dir(live_on)
-    _write_png(artifacts / "ms.png", (10, 10), (255, 255, 255))
-    _write_png(artifacts / "mb.png", (10, 18), (255, 255, 255))
-    op_id = _record_with_frames(live_on, s, before_name="ms.png", after_name="mb.png")
-    with pytest.raises(ToolError):
-        live_diff_view(op_id)

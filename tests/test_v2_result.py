@@ -15,7 +15,7 @@ from inkscape_mcp.edit.ops import OpError
 from inkscape_mcp.live.transport import LiveDisabled, LiveNotAvailable
 from inkscape_mcp.render.cli import InvalidObjectId, RenderError
 from inkscape_mcp.snapshots import SnapshotNotFound
-from inkscape_mcp.tools.v2._result import compact, dumps, guarded, ok, to_tool_error
+from inkscape_mcp.tools._result import compact, dumps, guarded, ok, to_tool_error
 from inkscape_mcp.workspace.limits import LimitExceeded
 from inkscape_mcp.workspace.paths import SandboxViolation
 from inkscape_mcp.workspace.risk import PolicyViolation

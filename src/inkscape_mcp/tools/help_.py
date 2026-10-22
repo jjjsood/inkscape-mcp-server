@@ -1,21 +1,20 @@
 """`help`: orientation, intent lookup, op reference, runtime diagnostics, artifact stat."""
 
 import difflib
-import re
 from typing import Any, Literal
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.tools import ToolResult
 
-from inkscape_mcp.edit.op_docs import OP_EXAMPLES, OP_GROUPS, op_models
+from inkscape_mcp.edit.op_docs import op_models, op_reference, ops_index
 from inkscape_mcp.intents import detect_out_of_scope, match_intents
 from inkscape_mcp.logging_setup import get_logger, log_file_io, log_tool_call
 from inkscape_mcp.runtime.capabilities import get_cached_capabilities, refresh_capabilities
-from inkscape_mcp.tools.v2._result import guarded, ok
+from inkscape_mcp.tools._result import guarded, ok
 from inkscape_mcp.workspace.stat import stat_many
 
-_logger = get_logger("tools.v2.help")
+_logger = get_logger("tools.help")
 
 Topic = Literal["capabilities", "diagnose", "ops"]
 
@@ -44,51 +43,15 @@ OVERVIEW = {
     "next": "help(topic='ops') lists the edit ops; help(op=NAME) shows one",
 }
 
-_TYPE_NOISE = re.compile(r"typing\.|inkscape_mcp\.[\w.]*\.|<class '(\w+)'>")
-
-
-def _typename(annotation: Any) -> str:
-    text = str(annotation)
-    return _TYPE_NOISE.sub(lambda m: m.group(1) or "", text)
-
 
 def _op_reference(name: str) -> dict[str, Any]:
-    models = op_models()
-    if name not in models:
+    try:
+        return op_reference(name)
+    except KeyError:
+        models = op_models()
         close = difflib.get_close_matches(name, models, n=3)
         hint = f" (similar: {', '.join(close)})" if close else ""
-        raise ToolError(f"unknown op {name!r}{hint}; help(topic='ops') lists all ops")
-    cls = models[name]
-    fields = {}
-    for fname, field in cls.model_fields.items():
-        if fname == "op":
-            continue
-        entry = _typename(field.annotation)
-        fields[fname] = entry if field.is_required() else f"{entry}?"
-    doc = " ".join((cls.__doc__ or "").split())
-    return {
-        "op": name,
-        "does": doc,
-        "risk": cls.RISK.value,
-        "needs_approval": cls.RISK.value == "high" or None,
-        "creates_id": cls.CREATES or None,
-        "fields": fields,
-        "example": OP_EXAMPLES[name],
-        "note": "fields ending in ? are optional; 'ids' can be replaced by 'select'",
-    }
-
-
-def _ops_index() -> dict[str, Any]:
-    models = op_models()
-    return {
-        "groups": {
-            group: {n: " ".join((models[n].__doc__ or "").split()).split(". ")[0] for n in names}
-            for group, names in OP_GROUPS.items()
-        },
-        "targets": "ops that act on objects take ids=[...] or select={tag,fill,stroke,text,"
-        "id_prefix,bbox}; '$<n>' names the id op n created",
-        "more": "help(op=NAME) gives fields and an example",
-    }
+        raise ToolError(f"unknown op {name!r}{hint}; help(topic='ops') lists all ops") from None
 
 
 def _capabilities(fresh: bool) -> dict[str, Any]:
@@ -120,7 +83,7 @@ def help_(
     if op is not None:
         payload["op"] = _op_reference(op)
     if topic == "ops":
-        payload["ops"] = _ops_index()
+        payload["ops"] = ops_index()
     elif topic in ("capabilities", "diagnose"):
         payload["capabilities"] = _capabilities(fresh=topic == "diagnose")
     if stat_paths is not None:

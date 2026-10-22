@@ -8,7 +8,6 @@ track the payload budget across the surface rework (docs/rework-plan.md).
 Usage::
 
     uv run python scripts/measure_surface.py            # human summary (registered server)
-    uv run python scripts/measure_surface.py --surface v2   # the result-oriented tools
     uv run python scripts/measure_surface.py --json     # machine-readable
     uv run python scripts/measure_surface.py --top 15   # more rows in the per-tool table
 """
@@ -22,15 +21,10 @@ import os
 import tempfile
 
 
-def measure(surface: str = "legacy") -> dict:
-    if surface == "v2":
-        from inkscape_mcp.tools.v2 import build_app
+def measure() -> dict:
+    from inkscape_mcp.server import mcp, register_tools
 
-        mcp = build_app(advanced=True)
-    else:
-        from inkscape_mcp.server import mcp, register_tools
-
-        register_tools()
+    register_tools()
     tools = asyncio.run(mcp.list_tools())
     rows = []
     for tool in tools:
@@ -61,7 +55,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--top", type=int, default=8)
-    parser.add_argument("--surface", default="legacy", choices=["legacy", "v2"])
     args = parser.parse_args()
 
     if "INKSCAPE_MCP_WORKSPACE_ROOTS" not in os.environ:
@@ -69,7 +62,7 @@ def main() -> int:
             prefix="inkscape-mcp-measure-"
         )
 
-    report = measure(args.surface)
+    report = measure()
     if args.json:
         print(json.dumps(report, indent=2))
         return 0

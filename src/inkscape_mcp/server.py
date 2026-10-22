@@ -1,10 +1,10 @@
 """FastMCP application entry point for inkscape-mcp.
 
 Tools/Resources/Prompts are registered here. Keep this file thin: define the app,
-wire up tool modules from `inkscape_mcp.tools.*`, and run STDIO.
+register the ten tools from `inkscape_mcp.tools`, and run STDIO.
 
-API rules (see CONTRIBUTING.md): small typed tools, no portmanteau, risk-classed,
-mutating ops emit Operation Records. Transport is STDIO only.
+Mutating calls are risk-classed (HIGH needs an approval_token) and emit one snapshot and one
+Operation Record per call. Transport is STDIO only.
 """
 
 from __future__ import annotations
@@ -13,22 +13,21 @@ from fastmcp import FastMCP
 
 from inkscape_mcp.overview import SYSTEM_OVERVIEW
 
-# Shared app instance. Tool modules import this and attach via @mcp.tool / @mcp.resource.
+# Shared app instance. Resource and prompt modules import this and attach via @mcp.resource /
+# @mcp.prompt; the tool modules are attached by `tools.register_all`.
 #: `instructions` delivers a concise system overview IN-CONTEXT every turn (the document
 # model + doc_id lifecycle, the snapshot/restore reversibility idiom, the risk classes + the
 # approval_token gate, the intended tool ordering, and the render-and-look default), routing to the
-# generated discovery surface (`how_do_i` / `list_capabilities` / `llms.txt`) for specifics — so the
+# generated discovery surface (`help` / `llms.txt`) for specifics — so the
 # model holds the idioms without having to open a docs/ file.
-mcp: FastMCP = FastMCP("inkscape-mcp", instructions=SYSTEM_OVERVIEW)
+mcp: FastMCP = FastMCP("inkscape-mcp", instructions=SYSTEM_OVERVIEW, on_duplicate="replace")
 
 
 def register_tools() -> None:
-    """Import-and-register tool/resource modules.
+    """Register the tools, resources and prompts on the shared ``mcp`` app.
 
-    Each module under ``inkscape_mcp.tools.*`` / ``inkscape_mcp.resources.*`` decorates
-    functions with ``@mcp.tool`` / ``@mcp.resource`` against the shared ``mcp`` app; the
-    import side effect runs the decorators and registers them. Importing here is what wires
-    the full surface onto the server at boot.
+    Resource and prompt modules decorate against ``mcp`` on import; the ten tools are attached by
+    ``tools.register_all``. Safe to call repeatedly (registration replaces).
     """
     # Configure structured logging (stderr only — stdout is the MCP STDIO channel).
     from inkscape_mcp.logging_setup import configure_logging, get_logger
@@ -64,69 +63,18 @@ def register_tools() -> None:
     from inkscape_mcp.resources import prompts as prompts_resources  # noqa: F401
     from inkscape_mcp.resources import runtime  # noqa: F401
 
-    #: post-registration pass — stamp every registered tool with its MCP `ToolAnnotations`
-    # (`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint` / `title`) derived
-    # from ONE central map keyed off the tool's parsed risk class. Runs LAST so the full tool
-    # surface is registered before annotations are applied; a future tool with a `Risk class:`
-    # docstring line auto-annotates with no edit to the map.
+    # tools, then the post-registration passes (annotations, compact schemas, tags + flag gating).
+    # Registration replaces an earlier one, so tests may call `register_tools()` repeatedly; the
+    # gating pass is re-evaluatable, so the visible surface always matches the current flags.
+    from inkscape_mcp.schema_compact import apply_schema_compaction
     from inkscape_mcp.tool_annotations import apply_annotations
-
-    #: final post-registration pass — when `INKSCAPE_MCP_TOOL_DESC=short`, replace each
-    # tool's wire description with a DERIVED short form (summary + risk line) to cut the per-turn
-    # `tools/list` token cost. A no-op under the default `full`. Runs LAST so the earlier risk-class
-    # parse (annotations/tags) still reads the complete docstring. `gen_llms_txt` forces `full`.
-    from inkscape_mcp.tool_descriptions import apply_short_descriptions
-
-    #: after annotations, a second central pass stamps every tool with its {domain, risk}
-    # tags and drives PROGRESSIVE DISCLOSURE from the existing config flags by EXCLUDING tagged
-    # tools from `tools/list` (live-off hides `live`; advanced-off hides the ADR-003 hatch group:
-    # `run_raw_action` + `paths` + `actions`). Gating may only NARROW the surface, never widen it;
-    # with both flags ON the full surface returns. Runs LAST + is re-evaluatable so the visible
-    # surface always matches the current flags.
     from inkscape_mcp.tool_tags import apply_tags_and_disclosure
+    from inkscape_mcp.tools import register_all
 
-    # tools plus the safe-edit tools (style / text+object / transform), save-as, and export
-    # profiles, the live-mode tools (`live`, gate on by default), the HIGH-risk path
-    # geometry tools (`paths`, dry-run + approval-gated), and the controlled Action surface
-    # (`actions`: discovery + allowlist + versioned map + validated chains, exec HIGH + approval-
-    # gated, plus the ADR-003 `run_raw_action` escape hatch — advanced-mode/OFF-by-default,
-    # single allowlisted Action, dry-run default, HIGH + approval-gated) — each module's @mcp.tool
-    # decorators register against the shared app on import.
-    # The convenience/polish surface (`svg_web_optimize` — reversible web optimization;
-    # `quality_report` — read-only machine-readable quality metrics; `export_batch` —
-    # bounded, dry-run-default typed batch export) rides the same pipelines, no new authority.
-    # adds the read-only `discover.how_do_i` intent→tool discoverability tool (guidance
-    # only, ADR-003: no raw-action hatch) which shares the curated intent map with the `intents`
-    # section of list_capabilities/diagnose_runtime.
-    # adds the HIGH-risk, reversible `delete_object` in the `dom` structural-edit module
-    # (snapshot + Operation Record per op via the shared pipeline; approval-gated).
-    from inkscape_mcp.tools import (  # noqa: F401
-        actions,
-        compose,
-        create,
-        discover,
-        document,
-        dom,
-        export,
-        export_batch,
-        find,
-        live,
-        optimize,
-        paths,
-        profiles,
-        quality,
-        save,
-        snapshots,
-        style,
-        system,
-        text_object,
-        transform,
-        validate,
-    )
-
+    register_all(mcp)
     apply_annotations(mcp)
+    apply_schema_compaction(mcp)
     apply_tags_and_disclosure(mcp)
-    apply_short_descriptions(mcp)
 
 
 def main() -> None:

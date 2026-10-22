@@ -46,7 +46,7 @@ def test_object_render_validates_the_id_first(v2_app, v2_ws, monkeypatch) -> Non
         seen.append(object_id)
         return _result(doc_id, "obj.png")
 
-    monkeypatch.setattr("inkscape_mcp.tools.v2.render.export_object", fake_export_object)
+    monkeypatch.setattr("inkscape_mcp.tools.render.export_object", fake_export_object)
     doc = open_doc(v2_ws)
     res = call(v2_app, "render", {"doc_id": doc, "target": "object", "object_id": "r1"})
     assert seen == ["r1"] and len(res.images) == 1
@@ -68,7 +68,7 @@ def test_frame_render_reports_series_and_index(v2_app, v2_ws, monkeypatch) -> No
         base = _result(doc_id, "frame-001.png")
         return Frame(**base.model_dump(), series=series or "run", frame_index=1)
 
-    monkeypatch.setattr("inkscape_mcp.tools.v2.render.capture_frame", fake_capture)
+    monkeypatch.setattr("inkscape_mcp.tools.render.capture_frame", fake_capture)
     doc = open_doc(v2_ws)
     res = call(v2_app, "render", {"doc_id": doc, "target": "frame", "series": "s1"})
     assert res.data["series"] == "s1" and res.data["frame"] == 1 and len(res.images) == 1

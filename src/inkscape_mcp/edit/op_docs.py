@@ -5,6 +5,7 @@ turn); `help(op=...)` and `help(topic="ops")` serve this reference instead. Ever
 validated against the union in the test suite, so the docs cannot drift from the models.
 """
 
+import re
 from typing import Any, get_args
 
 from inkscape_mcp.edit.ops import Op
@@ -151,3 +152,53 @@ def op_models() -> dict[str, Any]:
         (name,) = get_args(cls.model_fields["op"].annotation)
         models[name] = cls
     return models
+
+
+_TYPE_NOISE = re.compile(r"typing\.|inkscape_mcp\.[\w.]*\.|<class '(\w+)'>")
+
+
+def _typename(annotation: Any) -> str:
+    return _TYPE_NOISE.sub(lambda m: m.group(1) or "", str(annotation))
+
+
+def op_reference(name: str) -> dict[str, Any]:
+    """Fields, risk and a valid example for one op. Raises `KeyError` for an unknown op."""
+    cls = op_models()[name]
+    fields = {}
+    for fname, field in cls.model_fields.items():
+        if fname == "op":
+            continue
+        entry = _typename(field.annotation)
+        fields[fname] = entry if field.is_required() else f"{entry}?"
+    return {
+        "op": name,
+        "does": " ".join((cls.__doc__ or "").split()),
+        "risk": cls.RISK.value,
+        "needs_approval": cls.RISK.value == "high" or None,
+        "creates_id": cls.CREATES or None,
+        "fields": fields,
+        "example": OP_EXAMPLES[name],
+        "note": "fields ending in ? are optional; 'ids' can be replaced by 'select'",
+    }
+
+
+def ops_index() -> dict[str, Any]:
+    """Every op grouped, with its one-line purpose."""
+    models = op_models()
+    return {
+        "groups": {
+            group: {n: " ".join((models[n].__doc__ or "").split()).split(". ")[0] for n in names}
+            for group, names in OP_GROUPS.items()
+        },
+        "targets": "ops that act on objects take ids=[...] or select={tag,fill,stroke,text,"
+        "id_prefix,bbox}; '$<n>' names the id op n created",
+        "more": "help(op=NAME) gives fields and an example",
+    }
+
+
+def ops_reference() -> dict[str, Any]:
+    """The full op reference (`inkscape://ops`): the index plus every op's fields and example."""
+    return {
+        **ops_index(),
+        "ops": {n: op_reference(n) for names in OP_GROUPS.values() for n in names},
+    }

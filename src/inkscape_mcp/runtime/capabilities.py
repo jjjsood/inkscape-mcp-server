@@ -14,8 +14,8 @@ served, so the one count can never drift from the registered surface.
 from __future__ import annotations
 
 import asyncio
-import re
 from threading import Lock
+from typing import Any
 
 from inkscape_mcp.runtime.probe import Capabilities, ToolInfo, probe_capabilities
 
@@ -24,13 +24,24 @@ from inkscape_mcp.runtime.probe import Capabilities, ToolInfo, probe_capabilitie
 _cache_lock = Lock()
 _cached: Capabilities | None = None
 
-#: The canonical risk vocabulary; matches the derivation in `scripts/gen_llms_txt.py` so the
-#: capability map and `llms.txt` report the same risk token for a tool.
-_RISK_RE = re.compile(r"Risk class:\s*(?P<risk>low|medium|high|restricted)", re.IGNORECASE)
+#: Worst-case risk class per tool. `risk_for(tool, None)` reports this ceiling; with the call's
+#: arguments `risk_for` narrows it (an `edit` of only style ops is MEDIUM, not HIGH).
+_TOOL_RISK: dict[str, str] = {
+    "open": "medium",
+    "inspect": "low",
+    "edit": "high",
+    "render": "low",
+    "export": "high",
+    "history": "medium",
+    "help": "low",
+    "live": "medium",
+    "live_edit": "high",
+    "actions": "high",
+}
 
 
 def _one_line_purpose(description: str | None) -> str:
-    """First non-empty docstring line — the tool's one-line purpose (mirrors gen_llms_txt)."""
+    """First non-empty description line: the tool's one-line purpose."""
     for line in (description or "").splitlines():
         stripped = line.strip()
         if stripped:
@@ -38,10 +49,34 @@ def _one_line_purpose(description: str | None) -> str:
     return "(no description)"
 
 
-def _risk_class(description: str | None) -> str:
-    """Parse the `Risk class:` token from a docstring, or `unknown` (mirrors gen_llms_txt)."""
-    match = _RISK_RE.search(description or "")
-    return match.group("risk").lower() if match else "unknown"
+def risk_for(tool: str, args: dict[str, Any] | None = None) -> str:
+    """Risk class (`low`/`medium`/`high`) of one call to `tool`, or its ceiling when `args` is None.
+
+    `edit` and `open` take the max over the ops in `args["ops"]` (the same `ops_risk` the kernel
+    enforces); `export` is HIGH only when a `save_as` target overwrites. An unparseable `ops` list
+    falls back to the ceiling, so the answer never understates.
+    """
+    ceiling = _TOOL_RISK.get(tool, "unknown")
+    if args is None:
+        return ceiling
+    if tool in ("edit", "open"):
+        from inkscape_mcp.edit.ops import OpError, ops_risk, parse_ops
+
+        raw = args.get("ops")
+        if not raw:
+            return "medium"
+        try:
+            return str(ops_risk(parse_ops(raw)).value)
+        except OpError:
+            return ceiling
+    if tool == "export":
+        targets = args.get("targets") or []
+        overwrites = any(
+            isinstance(t, dict) and t.get("kind") == "save_as" and t.get("overwrite")
+            for t in targets
+        )
+        return "high" if overwrites else "medium"
+    return ceiling
 
 
 def _registry_tools() -> list[ToolInfo]:
@@ -62,7 +97,7 @@ def _registry_tools() -> list[ToolInfo]:
             ToolInfo(
                 name=t.name,
                 purpose=_one_line_purpose(t.description),
-                risk=_risk_class(t.description),
+                risk=risk_for(t.name),
             )
             for t in tools
         ),

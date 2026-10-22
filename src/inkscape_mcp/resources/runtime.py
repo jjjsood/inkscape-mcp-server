@@ -11,6 +11,9 @@ capabilities `intents` section use — so the three discovery surfaces cannot dr
 
 from __future__ import annotations
 
+import json
+
+from inkscape_mcp.edit.op_docs import ops_reference
 from inkscape_mcp.intents import intents_summary_json
 from inkscape_mcp.runtime.capabilities import get_cached_capabilities
 from inkscape_mcp.server import mcp
@@ -44,3 +47,15 @@ def runtime_intents() -> str:
     Risk class: low (read-only).
     """
     return intents_summary_json()
+
+
+@mcp.resource("inkscape://ops", mime_type="application/json")
+def ops_resource() -> str:
+    """Reference for every `edit` / `open` op: group, fields, risk and a valid example.
+
+    The `edit` tool's schema does not carry the op union, so this resource (and `help(op=NAME)`)
+    is where an agent reads the exact fields of an op.
+
+    Risk class: low (read-only).
+    """
+    return json.dumps(ops_reference(), separators=(",", ":"))

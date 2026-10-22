@@ -20,7 +20,7 @@ What it writes (at the SERVER ROOT — the parent of this ``scripts/`` dir):
 
 Risk class is DERIVED, never hardcoded per-tool: it is parsed from the ``Risk class:`` line that the
 6-part docstring template guarantees on every tool. Categories are derived from the tool's
-defining module (``tool.fn.__module__``) via ``_MODULE_GROUPS``.
+defining module (``tool.fn.__module__``) via ``_TOOL_GROUPS``.
 
 Run inside ``inkscape-mcp-server/``::
 
@@ -32,7 +32,6 @@ DO NOT edit the generated ``llms.txt`` / ``llms-full.txt`` by hand — re-run th
 from __future__ import annotations
 
 import asyncio
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -53,36 +52,24 @@ PROJECT_ONE_LINER = (
     "inspect, edit safely (reversible), validate, render, and export."
 )
 
-#: Tool category order + display label, keyed by the suffix of ``tool.fn.__module__``
-#: (``inkscape_mcp.tools.<suffix>``). Order here is the order groups appear in both files.
-_MODULE_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Create", ("create", "compose", "document")),
-    ("Inspect", ("find", "validate", "quality")),
-    ("Edit", ("style", "text_object", "transform", "dom")),
-    ("Paths", ("paths",)),
-    ("Export", ("export", "profiles", "export_batch")),
-    ("Optimize", ("optimize",)),
-    ("Live", ("live",)),
-    ("Snapshots", ("snapshots",)),
-    ("Discover", ("discover",)),
-    ("System", ("system", "actions")),
+#: Tool category order + display label, keyed by tool name. Order here is the order groups appear
+#: in both files; a tool missing from the map lands in `Other` (the count guard still sees it).
+_TOOL_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Author", ("open", "edit")),
+    ("Inspect", ("inspect", "render")),
+    ("Export", ("export",)),
+    ("History", ("history",)),
+    ("Live", ("live", "live_edit")),
+    ("Advanced", ("actions",)),
+    ("Help", ("help",)),
+    ("Other", ()),
 )
 
-#: Reverse lookup: module suffix → group label. Built once from ``_MODULE_GROUPS``.
-_SUFFIX_TO_GROUP: dict[str, str] = {
-    suffix: label for label, suffixes in _MODULE_GROUPS for suffix in suffixes
-}
+#: Reverse lookup: tool name -> group label. Built once from `_TOOL_GROUPS`.
+_NAME_TO_GROUP: dict[str, str] = {name: label for label, names in _TOOL_GROUPS for name in names}
 
 #: The canonical risk vocabulary (architecture risk classes). The manifest reports only these.
 _RISK_VOCAB = ("low", "medium", "high", "restricted")
-
-#: Matches the ``Risk class: ...`` line and captures the FIRST canonical risk token after it. A tool
-#: whose docstring qualifies its risk in prose (e.g. "medium for a new save; high when overwriting")
-#: still resolves to its primary/first canonical token rather than dragging the prose in.
-_RISK_RE = re.compile(
-    r"Risk class:\s*(?P<risk>low|medium|high|restricted)",
-    re.IGNORECASE,
-)
 
 #: A header stamped at the top of every generated file so a human knows not to hand-edit it.
 _GENERATED_HEADER = (
@@ -94,19 +81,9 @@ _GENERATED_HEADER = (
 )
 
 
-def _module_suffix(module: str) -> str:
-    """Return the last dotted component of a module path (``a.b.c`` → ``c``)."""
-    return module.rsplit(".", 1)[-1]
-
-
 def _group_for(tool: Any) -> str:
-    """Map a tool to its category label via its defining module suffix.
-
-    Falls back to ``System`` for any module not enumerated in ``_MODULE_GROUPS`` so a newly added
-    module never silently drops a tool out of both files (the count guard would also catch it).
-    """
-    suffix = _module_suffix(getattr(tool.fn, "__module__", ""))
-    return _SUFFIX_TO_GROUP.get(suffix, "System")
+    """Map a tool to its category label by name (`Other` when unlisted)."""
+    return _NAME_TO_GROUP.get(tool.name, "Other")
 
 
 def _one_line_purpose(description: str | None) -> str:
@@ -118,13 +95,11 @@ def _one_line_purpose(description: str | None) -> str:
     return "(no description)"
 
 
-def _risk_class(description: str | None) -> str:
-    """Parse the ``Risk class:`` token from a docstring, or ``unknown`` if absent."""
-    match = _RISK_RE.search(description or "")
-    if not match:
-        return "unknown"
-    # Normalize internal whitespace and lower-case the captured token(s).
-    return re.sub(r"\s+", " ", match.group("risk")).strip().lower()
+def _risk_class(tool: Any) -> str:
+    """Worst-case risk class of a tool (`runtime.capabilities.risk_for` ceiling)."""
+    from inkscape_mcp.runtime.capabilities import risk_for
+
+    return risk_for(tool.name)
 
 
 def _key_params(tool: Any) -> list[tuple[str, str]]:
@@ -192,29 +167,21 @@ async def _collect() -> dict[str, Any]:
     """Register the surface and return tools / prompts / resources / templates.
 
     The manifest documents the FULL tool catalog, so it is generated with both progressive-
-    disclosure flags (`live_enabled` / `raw_action_enabled`) forced ON, the tool profile
-    forced to `full`, and the tool-description mode forced to `full` — the committed
-    `llms.txt` / `llms-full.txt` always describe the complete surface with full descriptions,
-    independent of the operator env or the runtime gating that NARROWS or
-    SHORTENS what a default client sees.
+    disclosure flags (`live_enabled` / `raw_action_enabled`) forced ON — the committed
+    `llms.txt` / `llms-full.txt` always describe the complete surface, independent of the operator
+    env or the runtime gating that NARROWS what a default client sees.
     """
     import os
 
     from inkscape_mcp.config import (
         ENV_LIVE_ENABLED,
         ENV_RAW_ACTION_ENABLED,
-        ENV_TOOL_DESC,
-        ENV_TOOL_PROFILE,
-        TOOL_DESC_FULL,
-        TOOL_PROFILE_FULL,
         get_settings,
     )
     from inkscape_mcp.server import mcp, register_tools
 
     os.environ[ENV_LIVE_ENABLED] = "1"
     os.environ[ENV_RAW_ACTION_ENABLED] = "1"
-    os.environ[ENV_TOOL_PROFILE] = TOOL_PROFILE_FULL
-    os.environ[ENV_TOOL_DESC] = TOOL_DESC_FULL
     get_settings.cache_clear()
     register_tools()
     return {
@@ -226,12 +193,12 @@ async def _collect() -> dict[str, Any]:
 
 
 def _grouped_tools(tools: list[Any]) -> list[tuple[str, list[Any]]]:
-    """Bucket tools into the ``_MODULE_GROUPS`` order; sort each bucket by tool name."""
-    buckets: dict[str, list[Any]] = {label: [] for label, _ in _MODULE_GROUPS}
+    """Bucket tools into the ``_TOOL_GROUPS`` order; sort each bucket by tool name."""
+    buckets: dict[str, list[Any]] = {label: [] for label, _ in _TOOL_GROUPS}
     for tool in tools:
         buckets.setdefault(_group_for(tool), []).append(tool)
     out: list[tuple[str, list[Any]]] = []
-    for label, _ in _MODULE_GROUPS:
+    for label, _ in _TOOL_GROUPS:
         bucket = sorted(buckets.get(label, []), key=lambda t: t.name)
         if bucket:
             out.append((label, bucket))
@@ -264,7 +231,7 @@ def render_index(surface: dict[str, Any]) -> str:
         lines.append(f"### {label}")
         for tool in bucket:
             purpose = _one_line_purpose(tool.description)
-            risk = _risk_class(tool.description)
+            risk = _risk_class(tool)
             lines.append(f"- {tool.name} [risk: {risk}] — {purpose}")
     lines.append("")
     return "\n".join(lines)
@@ -301,7 +268,7 @@ def render_full(surface: dict[str, Any]) -> str:
         for tool in bucket:
             lines.append("")
             lines.append(f"#### {tool.name}")
-            lines.append(f"Risk class: {_risk_class(tool.description)}")
+            lines.append(f"Risk class: {_risk_class(tool)}")
             params = _key_params(tool)
             if params:
                 rendered = ", ".join(f"{n}: {t}" for n, t in params)

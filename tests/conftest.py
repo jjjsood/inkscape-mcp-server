@@ -59,11 +59,10 @@ from inkscape_mcp.live.transport import (
 _INKSCAPE_ON_PATH = shutil.which("inkscape") is not None
 
 #: the suite's DEFAULT surface is the FULL surface. Progressive disclosure NARROWS
-# `tools/list` when `live_enabled` / `raw_action_enabled` are off; many drift-guard tests
-# (count, annotations, llms.txt) register the surface at import and assert against the WHOLE
-# catalog. Forcing both flags ON here — before any test module imports `register_tools` — makes the
-# default surface the full 97 tools (today's behaviour). Tests that exercise the EXCLUSION path set
-# the flags off explicitly + clear the settings cache + re-run `register_tools()`.
+# `tools/list` when `live_enabled` / `raw_action_enabled` are off; drift-guard tests (surface,
+# llms.txt) register the surface at import and assert against the WHOLE catalog. Forcing both flags
+# ON here — before any test module imports `register_tools` — makes the default surface all ten
+# tools. Tests that exercise the EXCLUSION path use the `surface_with_flags` fixture.
 os.environ.setdefault(ENV_LIVE_ENABLED, "1")
 os.environ.setdefault(ENV_RAW_ACTION_ENABLED, "1")
 get_settings.cache_clear()
@@ -391,10 +390,10 @@ def v2_ws(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
 
 @pytest.fixture
 def v2_app(v2_ws: Any) -> Any:
-    """A standalone app with the new tools (advanced mode: `actions` included)."""
-    from inkscape_mcp.tools.v2 import build_app
+    """A standalone app with all ten tools (no flag gating, no resources or prompts)."""
+    from inkscape_mcp.tools import build_app
 
-    return build_app(advanced=True)
+    return build_app()
 
 
 @pytest.fixture
@@ -406,5 +405,28 @@ def v2_renders(monkeypatch: pytest.MonkeyPatch, v2_ws: Any) -> list[str]:
     fake = fake_render(calls)
     monkeypatch.setattr("inkscape_mcp.edit.ops.render_preview", fake)
     monkeypatch.setattr("inkscape_mcp.edit.pipeline.render_preview", fake)
-    monkeypatch.setattr("inkscape_mcp.tools.v2.render.render_preview", fake)
+    monkeypatch.setattr("inkscape_mcp.tools.render.render_preview", fake)
     return calls
+
+
+@pytest.fixture
+def surface_with_flags(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Register the server under chosen `live`/`raw_action` flags; returns `names(live, raw)`.
+
+    Restores the full default surface afterwards so later tests see all ten tools again.
+    """
+    import asyncio
+
+    from inkscape_mcp.server import mcp, register_tools
+
+    def names(*, live: bool, raw: bool) -> set[str]:
+        monkeypatch.setenv(ENV_LIVE_ENABLED, "1" if live else "0")
+        monkeypatch.setenv(ENV_RAW_ACTION_ENABLED, "1" if raw else "0")
+        get_settings.cache_clear()
+        register_tools()
+        return {t.name for t in asyncio.run(mcp.list_tools())}
+
+    yield names
+    monkeypatch.undo()
+    get_settings.cache_clear()
+    register_tools()

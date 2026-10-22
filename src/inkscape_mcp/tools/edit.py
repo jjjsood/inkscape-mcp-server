@@ -8,9 +8,9 @@ from pydantic import Field
 
 from inkscape_mcp.edit.ops import MAX_OPS, OpsResult, run_ops
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
-from inkscape_mcp.tools.v2._result import guarded, inline_png, ok
+from inkscape_mcp.tools._result import guarded, inline_png, ok
 
-_logger = get_logger("tools.v2.edit")
+_logger = get_logger("tools.edit")
 
 Render = Literal["none", "inline"]
 Detail = Literal["ids", "summary", "full"]

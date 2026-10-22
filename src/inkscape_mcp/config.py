@@ -71,32 +71,6 @@ ENV_ENGINE_IDLE_TIMEOUT_S = "INKSCAPE_MCP_ENGINE_IDLE_TIMEOUT_S"
 ENGINE_MODE_PER_CALL = "per_call"
 ENGINE_MODE_SHELL = "shell"
 
-#: Tool-disclosure PROFILE gate. Opt-in knob that NARROWS the visible `tools/list` to a
-#: curated essential core, cutting the per-turn model-context cost of the default ~85-tool surface.
-#: `full` (default) keeps the flag-allowed surface unchanged; `core` narrows to the essential
-#: authoring set (open/inspect/find/create/style/transform/export/snapshot). Parsed via
-#: `_env_choice` so a stray/garbage value floors to `full` — the profile can ONLY narrow within the
-#: flag-allowed
-#: surface (sec.12 / ADR-003), never widen past what the live/advanced flags expose.
-ENV_TOOL_PROFILE = "INKSCAPE_MCP_TOOL_PROFILE"
-
-#: The two valid `tool_profile` values. Anything else floors to `full` (the unchanged surface).
-TOOL_PROFILE_FULL = "full"
-TOOL_PROFILE_CORE = "core"
-
-#: Tool-DESCRIPTION mode. Orthogonal to `tool_profile`: the profile trims tool COUNT, this
-#: trims description LENGTH. `full` (default) serves the complete 6-part docstring as each
-#: tool's `tools/list` description; `short` serves a DERIVED short form (the first "what it does"
-#: line + the `Risk class:` line) to cut the heavy per-turn `tools/list` token cost (~86% of the
-#: description bytes). The short form is always DERIVED from the canonical docstring — never a
-#: second hand-maintained copy — and the JSON `inputSchema` (param names/types) is unaffected, so
-#: callers keep full argument detail. Parsed via `_env_choice` so a stray value floors to `full`.
-ENV_TOOL_DESC = "INKSCAPE_MCP_TOOL_DESC"
-
-#: The two valid `tool_desc` values. Anything else floors to `full` (the complete description).
-TOOL_DESC_FULL = "full"
-TOOL_DESC_SHORT = "short"
-
 #: Per-edit PREVIEW policy for the shared edit pipeline (`edit.pipeline.apply_edit`). Every Inkscape
 #: render costs a process spawn, and the before/after PNGs an edit used to write were never shown to
 #: the agent, so the default is `none` (zero renders per edit; an explicit render call or an inline
@@ -210,16 +184,6 @@ class Settings(BaseModel):
     engine_mode: str = ENGINE_MODE_PER_CALL
     engine_max_processes: int = 2
     engine_idle_timeout_s: float = 300.0
-
-    #: Tool-disclosure profile. `full` (default) leaves the flag-allowed surface unchanged;
-    #: `core` narrows `tools/list` to the curated essential set. Floored to `full` on any stray
-    #: value; gating may ONLY narrow within the flag-allowed surface (sec.12 / ADR-003).
-    tool_profile: str = TOOL_PROFILE_FULL
-
-    #: Tool-description mode. `full` (default) serves the complete docstring as each tool's
-    #: `tools/list` description; `short` serves a derived short form (summary + risk line) to cut
-    #: per-turn token cost. Floored to `full` on any stray value. Orthogonal to `tool_profile`.
-    tool_desc: str = TOOL_DESC_FULL
 
     #: Per-edit preview policy (`none` | `after` | `before_after`). Default `none`: an edit renders
     #: nothing; the Operation Record then carries no preview frames. Floored to `none` on any stray
@@ -390,10 +354,6 @@ def get_settings() -> Settings:
         ),
         engine_max_processes=_env_int(ENV_ENGINE_MAX_PROCESSES, 2, minimum=1),
         engine_idle_timeout_s=_env_float(ENV_ENGINE_IDLE_TIMEOUT_S, 300.0, minimum=1.0),
-        tool_profile=_env_choice(
-            ENV_TOOL_PROFILE, TOOL_PROFILE_FULL, (TOOL_PROFILE_FULL, TOOL_PROFILE_CORE)
-        ),
-        tool_desc=_env_choice(ENV_TOOL_DESC, TOOL_DESC_FULL, (TOOL_DESC_FULL, TOOL_DESC_SHORT)),
         edit_previews=_env_choice(
             ENV_EDIT_PREVIEWS,
             EDIT_PREVIEWS_NONE,
