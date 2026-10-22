@@ -264,21 +264,17 @@ All configuration is via environment variables. Only the workspace root is requi
 |---|---|---|
 | `INKSCAPE_MCP_MAX_INPUT_BYTES` | `52428800` (50 MiB) | Maximum input SVG size. |
 | `INKSCAPE_MCP_MAX_OUTPUT_BYTES` | `104857600` (100 MiB) | Maximum size of a produced artifact. |
-| `INKSCAPE_MCP_MAX_PROCS` | `2` | Maximum concurrent Inkscape subprocesses. |
 | `INKSCAPE_MCP_SNAPSHOT_KEEP_N` | `50` | Snapshots retained per document. |
 | `INKSCAPE_MCP_SNAPSHOT_KEEP_DAYS` | `30` | Snapshot age retention, in days. |
 | `INKSCAPE_MCP_SNAPSHOT_HARD_MAX_N` | `500` | Hard cap on snapshots per document. |
 | `INKSCAPE_MCP_SNAPSHOT_HARD_MAX_BYTES` | `5368709120` (5 GiB) | Hard cap on snapshot bytes. |
-| `INKSCAPE_MCP_ARTIFACT_KEEP_DAYS` | `14` | Artifact age retention, in days. |
-| `INKSCAPE_MCP_ARTIFACT_MAX_BYTES` | `2147483648` (2 GiB) | Total artifact byte budget. |
 | `INKSCAPE_MCP_ARTIFACT_MAX_BYTES_PER_DOC` | `536870912` (512 MiB) | Per-document artifact byte budget. |
 | `INKSCAPE_MCP_EDIT_PREVIEWS` | `none` | Preview frames stored on each Operation Record: `none`, `after`, or `before_after`. |
 | `INKSCAPE_MCP_ENGINE_MAX_PROCESSES` | `2` | Maximum warm shell workers in `shell` mode (LRU-evicted). |
 | `INKSCAPE_MCP_ENGINE_IDLE_TIMEOUT_S` | `300` | Idle timeout for warm shell workers, in seconds. |
-| `INKSCAPE_MCP_LIVE_RENDEZVOUS` | — | Explicit path to the live helper's rendezvous file (otherwise auto-discovered). |
+| `INKSCAPE_MCP_LIVE_RENDEZVOUS` | — | Explicit path to the live helper's rendezvous file (otherwise auto-discovered). Must be a private (`0600`), own-user regular file. |
 | `INKSCAPE_MCP_LIVE_CACHE_MAX_ENTRIES` | `64` | Maximum frames in the live render cache (LRU). |
 | `INKSCAPE_MCP_LIVE_CACHE_MAX_BYTES` | `268435456` (256 MiB) | Byte budget for the live render cache. |
-| `INKSCAPE_MCP_LIVE_COALESCE_BUDGET_MS` | `200` | Window in which an identical live render reuses the cached frame. `0` disables. |
 | `INKSCAPE_MCP_LIVE_FRAME_KEEP_DAYS` | `7` | Age retention for live render frames. |
 | `INKSCAPE_MCP_LIVE_FRAME_MAX_BYTES` | `536870912` (512 MiB) | Byte budget for live render frames. |
 | `INKSCAPE_MCP_ACTION_ALLOWLIST` | built-in | Extra Inkscape Action ids added to the built-in allowlist. Cannot remove defaults. |
@@ -297,7 +293,7 @@ never implicitly during edits.
 |---|---|---|
 | **Low** | `inspect`, `render`, `help`, `export` to new files | Allowed |
 | **Medium** | Create, style, text, and transform ops | Allowed; snapshot-backed and reversible |
-| **High** | `delete`, `set_svg`, `insert_svg`, path ops, file overwrites, `live_edit`, running Actions | Requires a per-operation `approval_token` minted out of band |
+| **High** | `delete`, `set_svg`, `insert_svg`, path ops, file overwrites, `live_edit`, running Actions | Requires a non-empty per-call `approval_token` (an explicit confirmation; the server checks presence, not provenance) |
 | **Restricted** | Code execution, network, filesystem escape | Not available |
 
 A call's risk is the highest risk of its ops.
@@ -305,13 +301,18 @@ A call's risk is the highest risk of its ops.
 - **Workspace sandbox** — paths are normalized, symlinks are guarded, and anything outside the
   configured roots is rejected before any I/O. Returned paths are workspace-relative.
 - **Originals untouched** — documents open as working copies; saving writes a new file, and
-  overwriting requires approval.
-- **Reversible** — each mutating call takes one snapshot and writes one Operation Record.
+  overwriting requires approval. `save_as` never writes into the managed `.inkscape-mcp/` dir.
+- **Reversible** — each mutating call takes one snapshot and writes one Operation Record; the
+  working copy is written atomically, so a failed write leaves no half state.
 - **Subprocess hygiene** — Inkscape is invoked with argument lists, never shell strings; ids and
   formats are validated before reaching the binary.
 - **Safe XML** — entity expansion and external entities are disabled (no XXE or billion-laughs).
-- **Bounded** — size limits, per-process timeouts, and a concurrency cap. No network access, no
+- **Bounded** — size limits (agent-supplied SVG text is size-checked before parsing), per-process
+  timeouts, and a concurrency cap. `export` is all-or-nothing: one byte budget per document covers
+  every target of a call, and a failing target removes the files the call already wrote. No network access, no
   arbitrary extension execution.
+- **Live rendezvous** — the client only trusts a rendezvous file that is a regular file owned by
+  the current user with mode `0600` (no symlinks); it always dials loopback.
 - **Clean errors** — public messages contain no host paths; details go to stderr only.
 
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
@@ -357,11 +358,13 @@ src/inkscape_mcp/
   config.py       Environment-driven settings and limits
   tools/          The ten MCP tools, result formatting, error mapping
   edit/           Op union and atomic edit pipeline; DOM, style, transform, compose, path engines
-  document/       Read-only document inspection
+  document/       Document inspection and save_as
   render/         Inkscape CLI render/export, profiles, batch export, output verification
   engine/         Optional warm `inkscape --shell` worker pool
   actions/        Allow-listed Inkscape Action chains (advanced mode)
   live/           Live-mode transports (socket, DBus), protocol, session, diff, helper extension
+  runtime/        Runtime capability probing
+  fonts/          Font glyph-coverage checks
   resources/      MCP resources
   prompts/        MCP prompts
   workspace/      Sandbox, path safety, limits, risk policy, safe XML, subprocess wrapper
@@ -372,10 +375,12 @@ src/inkscape_mcp/
   validate.py     Validation engine
   quality.py      Quality report
   intents.py      Goal → (tool, op) discovery map
-docs/             Installation guides and agent usage guide
+  tool_tags.py    Tool tags, MCP annotations, flag-driven disclosure
+  overview.py     Server instructions (in-context orientation)
+docs/             Installation guides, agent usage guide, test scenarios
 evals/            Tool-usability evaluation harness
 examples/         MCP host configurations
-scripts/          Live-helper installers, llms.txt generator, CI helpers
+scripts/          Live-helper installers, llms.txt generator, CI helpers, surface/scenario smoke
 tests/            pytest suite (tests/e2e/: long real-Inkscape agent workflows)
 ```
 
@@ -390,6 +395,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and project c
 - [Compatibility matrix](docs/install/compatibility.md) — platforms, Inkscape versions, live transports
 - [Troubleshooting](docs/install/troubleshooting.md)
 - [Agent usage guide](docs/agent-usage-guide.md) — workflow, ops, snapshots, approvals
+- [Test scenarios](docs/test-scenarios.md) — workflow suite WF1–WF9: agent prompt chains and the scripted `scenario_smoke.py`
 - [Changelog](CHANGELOG.md)
 
 ## License

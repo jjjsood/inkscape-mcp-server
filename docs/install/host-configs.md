@@ -118,13 +118,10 @@ Linux/macOS, `;` on Windows).
 | `INKSCAPE_MCP_MAX_EXPORT_PX` | `8192` | Max raster dimension for render/export. |
 | `INKSCAPE_MCP_MAX_OUTPUT_BYTES` | `104857600` (100 MiB) | Max size of a produced artifact. |
 | `INKSCAPE_MCP_PROCESS_TIMEOUT_S` | `60` | Per-Inkscape-process timeout (seconds). |
-| `INKSCAPE_MCP_MAX_PROCS` | `2` | Max concurrent Inkscape subprocesses. |
 | `INKSCAPE_MCP_SNAPSHOT_KEEP_N` | `50` | Snapshots retained per document. |
 | `INKSCAPE_MCP_SNAPSHOT_KEEP_DAYS` | `30` | Snapshot age retention. |
 | `INKSCAPE_MCP_SNAPSHOT_HARD_MAX_N` | `500` | Hard cap on snapshots per document. |
 | `INKSCAPE_MCP_SNAPSHOT_HARD_MAX_BYTES` | `5368709120` (5 GiB) | Hard cap on snapshot bytes. |
-| `INKSCAPE_MCP_ARTIFACT_KEEP_DAYS` | `14` | Artifact age retention. |
-| `INKSCAPE_MCP_ARTIFACT_MAX_BYTES` | `2147483648` (2 GiB) | Total artifact byte budget. |
 | `INKSCAPE_MCP_ARTIFACT_MAX_BYTES_PER_DOC` | `536870912` (512 MiB) | Per-document artifact byte budget. |
 | `INKSCAPE_MCP_LIVE_ENABLED` | `true` | Master gate for live mode (E3/E4). **On by default**; set a falsy value (`0`/`false`/`no`/`off`) to opt out (then `live` / `live_edit` are hidden; headless is unaffected). |
 | `INKSCAPE_MCP_LIVE_RENDEZVOUS` | *(none)* | Optional explicit path to the live helper's rendezvous file (otherwise discovered under the Inkscape user data dir / temp dir). |

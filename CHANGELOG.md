@@ -70,6 +70,49 @@ agent-ready over STDIO.
 - `scale` rejects factors that round to 0 (a singular transform); a selector `bbox` rejects
   negative or non-finite sizes.
 
+### Fixed (scenario suite run 4)
+- `grid` / `place` (and every deep copy) gave copies of a document with a `<style>` block shared,
+  document-global class rules, so the last copy's `.accent` colour painted all of them. A copy's
+  own stylesheet is now scoped to it: its classes get the copy's id suffix, and `#id` selectors
+  follow the id remap. Classes defined outside the copy are untouched.
+- `inspect` objects (and `created[].bbox`, selector `bbox` matching) report a box for elements
+  with a `transform`: the attribute box goes through the element's own transform (`matrix`,
+  `translate`, `scale`, `rotate`, `skewX/Y`), so "is it still centred after `scale`?" is
+  answerable without the engine. Rotated/skewed circles and ellipses and unparseable transforms
+  still report no box.
+
+### Changed (scenario suite)
+- `docs/test-scenarios.md` and `scripts/scenario_smoke.py` replace the single-feature K/R checks
+  with eight long workflows WF1–WF8 (plus agent-only WF9): feedback rounds and changes after
+  delivery, recovery from mistakes, variants and contact sheet, bulk selectors, path ops,
+  foreign SVG and security, a 12-round iteration loop. The script enables path ops
+  (`INKSCAPE_MCP_RAW_ACTION_ENABLED=1`) and runs DOM steps even without Inkscape. The doc is now
+  in English.
+
+### Fixed (agent scenario run 3, E21-15)
+- The `sodipodi` namespace constant was wrong (`sodipodi-0.0.dtd` instead of Inkscape's
+  `sodipodi-0.dtd`): `inspect` reported locked layers as unlocked, and `optimize_web` / `insert_svg`
+  did not recognise real `sodipodi:*` attributes.
+- `replace_color` / `palette` with `ids` or `select` now also recolour objects painted through a
+  CSS class, by overriding the colour inline on those objects; the shared `<style>` rule and other
+  objects using it stay unchanged (was a silent `changed: false`).
+- `help(goal=…)` understands common German phrasings ("kleiner fürs Web", "rückgängig", …).
+- Error messages name the next step: `path rejected: outside workspace; pass a path relative to
+  the workspace root`, `opened <doc_id>, but ops failed: …; fix it and call edit(doc_id=…)`,
+  `requires object_id; call inspect(…)`, an unknown id in a small document lists the ids, and
+  `save_as` with `overwrite=True` but no token says the token is what is missing.
+- `inspect(detail='full')` shows an object's `transform`; `save_as` reports the written file's
+  `bytes` (and counts in `count` / `total_bytes`, was `0`); `export(dry_run=true)` says its
+  `projected_bytes` is an upper bound; the HIGH-risk refusal points to `dry_run=true` and
+  `history(action='restore')`.
+
+### Changed (agent scenario re-run, E21-07)
+- `font` takes a numeric `size` (`8`) as well as a CSS length string (`"8pt"`).
+- "document id not found" adds "(use the doc_id open returned, not a path)": 4 of 19 agents passed
+  the file path as `doc_id`.
+- `export` / `save_as` and `render(target='object')` descriptions say that `dest_path` is
+  workspace-relative (`out_dir` does not apply) and that an object render is a zoomed view.
+
 ### Changed (agent scenario run, Weg B in `docs/test-scenarios.md`)
 - `open(..., render='inline')` without `ops` returns a picture of the opened page instead of an
   error (6 of 19 agent runs tripped over the old error).

@@ -20,8 +20,6 @@ Console script: inkscape-mcp = inkscape_mcp.server:main
 Workspace roots (required): INKSCAPE_MCP_WORKSPACE_ROOTS (OS-path-separator-delimited list of allowed dirs; the sandbox boundary).
 Operator-tunable limits / gates (all optional, env-overridable):
   - INKSCAPE_MCP_ACTION_ALLOWLIST
-  - INKSCAPE_MCP_ARTIFACT_KEEP_DAYS
-  - INKSCAPE_MCP_ARTIFACT_MAX_BYTES
   - INKSCAPE_MCP_ARTIFACT_MAX_BYTES_PER_DOC
   - INKSCAPE_MCP_EDIT_PREVIEWS
   - INKSCAPE_MCP_ENGINE_IDLE_TIMEOUT_S
@@ -30,14 +28,12 @@ Operator-tunable limits / gates (all optional, env-overridable):
   - INKSCAPE_MCP_EXTENSION_ALLOWLIST
   - INKSCAPE_MCP_LIVE_CACHE_MAX_BYTES
   - INKSCAPE_MCP_LIVE_CACHE_MAX_ENTRIES
-  - INKSCAPE_MCP_LIVE_COALESCE_BUDGET_MS
   - INKSCAPE_MCP_LIVE_ENABLED
   - INKSCAPE_MCP_LIVE_FRAME_KEEP_DAYS
   - INKSCAPE_MCP_LIVE_FRAME_MAX_BYTES
   - INKSCAPE_MCP_MAX_EXPORT_PX
   - INKSCAPE_MCP_MAX_INPUT_BYTES
   - INKSCAPE_MCP_MAX_OUTPUT_BYTES
-  - INKSCAPE_MCP_MAX_PROCS
   - INKSCAPE_MCP_PROCESS_TIMEOUT_S
   - INKSCAPE_MCP_RAW_ACTION_ENABLED
   - INKSCAPE_MCP_SNAPSHOT_HARD_MAX_BYTES
@@ -48,18 +44,18 @@ Operator-tunable limits / gates (all optional, env-overridable):
 ## Tools (one line + risk class, grouped by category)
 
 ### Author
-- edit [risk: high] — Change a document with typed ops in ONE atomic call (all or nothing, one snapshot; undo with history): create shapes, restyle, move, group, text, compose, optimize. Refer to an op's new object as '$<op index>'; target existing ones with ids=[...] or select={tag,fill,...}. render='inline' returns a PNG; dry_run=true the plan. HIGH ops (delete, set_svg, insert_svg, path ops) need approval_token. help(op=NAME) shows fields. Example: edit(doc_id, ops=[{'op':'create_rect','x':0,'y':0,'width':200,'height':100,'fill':'#36f','id':'bg'},{'op':'fill','ids':['$0'],'color':'#f63'}], render='inline')
+- edit [risk: high] — Change a document with typed ops in ONE atomic call (all or nothing; snapshot_id = state BEFORE it; undo with history): create shapes, restyle, move, group, text, compose, optimize. Refer to an op's new object as '$<op index>'; target existing ones with ids=[...] or select={tag,fill,...}. render='inline' returns a PNG; dry_run=true the plan. HIGH ops (delete, set_svg, insert_svg, path ops) need approval_token. help(op=NAME) shows fields. Example: edit(doc_id, ops=[{'op':'create_rect','x':0,'y':0,'width':200,'height':100,'fill':'#36f','id':'bg'},{'op':'fill','ids':['$0'],'color':'#f63'}], render='inline')
 - open [risk: medium] — Start working: returns a doc_id. Give exactly ONE source: path (existing SVG in the workspace), svg (SVG text), canvas {width,height,viewBox?,background?} (blank page) or from_live {dest_path} (save the live Inkscape canvas into the workspace). Optional `ops` run the first edit in the same call (same format as edit); render='inline' returns a PNG (of the opened page when there are no ops). Example: open(canvas={'width':800,'height':600,'background':'#fff'}, ops=[{'op':'create_circle','cx':400,'cy':300,'r':100,'fill':'#f63'}], render='inline')
 
 ### Inspect
 - inspect [risk: low] — Read-only view of one document (or several: pass a list of doc_ids). `include` picks sections: summary (default), objects, tree, layers, styles, fonts, assets, validate, quality, snapshots, frames. `select` filters `objects` (tag, fill, stroke, text, id_prefix, bbox) so you need no separate find call; giving only `select` returns just the objects, as [id, tag, bbox, fill] rows capped by `limit` (truncated=true when cut). detail: ids | summary | full. Example: inspect(doc_id, select={'tag': 'rect'})
-- render [risk: low] — Render the document as a PNG you can see inline. target='page' (default): the whole page; 'object': one object clipped to its box (needs object_id); 'frame': the next numbered frame of a `series` (a screenshot log; optional `label`). width_px sets the raster width. Use it after edits to check the result (edit(render='inline') already includes one render). Example: render(doc_id, target='object', object_id='logo', width_px=512)
+- render [risk: low] — Render the document as a PNG you can see inline. target='page' (default): the whole page; 'object': a zoomed view of one object, clipped to its box (needs object_id; to view, not resize); 'frame': the next numbered frame of a `series` (a screenshot log; optional `label`). width_px sets the raster width. background (CSS colour such as '#333', default none = transparent) fills the transparent areas, e.g. to see white shapes. Use it after edits to check the result (edit(render='inline') already includes one render). Example: render(doc_id, target='object', object_id='logo', width_px=512)
 
 ### Export
-- export [risk: high] — Write results to files in the workspace. `targets` is a list of: {kind:'file', format:'png|pdf|svg', object_id?, width_px?}, {kind:'profile', name:'web|icons|print', ...} or {kind:'save_as', dest_path, overwrite?}. doc_id may be a list to export a set (files are prefixed with each doc_id). dry_run=true plans and projects sizes without writing; byte_budget caps the total. Returns each artifact's workspace path, size and pixel dimensions. Example: export(doc_id, targets=[{'kind':'file','format':'png','width_px':1024},{'kind':'file','format':'svg'}])
+- export [risk: high] — Write results to files in the workspace. `targets` is a list of: {kind:'file', format:'png|pdf|svg', object_id?, width_px?}, {kind:'profile', name:'web|icons|print', ...} or {kind:'save_as', dest_path, overwrite?} (dest_path workspace-relative; out_dir: file/profile only, defaults to save_as's folder). doc_id may be a list to export a set (files are prefixed with each doc_id). dry_run=true plans and projects sizes without writing; byte_budget caps each doc's total. Returns each artifact's workspace path, size and pixel dimensions. Example: export(doc_id, targets=[{'kind':'file','format':'png','width_px':1024},{'kind':'file','format':'svg'}])
 
 ### History
-- history [risk: medium] — Undo/redo safety net. Every edit already writes one snapshot. action='list' shows them; 'create' checkpoints now (optional label); 'restore' rolls the working copy back to `snapshot_id` (itself reversible: it snapshots first); 'prune' reclaims old snapshots and live frames; 'reload' re-reads the source file under the same doc_id (pre-reload snapshot taken). Example: history(doc_id, action='restore', snapshot_id='snap-0003')
+- history [risk: medium] — Undo/redo safety net. Every edit already writes one snapshot of the state BEFORE that edit (restoring it undoes that edit and all later ones). action='list' shows them; 'create' checkpoints now (optional label); 'restore' rolls the working copy back to `snapshot_id` (itself reversible: it snapshots first); 'prune' reclaims old snapshots and live frames; 'reload' re-reads the source file under the same doc_id (pre-reload snapshot taken). Example: history(doc_id, action='restore', snapshot_id='snap-0003')
 
 ### Live
 - live [risk: medium] — Look at (and steer the view of) a running Inkscape. action='observe' with include=[document, selection, inspect, scene, view] returns those parts in one call ('view' is an inline PNG of the canvas; region/scale/fast shape it); 'wait' blocks until something changes; 'viewport' (mode, zoom, center_x/y, dx/dy) moves the view; 'diff' (operation_id) shows what a live_edit changed; 'export_selection' renders the selection. Setup: check, connect, disconnect, status, install_helper, arm_socket. Connects automatically. Example: live(action='observe', include=['selection','inspect','view'], fast=true)

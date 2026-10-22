@@ -20,8 +20,6 @@ Console script: inkscape-mcp = inkscape_mcp.server:main
 Workspace roots (required): INKSCAPE_MCP_WORKSPACE_ROOTS (OS-path-separator-delimited list of allowed dirs; the sandbox boundary).
 Operator-tunable limits / gates (all optional, env-overridable):
   - INKSCAPE_MCP_ACTION_ALLOWLIST
-  - INKSCAPE_MCP_ARTIFACT_KEEP_DAYS
-  - INKSCAPE_MCP_ARTIFACT_MAX_BYTES
   - INKSCAPE_MCP_ARTIFACT_MAX_BYTES_PER_DOC
   - INKSCAPE_MCP_EDIT_PREVIEWS
   - INKSCAPE_MCP_ENGINE_IDLE_TIMEOUT_S
@@ -30,14 +28,12 @@ Operator-tunable limits / gates (all optional, env-overridable):
   - INKSCAPE_MCP_EXTENSION_ALLOWLIST
   - INKSCAPE_MCP_LIVE_CACHE_MAX_BYTES
   - INKSCAPE_MCP_LIVE_CACHE_MAX_ENTRIES
-  - INKSCAPE_MCP_LIVE_COALESCE_BUDGET_MS
   - INKSCAPE_MCP_LIVE_ENABLED
   - INKSCAPE_MCP_LIVE_FRAME_KEEP_DAYS
   - INKSCAPE_MCP_LIVE_FRAME_MAX_BYTES
   - INKSCAPE_MCP_MAX_EXPORT_PX
   - INKSCAPE_MCP_MAX_INPUT_BYTES
   - INKSCAPE_MCP_MAX_OUTPUT_BYTES
-  - INKSCAPE_MCP_MAX_PROCS
   - INKSCAPE_MCP_PROCESS_TIMEOUT_S
   - INKSCAPE_MCP_RAW_ACTION_ENABLED
   - INKSCAPE_MCP_SNAPSHOT_HARD_MAX_BYTES
@@ -53,7 +49,7 @@ Operator-tunable limits / gates (all optional, env-overridable):
 Risk class: high
 Key params: doc_id: string, ops: array, render: string, dry_run: boolean, detail: string, approval_token: ['string', 'null']
 Description:
-    Change a document with typed ops in ONE atomic call (all or nothing, one snapshot; undo with history): create shapes, restyle, move, group, text, compose, optimize. Refer to an op's new object as '$<op index>'; target existing ones with ids=[...] or select={tag,fill,...}. render='inline' returns a PNG; dry_run=true the plan. HIGH ops (delete, set_svg, insert_svg, path ops) need approval_token. help(op=NAME) shows fields. Example: edit(doc_id, ops=[{'op':'create_rect','x':0,'y':0,'width':200,'height':100,'fill':'#36f','id':'bg'},{'op':'fill','ids':['$0'],'color':'#f63'}], render='inline')
+    Change a document with typed ops in ONE atomic call (all or nothing; snapshot_id = state BEFORE it; undo with history): create shapes, restyle, move, group, text, compose, optimize. Refer to an op's new object as '$<op index>'; target existing ones with ids=[...] or select={tag,fill,...}. render='inline' returns a PNG; dry_run=true the plan. HIGH ops (delete, set_svg, insert_svg, path ops) need approval_token. help(op=NAME) shows fields. Example: edit(doc_id, ops=[{'op':'create_rect','x':0,'y':0,'width':200,'height':100,'fill':'#36f','id':'bg'},{'op':'fill','ids':['$0'],'color':'#f63'}], render='inline')
 
 #### open
 Risk class: medium
@@ -71,9 +67,9 @@ Description:
 
 #### render
 Risk class: low
-Key params: doc_id: string, target: string, object_id: ['string', 'null'], width_px: ['integer', 'null'], series: ['string', 'null'], label: ['string', 'null']
+Key params: doc_id: string, target: string, object_id: ['string', 'null'], width_px: ['integer', 'null'], series: ['string', 'null'], label: ['string', 'null'], background: ['string', 'null']
 Description:
-    Render the document as a PNG you can see inline. target='page' (default): the whole page; 'object': one object clipped to its box (needs object_id); 'frame': the next numbered frame of a `series` (a screenshot log; optional `label`). width_px sets the raster width. Use it after edits to check the result (edit(render='inline') already includes one render). Example: render(doc_id, target='object', object_id='logo', width_px=512)
+    Render the document as a PNG you can see inline. target='page' (default): the whole page; 'object': a zoomed view of one object, clipped to its box (needs object_id; to view, not resize); 'frame': the next numbered frame of a `series` (a screenshot log; optional `label`). width_px sets the raster width. background (CSS colour such as '#333', default none = transparent) fills the transparent areas, e.g. to see white shapes. Use it after edits to check the result (edit(render='inline') already includes one render). Example: render(doc_id, target='object', object_id='logo', width_px=512)
 
 ### Export
 
@@ -81,7 +77,7 @@ Description:
 Risk class: high
 Key params: doc_id: string | array, targets: array, out_dir: ['string', 'null'], name_prefix: ['string', 'null'], byte_budget: ['integer', 'null'], dry_run: boolean, approval_token: ['string', 'null']
 Description:
-    Write results to files in the workspace. `targets` is a list of: {kind:'file', format:'png|pdf|svg', object_id?, width_px?}, {kind:'profile', name:'web|icons|print', ...} or {kind:'save_as', dest_path, overwrite?}. doc_id may be a list to export a set (files are prefixed with each doc_id). dry_run=true plans and projects sizes without writing; byte_budget caps the total. Returns each artifact's workspace path, size and pixel dimensions. Example: export(doc_id, targets=[{'kind':'file','format':'png','width_px':1024},{'kind':'file','format':'svg'}])
+    Write results to files in the workspace. `targets` is a list of: {kind:'file', format:'png|pdf|svg', object_id?, width_px?}, {kind:'profile', name:'web|icons|print', ...} or {kind:'save_as', dest_path, overwrite?} (dest_path workspace-relative; out_dir: file/profile only, defaults to save_as's folder). doc_id may be a list to export a set (files are prefixed with each doc_id). dry_run=true plans and projects sizes without writing; byte_budget caps each doc's total. Returns each artifact's workspace path, size and pixel dimensions. Example: export(doc_id, targets=[{'kind':'file','format':'png','width_px':1024},{'kind':'file','format':'svg'}])
 
 ### History
 
@@ -89,7 +85,7 @@ Description:
 Risk class: medium
 Key params: doc_id: string, action: string, snapshot_id: ['string', 'null'], label: ['string', 'null']
 Description:
-    Undo/redo safety net. Every edit already writes one snapshot. action='list' shows them; 'create' checkpoints now (optional label); 'restore' rolls the working copy back to `snapshot_id` (itself reversible: it snapshots first); 'prune' reclaims old snapshots and live frames; 'reload' re-reads the source file under the same doc_id (pre-reload snapshot taken). Example: history(doc_id, action='restore', snapshot_id='snap-0003')
+    Undo/redo safety net. Every edit already writes one snapshot of the state BEFORE that edit (restoring it undoes that edit and all later ones). action='list' shows them; 'create' checkpoints now (optional label); 'restore' rolls the working copy back to `snapshot_id` (itself reversible: it snapshots first); 'prune' reclaims old snapshots and live frames; 'reload' re-reads the source file under the same doc_id (pre-reload snapshot taken). Example: history(doc_id, action='restore', snapshot_id='snap-0003')
 
 ### Live
 
@@ -131,49 +127,49 @@ help(op=NAME) gives fields and an example.
 #### create_rect
 Risk: medium · creates an id
 Does: Create a `<rect>`.
-Fields: id: str | None?, parent: str | None?, x: float, y: float, width: float, height: float, rx: float | None?, ry: float | None?, fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Fields: id: str | None?, parent: str | None?, x: float, y: float, width: float, height: float, rx: float | None?, ry: float | None?, fill: str | None?, stroke: str | None?, stroke_width: float | str | None?
 Example: {"op":"create_rect","x":0,"y":0,"width":200,"height":100,"fill":"#3366ff","id":"bg"}
 
 #### create_circle
 Risk: medium · creates an id
 Does: Create a `<circle>`.
-Fields: id: str | None?, parent: str | None?, cx: float, cy: float, r: float, fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Fields: id: str | None?, parent: str | None?, cx: float, cy: float, r: float, fill: str | None?, stroke: str | None?, stroke_width: float | str | None?
 Example: {"op":"create_circle","cx":50,"cy":50,"r":40,"fill":"#ffcc00"}
 
 #### create_ellipse
 Risk: medium · creates an id
 Does: Create an `<ellipse>`.
-Fields: id: str | None?, parent: str | None?, cx: float, cy: float, rx: float, ry: float, fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Fields: id: str | None?, parent: str | None?, cx: float, cy: float, rx: float, ry: float, fill: str | None?, stroke: str | None?, stroke_width: float | str | None?
 Example: {"op":"create_ellipse","cx":50,"cy":50,"rx":40,"ry":20}
 
 #### create_line
 Risk: medium · creates an id
 Does: Create a `<line>`.
-Fields: id: str | None?, parent: str | None?, x1: float, y1: float, x2: float, y2: float, stroke: str | None?, stroke_width: str | None?
+Fields: id: str | None?, parent: str | None?, x1: float, y1: float, x2: float, y2: float, stroke: str | None?, stroke_width: float | str | None?
 Example: {"op":"create_line","x1":0,"y1":0,"x2":100,"y2":100,"stroke":"#000000","stroke_width":"2"}
 
 #### create_polygon
 Risk: medium · creates an id
 Does: Create a closed `<polygon>` from `[x, y]` points.
-Fields: id: str | None?, parent: str | None?, points: list[tuple[float, float]], fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Fields: id: str | None?, parent: str | None?, points: list[tuple[float, float]], fill: str | None?, stroke: str | None?, stroke_width: float | str | None?
 Example: {"op":"create_polygon","points":[[0,0],[100,0],[50,80]],"fill":"#cc3333"}
 
 #### create_polyline
 Risk: medium · creates an id
 Does: Create an open `<polyline>` from `[x, y]` points.
-Fields: id: str | None?, parent: str | None?, points: list[tuple[float, float]], fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Fields: id: str | None?, parent: str | None?, points: list[tuple[float, float]], fill: str | None?, stroke: str | None?, stroke_width: float | str | None?
 Example: {"op":"create_polyline","points":[[0,0],[50,40],[100,0]],"stroke":"#000000"}
 
 #### create_path
 Risk: medium · creates an id
 Does: Create a `<path>` from path data `d`.
-Fields: id: str | None?, parent: str | None?, d: str, fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Fields: id: str | None?, parent: str | None?, d: str, fill: str | None?, stroke: str | None?, stroke_width: float | str | None?
 Example: {"op":"create_path","d":"M10 10 L90 10 L50 80 Z","fill":"#228833"}
 
 #### create_text
 Risk: medium · creates an id
 Does: Create a `<text>` at `(x, y)`; `anchor='middle'` centres it on `x`.
-Fields: id: str | None?, parent: str | None?, x: float, y: float, text: str, fill: str | None?, stroke: str | None?, stroke_width: str | None?, anchor: Optional[Literal['start', 'middle', 'end']]?
+Fields: id: str | None?, parent: str | None?, x: float, y: float, text: str, fill: str | None?, stroke: str | None?, stroke_width: float | str | None?, anchor: Optional[Literal['start', 'middle', 'end']]?
 Example: {"op":"create_text","x":100,"y":60,"text":"Hello","fill":"#222222","anchor":"middle"}
 
 #### create_group
@@ -223,7 +219,7 @@ Example: {"op":"fill","ids":["bg"],"color":"#ff0000"}
 #### stroke
 Risk: medium
 Does: Set stroke colour / width / opacity of the targets (at least one of the three).
-Fields: ids: list[str] | None?, select: Selector | None?, color: str | None?, width: str | None?, opacity: float | None?
+Fields: ids: list[str] | None?, select: Selector | None?, color: str | None?, width: float | str | None?, opacity: float | None?
 Example: {"op":"stroke","ids":["bg"],"color":"#000000","width":"2"}
 
 #### opacity
@@ -247,7 +243,7 @@ Example: {"op":"palette","mapping":{"#ff0000":"#00aa00","#0000ff":"#222222"}}
 #### font
 Risk: medium
 Does: Set font family / size / weight (at least one) on text targets.
-Fields: ids: list[str] | None?, select: Selector | None?, family: str | None?, size: str | None?, weight: str | None?
+Fields: ids: list[str] | None?, select: Selector | None?, family: str | None?, size: str | float | None?, weight: str | None?
 Example: {"op":"font","select":{"tag":"text"},"family":"DejaVu Sans","size":"24"}
 
 ### object

@@ -67,7 +67,9 @@ All writes land on a **working copy**, never the original file.
      against the tree including objects created earlier in the same call.
    - **Atomic.** Every op is validated before anything changes; one bad op rejects the whole call
      and the document stays byte-identical. Errors say what to do:
-     `ops[2] fill: id 'logo2' not found (similar: logo, logo-bg)`.
+     `ops[2] fill: id 'logo2' not found (similar: logo, logo-bg)`. When the id came from the
+     human, send it as given; if it fails, fix it from the `similar` list, re-send the whole call
+     once and tell the human which id you used. Don't silently swap in a guess beforehand.
    - **`dry_run=true`** returns the plan (matched ids, risk, whether approval is needed) without
      changing anything. **`detail`** = `ids` (default) | `summary` (one line per op) | `full`.
    - The op families: **create** (shapes, text, groups, gradients, `use`), **style** (`fill`,
@@ -111,7 +113,9 @@ Every artifact comes back as a workspace-relative path — **never an absolute h
 - **`help(goal="make the svg smaller")`** maps a natural-language goal to the `tool:op` to use, a
   one-line how-to and an example call (`edit:optimize_web`, `export:profile`, …). It also flags
   out-of-scope goals with the reason instead of mis-routing them. Guidance only — it executes
-  nothing.
+  nothing. It understands non-English goals (`help(goal="Wie mache ich die SVG fürs Web
+  kleiner?")` → `edit:optimize_web`), so pass the human's words as they are, and answer them in
+  their language.
 - **`help(op=NAME)`** and **`help(topic="ops")`** document the ops; **`help(topic="capabilities")`**
   is the runtime matrix (Inkscape version, export formats, live availability, fonts);
   **`help(topic="diagnose")`** re-probes the runtime when something does not work.
@@ -165,12 +169,19 @@ ops makes the call HIGH. The error tells you what to do: `ops[3] delete is HIGH 
 approval_token`.
 
 **The approval gate.** A HIGH-risk call is refused unless it carries a non-empty `approval_token`.
-The token is **minted/confirmed out of band and bound to a single operation** — deliberately *not*
-an ambient env flag or a setting the model can flip on for itself. Use `dry_run=true` first to see
+The token is a **deliberate per-call confirmation** — deliberately *not* an ambient env flag or a
+setting that unlocks every later call. The server checks only that it is present (any non-empty
+string); it is not a minted or verified secret, so the confirmation step belongs to the client
+(ideally: ask the human before re-calling). Use `dry_run=true` first to see
 the plan with no mutation, then re-call with the token to apply.
 
+**One token, one call.** A token approves the single call the human confirmed. Ask again (with
+the new `dry_run` plan) before every further HIGH-risk call — e.g. a `set_svg` after an earlier
+`insert_svg` needs its own confirmation, even if the human's earlier token string would still be
+accepted. Never invent a token before asking.
+
 So a typical HIGH-risk flow is: `help(op=…)` → `edit(…, dry_run=true)` to preview → obtain an
-`approval_token` out of band → re-call with the token → look (`render`) → `history(action="restore")`
+confirmation (ideally from the human) → re-call with the token → look (`render`) → `history(action="restore")`
 if unhappy.
 
 ---

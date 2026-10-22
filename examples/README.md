@@ -14,7 +14,7 @@ instead, set `"command": "inkscape-mcp"` and `"args": []`. For development/dogfo
 `"command": "uv"`, `"args": ["run", "--directory", "/abs/.../inkscape-mcp-server", "inkscape-mcp"]`.
 
 `INKSCAPE_MCP_WORKSPACE_ROOTS` is the only **required** env var. See
-[`../../docs/install/host-configs.md`](../../docs/install/host-configs.md) for the full env-var table,
+[`../docs/install/host-configs.md`](../docs/install/host-configs.md) for the full env-var table,
 the `claude mcp add` CLI form, and the generic-host contract; and
-[`../../docs/install/install.md`](../../docs/install/install.md) for install paths.
+[`../docs/install/install.md`](../docs/install/install.md) for install paths.
 </content>
