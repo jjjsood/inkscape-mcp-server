@@ -1,4 +1,4 @@
-"""`tools/v2/_result.py`: compact JSON, the single error map, the guard decorator."""
+"""`tools/_result.py`: compact JSON, the single error map, the guard decorator."""
 
 from __future__ import annotations
 

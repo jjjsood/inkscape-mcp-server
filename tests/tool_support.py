@@ -1,4 +1,4 @@
-"""Helpers for the result-oriented tool surface tests (`tools/v2`)."""
+"""Helpers for the result-oriented tool surface tests (`tools/`)."""
 
 from __future__ import annotations
 

@@ -375,7 +375,7 @@ def run_ops(doc_id: str, *ops: dict[str, Any], **kwargs: Any) -> Any:
 
 
 @pytest.fixture
-def v2_ws(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
+def tool_ws(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     """A fresh workspace root + registry for the result-oriented tool tests; returns the root."""
     from inkscape_mcp.config import ENV_WORKSPACE_ROOTS
     from inkscape_mcp.registry import reset_registry
@@ -389,7 +389,7 @@ def v2_ws(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 @pytest.fixture
-def v2_app(v2_ws: Any) -> Any:
+def tool_app(tool_ws: Any) -> Any:
     """A standalone app with all ten tools (no flag gating, no resources or prompts)."""
     from inkscape_mcp.tools import build_app
 
@@ -397,9 +397,9 @@ def v2_app(v2_ws: Any) -> Any:
 
 
 @pytest.fixture
-def v2_renders(monkeypatch: pytest.MonkeyPatch, v2_ws: Any) -> list[str]:
+def tool_renders(monkeypatch: pytest.MonkeyPatch, tool_ws: Any) -> list[str]:
     """Fake every Inkscape render the tools can trigger; returns the list of rendered doc ids."""
-    from tests.v2_support import fake_render
+    from tests.tool_support import fake_render
 
     calls: list[str] = []
     fake = fake_render(calls)

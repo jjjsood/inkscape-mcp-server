@@ -10,7 +10,7 @@ from fastmcp.exceptions import ToolError
 from inkscape_mcp.registry import get_registry
 from inkscape_mcp.render.cli import RenderResult
 from inkscape_mcp.workspace import sandbox
-from tests.v2_support import PNG, call, open_doc
+from tests.tool_support import PNG, call, open_doc
 
 
 def _result(doc_id: str, name: str) -> RenderResult:
@@ -31,15 +31,15 @@ def _result(doc_id: str, name: str) -> RenderResult:
     )
 
 
-def test_page_render_returns_an_inline_png_and_small_json(v2_app, v2_ws, v2_renders) -> None:
-    doc = open_doc(v2_ws)
-    res = call(v2_app, "render", {"doc_id": doc, "width_px": 64})
+def test_page_render_returns_an_inline_png_and_small_json(tool_app, tool_ws, tool_renders) -> None:
+    doc = open_doc(tool_ws)
+    res = call(tool_app, "render", {"doc_id": doc, "width_px": 64})
     assert len(res.images) == 1
     assert res.data["target"] == "page" and res.data["width_px"] == 10
     assert "artifact_path" not in res.data and "workspace_relative_path" not in res.data
 
 
-def test_object_render_validates_the_id_first(v2_app, v2_ws, monkeypatch) -> None:
+def test_object_render_validates_the_id_first(tool_app, tool_ws, monkeypatch) -> None:
     seen: list[str] = []
 
     def fake_export_object(doc_id, object_id, fmt, **_):
@@ -47,19 +47,19 @@ def test_object_render_validates_the_id_first(v2_app, v2_ws, monkeypatch) -> Non
         return _result(doc_id, "obj.png")
 
     monkeypatch.setattr("inkscape_mcp.tools.render.export_object", fake_export_object)
-    doc = open_doc(v2_ws)
-    res = call(v2_app, "render", {"doc_id": doc, "target": "object", "object_id": "r1"})
+    doc = open_doc(tool_ws)
+    res = call(tool_app, "render", {"doc_id": doc, "target": "object", "object_id": "r1"})
     assert seen == ["r1"] and len(res.images) == 1
     with pytest.raises(ToolError, match="object id is not valid"):
-        call(v2_app, "render", {"doc_id": doc, "target": "object", "object_id": "a b;rm"})
+        call(tool_app, "render", {"doc_id": doc, "target": "object", "object_id": "a b;rm"})
     with pytest.raises(ToolError, match="object id not found in document"):
-        call(v2_app, "render", {"doc_id": doc, "target": "object", "object_id": "ghost"})
+        call(tool_app, "render", {"doc_id": doc, "target": "object", "object_id": "ghost"})
     with pytest.raises(ToolError, match="requires object_id"):
-        call(v2_app, "render", {"doc_id": doc, "target": "object"})
+        call(tool_app, "render", {"doc_id": doc, "target": "object"})
     assert seen == ["r1"]
 
 
-def test_frame_render_reports_series_and_index(v2_app, v2_ws, monkeypatch) -> None:
+def test_frame_render_reports_series_and_index(tool_app, tool_ws, monkeypatch) -> None:
     class Frame(RenderResult):
         series: str
         frame_index: int
@@ -69,16 +69,16 @@ def test_frame_render_reports_series_and_index(v2_app, v2_ws, monkeypatch) -> No
         return Frame(**base.model_dump(), series=series or "run", frame_index=1)
 
     monkeypatch.setattr("inkscape_mcp.tools.render.capture_frame", fake_capture)
-    doc = open_doc(v2_ws)
-    res = call(v2_app, "render", {"doc_id": doc, "target": "frame", "series": "s1"})
+    doc = open_doc(tool_ws)
+    res = call(tool_app, "render", {"doc_id": doc, "target": "frame", "series": "s1"})
     assert res.data["series"] == "s1" and res.data["frame"] == 1 and len(res.images) == 1
 
 
-def test_argument_combinations_are_checked(v2_app, v2_ws, v2_renders) -> None:
-    doc = open_doc(v2_ws)
+def test_argument_combinations_are_checked(tool_app, tool_ws, tool_renders) -> None:
+    doc = open_doc(tool_ws)
     with pytest.raises(ToolError, match="only used with target='object'"):
-        call(v2_app, "render", {"doc_id": doc, "object_id": "r1"})
+        call(tool_app, "render", {"doc_id": doc, "object_id": "r1"})
     with pytest.raises(ToolError, match="only used with target='frame'"):
-        call(v2_app, "render", {"doc_id": doc, "series": "x"})
+        call(tool_app, "render", {"doc_id": doc, "series": "x"})
     with pytest.raises(ToolError, match="document id not found"):
-        call(v2_app, "render", {"doc_id": "nope"})
+        call(tool_app, "render", {"doc_id": "nope"})

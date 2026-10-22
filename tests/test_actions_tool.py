@@ -12,7 +12,7 @@ from inkscape_mcp.actions import chains as chain_engine
 from inkscape_mcp.actions.capability_map import ActionCapabilityMap
 from inkscape_mcp.config import ENV_RAW_ACTION_ENABLED, get_settings
 from inkscape_mcp.workspace.subprocess_exec import ProcessResult
-from tests.v2_support import call, open_doc, working_svg
+from tests.tool_support import call, open_doc, working_svg
 
 PATHS = (
     b'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">'
@@ -36,7 +36,7 @@ CHAIN = [{"action": "select-by-id", "args": ["p1"]}, {"action": "object-to-path"
 
 
 @pytest.fixture(autouse=True)
-def engine(monkeypatch, v2_renders):
+def engine(monkeypatch, tool_renders):
     monkeypatch.setattr(chain_engine, "get_or_build_action_map", lambda **kw: _MAP)
     ran: list[list[str]] = []
 
@@ -56,72 +56,72 @@ def _actions(app, **args):
     return call(app, "actions", args).data
 
 
-def test_validate_returns_the_plan_without_running(v2_app, v2_ws, engine) -> None:
-    plan = _actions(v2_app, action="validate", steps=CHAIN)
+def test_validate_returns_the_plan_without_running(tool_app, tool_ws, engine) -> None:
+    plan = _actions(tool_app, action="validate", steps=CHAIN)
     assert plan["steps"][0]["action"] == "select-by-id"
     assert engine == []
 
 
-def test_run_needs_approval_then_mutates_with_one_snapshot(v2_app, v2_ws, engine) -> None:
-    doc = open_doc(v2_ws, "p.svg", PATHS)
+def test_run_needs_approval_then_mutates_with_one_snapshot(tool_app, tool_ws, engine) -> None:
+    doc = open_doc(tool_ws, "p.svg", PATHS)
     with pytest.raises(ToolError, match="HIGH risk"):
-        _actions(v2_app, action="run", doc_id=doc, steps=CHAIN)
-    res = _actions(v2_app, action="run", doc_id=doc, steps=CHAIN, approval_token="ok")
+        _actions(tool_app, action="run", doc_id=doc, steps=CHAIN)
+    res = _actions(tool_app, action="run", doc_id=doc, steps=CHAIN, approval_token="ok")
     assert res["changed"] is True and res["snapshot_id"] and res["plan"]["actions_argument"]
     assert 'id="p2"' not in working_svg(doc)
     assert len(engine) == 1
 
 
-def test_validation_failure_is_chain_shaped_and_actionable(v2_app, v2_ws) -> None:
-    doc = open_doc(v2_ws, "p.svg", PATHS)
+def test_validation_failure_is_chain_shaped_and_actionable(tool_app, tool_ws) -> None:
+    doc = open_doc(tool_ws, "p.svg", PATHS)
     with pytest.raises(ToolError, match=r"action_absent.*actions\(action='list'\)"):
         _actions(
-            v2_app,
+            tool_app,
             action="run",
             doc_id=doc,
             steps=[{"action": "path-difference"}],
             approval_token="ok",
         )
     with pytest.raises(ToolError, match="at least one"):
-        _actions(v2_app, action="validate", steps=[])
+        _actions(tool_app, action="validate", steps=[])
 
 
-def test_raw_defaults_to_a_dry_run(v2_app, v2_ws, engine) -> None:
-    doc = open_doc(v2_ws, "p.svg", PATHS)
-    res = _actions(v2_app, action="raw", doc_id=doc, steps=[{"action": "object-to-path"}])
+def test_raw_defaults_to_a_dry_run(tool_app, tool_ws, engine) -> None:
+    doc = open_doc(tool_ws, "p.svg", PATHS)
+    res = _actions(tool_app, action="raw", doc_id=doc, steps=[{"action": "object-to-path"}])
     assert res["dry_run"] is True and res["changed"] is False
     assert engine == []
     assert working_svg(doc).count("<path") == 2
 
 
-def test_raw_real_run_needs_approval_and_exactly_one_step(v2_app, v2_ws, engine) -> None:
-    doc = open_doc(v2_ws, "p.svg", PATHS)
+def test_raw_real_run_needs_approval_and_exactly_one_step(tool_app, tool_ws, engine) -> None:
+    doc = open_doc(tool_ws, "p.svg", PATHS)
     step = [{"action": "object-to-path"}]
     with pytest.raises(ToolError, match="HIGH risk"):
-        _actions(v2_app, action="raw", doc_id=doc, steps=step, dry_run=False)
+        _actions(tool_app, action="raw", doc_id=doc, steps=step, dry_run=False)
     with pytest.raises(ToolError, match="exactly one step"):
-        _actions(v2_app, action="raw", doc_id=doc, steps=CHAIN)
-    res = _actions(v2_app, action="raw", doc_id=doc, steps=step, dry_run=False, approval_token="ok")
+        _actions(tool_app, action="raw", doc_id=doc, steps=CHAIN)
+    res = _actions(tool_app, action="raw", doc_id=doc, steps=step, dry_run=False, approval_token="ok")
     assert res["changed"] is True
 
 
-def test_raw_is_refused_when_advanced_mode_is_off(v2_app, v2_ws, monkeypatch) -> None:
+def test_raw_is_refused_when_advanced_mode_is_off(tool_app, tool_ws, monkeypatch) -> None:
     monkeypatch.setenv(ENV_RAW_ACTION_ENABLED, "0")
     get_settings.cache_clear()
-    doc = open_doc(v2_ws, "p.svg", PATHS)
+    doc = open_doc(tool_ws, "p.svg", PATHS)
     with pytest.raises(ToolError, match="raw_action_disabled"):
-        _actions(v2_app, action="raw", doc_id=doc, steps=[{"action": "object-to-path"}])
+        _actions(tool_app, action="raw", doc_id=doc, steps=[{"action": "object-to-path"}])
 
 
-def test_missing_arguments(v2_app, v2_ws) -> None:
+def test_missing_arguments(tool_app, tool_ws) -> None:
     with pytest.raises(ToolError, match="requires doc_id"):
-        _actions(v2_app, action="run", steps=CHAIN, approval_token="ok")
+        _actions(tool_app, action="run", steps=CHAIN, approval_token="ok")
     with pytest.raises(ToolError, match="document id not found"):
-        _actions(v2_app, action="run", doc_id="nope", steps=CHAIN, approval_token="ok")
+        _actions(tool_app, action="run", doc_id="nope", steps=CHAIN, approval_token="ok")
 
 
-def test_list_and_extensions_are_read_only(v2_app, monkeypatch) -> None:
+def test_list_and_extensions_are_read_only(tool_app, monkeypatch) -> None:
     monkeypatch.setattr("inkscape_mcp.tools.actions.persist_action_map", lambda *_a, **_k: None)
-    listing = _actions(v2_app, action="list", all=False)
+    listing = _actions(tool_app, action="list", all=False)
     assert "actions" not in listing
-    assert isinstance(_actions(v2_app, action="extensions"), dict)
+    assert isinstance(_actions(tool_app, action="extensions"), dict)
