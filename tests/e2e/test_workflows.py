@@ -7,6 +7,7 @@ previous step's output, and the shipped artifacts are verified by content and pi
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -47,6 +48,8 @@ def test_brand_refresh_of_a_layered_inkscape_poster(run_flow: Any) -> None:
             "Content",
             "Footer",
         ]
+        # The real Inkscape sodipodi namespace (sodipodi-0.dtd) carries the background lock.
+        assert [la["locked"] for la in info["layers"]["layers"]] == [True, False, False]
         assert {OLD_RED, OLD_NAVY} <= set(info["styles"]["colors"])
         assert info["validate"]["ok"] is True
 
@@ -233,7 +236,9 @@ def test_icon_set_built_from_a_blank_canvas(run_flow: Any) -> None:
             targets=[{"kind": "profile", "name": "icons", "sizes": [16, 32, 64, 128]}],
             dry_run=True,
         )
-        assert plan.get("artifacts", []) == []
+        assert plan["dry_run"] is True and "artifacts" not in plan.data
+        assert [(p["profile"], p["format"]) for p in plan["plan"]] == [("icons", "png")] * 4
+        assert plan["projected_bytes"] == sum(p["projected_bytes"] for p in plan["plan"]) > 0
         shipped = await s(
             "export",
             doc_id=doc,
@@ -555,7 +560,7 @@ def test_atomic_failure_mid_flow_then_corrected_retry(run_flow: Any) -> None:
         assert "headline" in ids(await s("inspect", doc_id=doc, select={"text": "spring"}))
         assert (await s("history", doc_id=doc))["count"] == before_hist
         same = await s("render", doc_id=doc, width_px=200)
-        assert list(same.image().getdata()) == list(before.image().getdata())
+        assert same.image().tobytes() == before.image().tobytes()
 
         # Find the right id, fix the op, retry the whole call.
         cta = await s("inspect", doc_id=doc, select={"text": "shop"})
@@ -578,7 +583,10 @@ def test_atomic_failure_mid_flow_then_corrected_retry(run_flow: Any) -> None:
         assert text_of(root, "headline") == "Final Sale"
         badge = by_id(root, "badge")
         # Rotated about its own centre, inside the current (Content) layer, not the locked one.
-        assert badge.get("transform") == "rotate(-8,340,198)"
+        angle_cx_cy = re.fullmatch(r"rotate\(([^)]*)\)", badge.get("transform") or "")
+        assert angle_cx_cy is not None
+        nums = [float(n) for n in re.split(r"[\s,]+", angle_cx_cy[1].strip())]
+        assert nums == pytest.approx([-8, 340, 198], abs=0.01)
         assert badge.getparent().get("id") == "layer-content"
         assert "-30%" in "".join(badge.itertext())
 

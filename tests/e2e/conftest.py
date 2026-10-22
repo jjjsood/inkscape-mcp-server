@@ -26,8 +26,6 @@ from PIL import Image
 FIXTURES = Path(__file__).parent / "fixtures"
 SVG_NS = "http://www.w3.org/2000/svg"
 
-pytestmark = pytest.mark.inkscape
-
 
 @dataclass
 class Result:

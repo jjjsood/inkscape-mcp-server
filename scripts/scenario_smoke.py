@@ -1,37 +1,43 @@
 #!/usr/bin/env python3
-"""Scenario smoke for the reworked ten-tool surface, over a REAL MCP client.
+"""Workflow smoke for the ten-tool surface, over a REAL MCP client.
 
-Plays the scenarios from ``docs/test-scenarios.md`` (core workflow K1-K13, risk and approval
-R1-R5) against the ``inkscape-mcp`` server and checks the RESULTS, not just reachability: ids
-created, snapshots taken (or not), originals untouched, error texts that name the next step.
-This is the "live smoke test" the rework plan lists as open (``docs/rework-plan.md``).
+Plays the workflows WF1-WF8 from ``docs/test-scenarios.md`` against the ``inkscape-mcp`` server.
+Each workflow is one long session the way an agent works through a task: look, change, look
+again, take feedback, make mistakes, roll back, ship files, change them again. Every step's input
+comes from earlier results, and the checks are on RESULTS: ids, snapshot counts, pixels, file
+contents, originals untouched, error texts that name the next step. Single functions are covered
+by the unit tests; this script covers how they play together.
 
 By default the server is started as a subprocess and driven over STDIO, exactly like an MCP host
 does. ``--in-process`` uses the FastMCP in-memory client instead (faster, same assertions).
 
-Steps that need the Inkscape engine (``render``, file/profile ``export``, ``render='inline'``) are
-reported as ``SKIP`` when no ``inkscape`` is on PATH; ``--require-inkscape`` turns that into
-``FAIL``. Everything else is pure DOM and runs anywhere.
+Steps that need the Inkscape engine (``render``, file/profile ``export``, ``render='inline'``,
+path ops) are skipped when no ``inkscape`` is on PATH; the DOM steps of the same workflow still
+run and the workflow is reported as ``SKIP``. ``--require-inkscape`` turns that into ``FAIL``.
+
+Path ops (WF6) are operator-gated, so the server runs with ``INKSCAPE_MCP_RAW_ACTION_ENABLED=1``.
 
 Report-only: not part of CI and not collected by pytest.
 
 Usage (run inside ``inkscape-mcp-server/``)::
 
-    uv run python scripts/scenario_smoke.py                  # all scenarios over STDIO
-    uv run python scripts/scenario_smoke.py --list           # list scenarios, call nothing
-    uv run python scripts/scenario_smoke.py --only K1,R1     # a subset
+    uv run python scripts/scenario_smoke.py                  # all workflows over STDIO
+    uv run python scripts/scenario_smoke.py --list           # list workflows, call nothing
+    uv run python scripts/scenario_smoke.py --only WF1,WF6   # a subset
     uv run python scripts/scenario_smoke.py --in-process     # in-memory client
     uv run python scripts/scenario_smoke.py --cmd "inkscape-mcp"   # another server command
     uv run python scripts/scenario_smoke.py --json --keep    # JSON report, keep the workspace
 
-Exit 0 when no scenario FAILed (SKIPs are fine), 1 otherwise.
+Exit 0 when no workflow FAILed (SKIPs are fine), 1 otherwise.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import hashlib
+import io
 import json
 import os
 import shlex
@@ -44,6 +50,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 #: Fixture: two red shapes and a text (same as ``evals/run_call_count.py::SAMPLE_SVG``).
 FIXTURE_SVG = """<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="200" height="120" viewBox="0 0 200 120">
@@ -53,31 +61,37 @@ FIXTURE_SVG = """<?xml version="1.0" encoding="UTF-8"?>
 </svg>
 """
 
-#: Any non-empty token is accepted by the server; the real one is minted out of band.
+#: Any non-empty token is accepted by the server (presence check only).
 TOKEN = "scenario-smoke-approval"  # noqa: S105 (dummy approval token, not a secret)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+POSTER = REPO_ROOT / "tests" / "e2e" / "fixtures" / "brand_poster.svg"
+
+OLD_RED, OLD_NAVY, TEAL, NAVY = "#e63946", "#1d3557", "#2a9d8f", "#264653"
 
 
 class Failed(Exception):
     """A check did not hold."""
 
 
-class Skipped(Exception):
-    """The rest of the scenario needs the Inkscape engine, which is not available."""
-
-
 @dataclass
 class Called:
-    """One tool call: the parsed JSON text block and the number of inline images."""
+    """One tool call: the parsed JSON text block and the inline PNGs."""
 
     data: dict[str, Any]
-    images: int
+    pngs: list[bytes] = field(default_factory=list)
+
+    @property
+    def images(self) -> int:
+        return len(self.pngs)
+
+    def image(self) -> Image.Image:
+        return Image.open(io.BytesIO(self.pngs[0])).convert("RGBA")
 
 
 @dataclass
 class Ctx:
-    """Per-scenario state: the client, the workspace, call and check counters."""
+    """Per-workflow state: the client, the workspace, call and check counters."""
 
     client: Any
     ws: Path
@@ -85,6 +99,7 @@ class Ctx:
     require_engine: bool
     calls: int = 0
     checks: int = 0
+    skipped: list[str] = field(default_factory=list)
     log: list[str] = field(default_factory=list)
 
     async def call(self, tool: str, args: dict[str, Any]) -> Called:
@@ -94,16 +109,15 @@ class Ctx:
             res = await self.client.call_tool(tool, args)
         except Exception as exc:
             raise Failed(f"{tool} failed unexpectedly: {exc}") from exc
-        data: dict[str, Any] = {}
-        images = 0
+        out = Called({})
         for block in res.content or []:
             text = getattr(block, "text", None)
             if text:
-                data = json.loads(text)
+                out.data = json.loads(text)
             elif getattr(block, "data", None):
-                images += 1
-        self.log.append(f"{tool} -> {sorted(data)} images={images}")
-        return Called(data, images)
+                out.pngs.append(base64.b64decode(block.data))
+        self.log.append(f"{tool} -> {sorted(out.data)} images={out.images}")
+        return out
 
     async def fail(self, tool: str, args: dict[str, Any]) -> str:
         """Call a tool that must fail; return the error text."""
@@ -129,26 +143,36 @@ class Ctx:
             raise Failed(what)
         self.checks += 1
 
-    def needs_engine(self, step: str) -> None:
-        """Stop here (SKIP) when Inkscape is missing, unless it is required."""
+    def has_engine(self, step: str) -> bool:
+        """True when Inkscape is there; otherwise note the skipped step (or FAIL if required)."""
         if self.engine:
-            return
+            return True
         if self.require_engine:
             raise Failed(f"{step} needs inkscape on PATH (--require-inkscape)")
-        raise Skipped(f"{step} needs inkscape on PATH")
+        self.skipped.append(step)
+        return False
 
-    # --- helpers shared by the scenarios ------------------------------------------------------
+    def inline(self) -> dict[str, Any]:
+        """``render='inline'`` when the renderer exists; the edit itself runs either way."""
+        return {"render": "inline"} if self.engine else {}
 
-    def fixture(self, name: str) -> Path:
+    # --- helpers shared by the workflows ------------------------------------------------------
+
+    def fixture(self, name: str, text: str = FIXTURE_SVG) -> Path:
         path = self.ws / f"{name}.svg"
-        path.write_text(FIXTURE_SVG, encoding="utf-8")
+        path.write_text(text, encoding="utf-8")
         return path
 
-    async def open_fixture(self, name: str) -> str:
-        res = await self.call("open", {"path": str(self.fixture(name))})
-        doc_id = res.data.get("doc_id")
-        self.check(bool(doc_id), "open returned a doc_id")
-        return str(doc_id)
+    def poster(self, name: str) -> Path:
+        return self.fixture(name, POSTER.read_text(encoding="utf-8"))
+
+    async def open_path(self, path: Path, **extra: Any) -> Called:
+        res = await self.call("open", {"path": str(path), **extra})
+        self.check(bool(res.data.get("doc_id")), "open returned a doc_id")
+        return res
+
+    async def edit(self, doc_id: str, ops: list[dict[str, Any]], **extra: Any) -> Called:
+        return await self.call("edit", {"doc_id": doc_id, "ops": ops, **extra})
 
     async def snapshot_count(self, doc_id: str) -> int:
         res = await self.call("history", {"doc_id": doc_id, "action": "list"})
@@ -159,13 +183,31 @@ class Ctx:
     async def objects(self, doc_id: str, select: dict[str, Any] | None = None) -> list[Any]:
         args: dict[str, Any] = {"doc_id": doc_id, "include": ["objects"], "detail": "full"}
         if select:
-            args["select"] = select
+            args["select"] = {"max_matches": 1024, **select}
+        args["limit"] = 1000
         res = await self.call("inspect", args)
         return list(res.data.get("objects", {}).get("objects", []))
 
+    async def ids(self, doc_id: str, select: dict[str, Any] | None = None) -> set[str]:
+        return ids_of(await self.objects(doc_id, select))
+
+    async def row(self, doc_id: str, obj_id: str) -> dict[str, Any]:
+        rows = [r for r in await self.objects(doc_id) if r.get("id") == obj_id]
+        self.check(len(rows) == 1, f"object {obj_id!r} exists")
+        return dict(rows[0])
+
     async def fingerprint(self, doc_id: str) -> str:
-        rows = await self.objects(doc_id)
-        return json.dumps(rows, sort_keys=True)
+        return json.dumps(await self.objects(doc_id), sort_keys=True)
+
+    async def save(self, doc_id: str, rel: str, **target: Any) -> Called:
+        return await self.call(
+            "export",
+            {
+                "doc_id": doc_id,
+                "targets": [{"kind": "save_as", "dest_path": str(self.ws / rel), **target}],
+                **({"approval_token": TOKEN} if target.get("overwrite") else {}),
+            },
+        )
 
 
 def sha256(path: Path) -> str:
@@ -176,517 +218,498 @@ def ids_of(rows: list[Any]) -> set[str]:
     return {r["id"] for r in rows if isinstance(r, dict) and r.get("id")}
 
 
-def one_line(msg: str) -> bool:
-    return "\n" not in msg and "pydantic.dev" not in msg
+def centre(bbox: list[float]) -> tuple[float, float]:
+    x, y, w, h = bbox
+    return (round(x + w / 2, 3), round(y + h / 2, 3))
 
 
-# --- K: core workflow ------------------------------------------------------------------------
+def near(px: tuple[int, ...], hex_color: str, tol: int = 30) -> bool:
+    """True when an RGBA pixel is within ``tol`` per channel of ``#rrggbb``."""
+    want = [int(hex_color[i : i + 2], 16) for i in (1, 3, 5)]
+    return all(abs(a - b) <= tol for a, b in zip(px[:3], want, strict=True))
 
 
-async def k1_logo_from_scratch(c: Ctx) -> None:
-    """open(canvas, ops, render=inline) -> export([png, svg]) in two calls."""
-    c.needs_engine("render='inline' and export")
+def pixel(img: Image.Image, x: float, y: float, page_w: float) -> tuple[int, ...]:
+    """The pixel at page coordinate ``(x, y)`` of an image rendered from a page ``page_w`` wide."""
+    k = img.width / page_w
+    return img.getpixel((int(x * k), int(y * k)))  # type: ignore[no-any-return]
+
+
+def grid_svg(n_cols: int = 12, n_rows: int = 10) -> str:
+    """120 rects ``c{r}_{c}`` on a 40 px grid, red when ``(r+c) % 3 == 0`` else blue."""
+    cells = "".join(
+        f'<rect id="c{r}_{c}" x="{c * 40 + 5}" y="{r * 40 + 5}" width="30" height="30" '
+        f'fill="{"#cc0000" if (r + c) % 3 == 0 else "#0055cc"}"/>'
+        for r in range(n_rows)
+        for c in range(n_cols)
+    )
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{n_cols * 40}" height="{n_rows * 40}" '
+        f'viewBox="0 0 {n_cols * 40} {n_rows * 40}">{cells}</svg>'
+    )
+
+
+# --- workflows -------------------------------------------------------------------------------
+
+
+async def wf1_logo_feedback_delivery(c: Ctx) -> None:
+    """Logo from scratch, three feedback rounds, delivery, then a late fix of the delivered file."""
     res = await c.call(
         "open",
         {
             "canvas": {"width": 200, "height": 120, "background": "#ffffff"},
             "ops": [
-                {
-                    "op": "create_rect",
-                    "x": 0,
-                    "y": 0,
-                    "width": 200,
-                    "height": 120,
-                    "fill": "#3366cc",
-                    "id": "bg",
-                },
-                {"op": "create_circle", "cx": 100, "cy": 60, "r": 30, "fill": "#ffffff"},
-                {"op": "create_text", "x": 100, "y": 100, "text": "Logo", "anchor": "middle"},
+                {"op": "create_rect", "x": 0, "y": 0, "width": 200, "height": 120,
+                 "fill": "#3366cc", "id": "bg"},
+                {"op": "create_circle", "cx": 100, "cy": 50, "r": 25, "fill": "#ffffff",
+                 "id": "mark"},
+                {"op": "create_text", "x": 100, "y": 105, "text": "Logo", "fill": "#ffffff",
+                 "anchor": "middle", "id": "name"},
+                {"op": "group", "ids": ["$1", "$2"], "id": "brand"},
             ],
-            "render": "inline",
+            **c.inline(),
         },
-    )
-    doc_id = res.data["doc_id"]
-    created = res.data.get("created", [])
-    c.check([e["op"] for e in created] == [0, 1, 2], f"created one id per op: {created}")
-    c.check(created[0]["id"] == "bg", "explicit id 'bg' kept")
-    c.check(res.data.get("changed") is True and bool(res.data.get("snapshot_id")), "snapshot")
-    c.check(res.images == 1, "render='inline' returned one image")
-
-    out = await c.call(
-        "export",
-        {
-            "doc_id": doc_id,
-            "targets": [
-                {"kind": "file", "format": "png", "width_px": 400},
-                {"kind": "file", "format": "svg"},
-            ],
-        },
-    )
-    arts = out.data.get("artifacts", [])
-    c.check(len(arts) == 2, f"two artifacts: {arts}")
-    for art in arts:
-        path = str(art.get("path") or "")
-        c.check(bool(path) and not Path(path).is_absolute(), f"workspace-relative path: {path}")
-        c.check((art.get("bytes") or 0) > 0, f"artifact has bytes: {art}")
-    c.check(c.calls == 2, f"two calls in total, got {c.calls}")
-
-
-async def k2_recolor_and_web_export(c: Ctx) -> None:
-    """open(path) -> edit([palette, optimize_web], render=inline) -> export(profile web)."""
-    src = c.fixture("k2")
-    before = sha256(src)
-    doc_id = (await c.call("open", {"path": str(src)})).data["doc_id"]
-    ops = [{"op": "palette", "mapping": {"#ff0000": "#3366cc"}}, {"op": "optimize_web"}]
-    edit_args: dict[str, Any] = {"doc_id": doc_id, "ops": ops}
-    if c.engine:  # the inline look needs the renderer; without it the edit still runs
-        edit_args["render"] = "inline"
-    res = await c.call("edit", edit_args)
-    c.check(res.data.get("changed") is True, "palette + optimize changed the document")
-    c.check(res.images == (1 if c.engine else 0), "render='inline' returned one image")
-    c.check(not await c.objects(doc_id, {"fill": "#ff0000"}), "no red object left")
-    c.check(sha256(src) == before, "the original file is untouched")
-
-    c.needs_engine("export profile web")
-    out = await c.call(
-        "export", {"doc_id": doc_id, "targets": [{"kind": "profile", "name": "web"}]}
-    )
-    arts = out.data.get("artifacts", [])
-    c.check(len(arts) >= 2, f"web profile wrote PNGs and an SVG: {arts}")
-    c.check(sha256(src) == before, "the original file is still untouched after export")
-
-
-async def k3_dollar_refs(c: Ctx) -> None:
-    """Create, group and move in one edit via "$n" references."""
-    doc_id = await c.open_fixture("k3")
-    snaps = await c.snapshot_count(doc_id)
-    res = await c.call(
-        "edit",
-        {
-            "doc_id": doc_id,
-            "ops": [
-                {
-                    "op": "create_rect",
-                    "x": 10,
-                    "y": 10,
-                    "width": 40,
-                    "height": 20,
-                    "fill": "#00aa00",
-                },
-                {"op": "create_text", "x": 12, "y": 25, "text": "Badge", "fill": "#ffffff"},
-                {"op": "group", "ids": ["$0", "$1"], "id": "badge"},
-                {"op": "move", "ids": ["$2"], "dx": 50, "dy": 30},
-            ],
-            "detail": "summary",
-        },
-    )
+    )  # fmt: skip
+    doc = res.data["doc_id"]
     created = {e["op"]: e["id"] for e in res.data.get("created", [])}
-    c.check({0, 1, 2} <= set(created), f"ops 0-2 created ids: {created}")
-    c.check(created.get(2) == "badge", "group got the explicit id")
-    c.check(len(res.data.get("ops", [])) == 4, "detail=summary has one line per op")
-    c.check(await c.snapshot_count(doc_id) == snaps + 1, "exactly one snapshot for the call")
-    c.check("badge" in ids_of(await c.objects(doc_id, {"id_prefix": "badge"})), "group exists")
+    c.check(created == {0: "bg", 1: "mark", 2: "name", 3: "brand"}, f"one id per op: {created}")
+    if c.engine:
+        img = res.image()
+        c.check(near(pixel(img, 5, 5, 200), "#3366cc"), "background is blue")
+        c.check(near(pixel(img, 100, 50, 200), "#ffffff"), "mark is white in the middle")
+    snaps = await c.snapshot_count(doc)
+    mark_centre = centre((await c.row(doc, "mark"))["bbox"])
+
+    # Round 1: "mark bigger, but keep it centred".
+    await c.edit(doc, [{"op": "scale", "ids": ["mark"], "sx": 1.3}], **c.inline())
+    bbox = (await c.row(doc, "mark"))["bbox"]
+    c.check(centre(bbox) == mark_centre, f"scaled about its own centre: {bbox}")
+    c.check(abs(bbox[2] - 65) < 0.01, f"mark is 30% bigger: {bbox}")
+    # Round 2: "background teal instead".
+    r2 = await c.edit(doc, [{"op": "fill", "ids": ["bg"], "color": TEAL}], **c.inline())
+    if c.engine:
+        c.check(near(pixel(r2.image(), 5, 5, 200), TEAL), "background is teal in the picture")
+    # Round 3: "the name is Acme".
+    await c.edit(doc, [{"op": "replace_text", "ids": ["name"], "text": "Acme"}])
+    c.check("name" in await c.ids(doc, {"text": "acme"}), "text replaced")
+    c.check(await c.snapshot_count(doc) == snaps + 3, "one snapshot per feedback round")
+
+    if c.has_engine("object render"):
+        obj = await c.call("render", {"doc_id": doc, "target": "object", "object_id": "mark"})
+        mid = obj.image().width // 2
+        c.check(near(obj.image().getpixel((mid, mid)), "#ffffff"), "object render: white mark")
+
+    # Delivery: master SVG, then icon set and web profile.
+    saved = await c.save(doc, "deliver/logo.svg")
+    dest = c.ws / "deliver" / "logo.svg"
+    c.check(saved.data["saved"]["path"] == "wf1/deliver/logo.svg", f"relative path: {saved.data}")
+    c.check("Acme" in dest.read_text(encoding="utf-8"), "delivered SVG has the final text")
+    if c.has_engine("icons + web profile export"):
+        out = await c.call(
+            "export",
+            {
+                "doc_id": doc,
+                "targets": [
+                    {"kind": "profile", "name": "icons"},
+                    {"kind": "profile", "name": "web"},
+                ],
+                "name_prefix": "logo",
+            },
+        )
+        arts = out.data.get("artifacts", [])
+        c.check(len(arts) >= 3, f"icon ladder + web files: {arts}")
+        for art in arts:
+            path = str(art.get("path") or "")
+            c.check(bool(path) and not Path(path).is_absolute(), f"workspace-relative: {path}")
+            c.check((c.ws.parent / path).stat().st_size > 0, f"artifact on disk: {path}")
+
+    # Late fix after delivery: overwrite needs overwrite=True AND a token.
+    await c.edit(doc, [{"op": "fill", "ids": ["mark"], "color": "#f4a261"}])
+    old = sha256(dest)
+    msg = await c.fail("export", {"doc_id": doc, "targets": [
+        {"kind": "save_as", "dest_path": str(dest)}]})  # fmt: skip
+    c.check("overwrite=True and an approval_token" in msg, msg)
+    msg = await c.fail("export", {"doc_id": doc, "targets": [
+        {"kind": "save_as", "dest_path": str(dest), "overwrite": True}]})  # fmt: skip
+    c.check("approval_token" in msg, msg)
+    c.check(sha256(dest) == old, "refused saves left the delivered file alone")
+    done = await c.save(doc, "deliver/logo.svg", overwrite=True)
+    c.check(done.data["saved"].get("overwritten") is True, "overwritten flagged")
+    c.check("#f4a261" in dest.read_text(encoding="utf-8"), "delivered file carries the fix")
 
 
-async def k4_selector_instead_of_lookup(c: Ctx) -> None:
-    """A selector matches existing objects and ones created earlier in the same call."""
-    doc_id = await c.open_fixture("k4")
-    await c.call(
-        "edit",
-        {
-            "doc_id": doc_id,
-            "ops": [
-                {
-                    "op": "create_circle",
-                    "cx": 20,
-                    "cy": 20,
-                    "r": 10,
-                    "fill": "#ff0000",
-                    "id": "new",
-                },
-                {"op": "fill", "select": {"fill": "#ff0000"}, "color": "#0000ff"},
-            ],
-        },
-    )
-    c.check(not await c.objects(doc_id, {"fill": "#ff0000"}), "nothing red left")
-    blue = ids_of(await c.objects(doc_id, {"fill": "#0000ff"}))
-    c.check({"bg", "dot", "new"} <= blue, f"bg, dot and the new circle are blue: {blue}")
-    c.check("label" not in blue, "the dark text was not matched")
+async def wf2_brand_refresh(c: Ctx) -> None:
+    """Rebrand a layered Inkscape poster (CSS classes, locked layer), keep it editable, ship it."""
+    src = c.poster("poster")
+    original = sha256(src)
+    opened = await c.open_path(src, **c.inline())
+    doc = opened.data["doc_id"]
+    c.check(opened.data["summary"]["layers"] == 3, "three layers")
+
+    info = await c.call("inspect", {"doc_id": doc, "include": ["layers", "styles"]})
+    layers = info.data["layers"]["layers"]
+    c.check([la["locked"] for la in layers] == [True, False, False], f"bg locked: {layers}")
+    c.check(OLD_RED in info.data["styles"]["colors"], "old accent in use")
+    accent = await c.ids(doc, {"fill": OLD_RED})
+    c.check(accent == {"band", "burst", "cta", "logo-ring"}, f"CSS-painted objects found: {accent}")
+    c.check("headline" in await c.ids(doc, {"text": "spring"}), "headline found by text")
+    cta = (await c.row(doc, "cta"))["bbox"]
+
+    # The whole rebrand in ONE call.
+    res = await c.edit(
+        doc,
+        [
+            {"op": "palette", "mapping": {OLD_RED: TEAL}},
+            {"op": "replace_text", "ids": ["headline"], "text": "Summer Sale"},
+            {"op": "scale", "ids": ["cta"], "sx": 1.2},
+            {"op": "create_text", "x": 370, "y": 220, "text": "NEW", "fill": "#ffffff",
+             "anchor": "end", "id": "new-tag"},
+        ],
+        detail="summary",
+        **c.inline(),
+    )  # fmt: skip
+    c.check(len(res.data.get("ops", [])) == 4, "one summary line per op")
+    if c.engine:
+        img = res.image()
+        c.check(near(pixel(img, 20, 290, 400), TEAL), "CSS .accent band recoloured")
+        c.check(near(pixel(img, 330, 90, 400), TEAL), "CSS .accent burst recoloured")
+    c.check(not await c.ids(doc, {"fill": OLD_RED}), "no old accent left")
+    styles = await c.call("inspect", {"doc_id": doc, "include": ["styles"]})
+    c.check(OLD_RED not in styles.data["styles"]["colors"], "old accent gone from CSS too")
+    cta2 = (await c.row(doc, "cta"))["bbox"]
+    c.check(centre(cta2) == centre(cta), f"cta stays in place: {cta} -> {cta2}")
+    c.check(abs(cta2[2] - cta[2] * 1.2) < 0.5, f"cta 20% wider: {cta2}")
+
+    # Web-ready but still editable: the default optimize keeps layers and the lock.
+    await c.edit(doc, [{"op": "optimize_web"}])
+    after = (await c.call("inspect", {"doc_id": doc, "include": ["layers"]})).data["layers"]
+    c.check([la["locked"] for la in after["layers"]] == [True, False, False], "layers kept")
+    await c.save(doc, "poster-v2.svg")
+    v2 = (c.ws / "poster-v2.svg").read_text(encoding="utf-8")
+    c.check("Summer Sale" in v2 and TEAL in v2 and OLD_RED not in v2, "v2 rebranded")
+    c.check(v2.count('groupmode="layer"') == 3, "v2 keeps its layers")
+    content = v2.split('id="layer-content"', 1)[1].split('groupmode="layer"', 1)[0]
+    c.check('id="new-tag"' in content, "NEW tag landed in the Content layer, not the locked one")
+    if c.has_engine("web profile export"):
+        web = await c.call(
+            "export", {"doc_id": doc, "targets": [{"kind": "profile", "name": "web"}]}
+        )
+        c.check(len(web.data.get("artifacts", [])) >= 2, "web profile wrote PNG + SVG")
+
+    # Ship-only pass drops editor data: HIGH, refused without a token.
+    msg = await c.fail("edit", {"doc_id": doc, "ops": [{"op": "optimize_web", "aggressive": True}]})
+    c.check("approval_token" in msg, msg)
+    await c.edit(doc, [{"op": "optimize_web", "aggressive": True}], approval_token=TOKEN)
+    await c.save(doc, "poster-ship.svg")
+    c.check("sodipodi:namedview" not in (c.ws / "poster-ship.svg").read_text(encoding="utf-8"),
+            "ship copy has no editor cruft")  # fmt: skip
+    c.check(sha256(src) == original, "source poster never touched")
 
 
-async def k5_atomic_rollback(c: Ctx) -> None:
-    """One bad op rejects the whole call; nothing changes, no snapshot."""
-    doc_id = await c.open_fixture("k5")
-    before, snaps = await c.fingerprint(doc_id), await c.snapshot_count(doc_id)
-    msg = await c.fail(
-        "edit",
-        {
-            "doc_id": doc_id,
-            "ops": [
-                {"op": "create_rect", "x": 0, "y": 0, "width": 5, "height": 5, "id": "extra"},
-                {"op": "fill", "ids": ["logo2"], "color": "#00ff00"},
-            ],
-        },
-    )
-    c.check(msg.startswith("ops[1] fill:") and "'logo2'" in msg and "not found" in msg, msg)
-    c.check(await c.fingerprint(doc_id) == before, "document unchanged (op 0 rolled back)")
-    c.check(await c.snapshot_count(doc_id) == snaps, "no snapshot for a rejected call")
-    bad = await c.fail("edit", {"doc_id": doc_id, "ops": [{"op": "paint", "ids": ["bg"]}]})
-    c.check(bad.startswith("invalid ops: ops[0]:") and "'create_rect'" in bad, f"lists ops: {bad}")
+async def wf3_mistakes_and_recovery(c: Ctx) -> None:
+    """Wrong edits, atomic failure, no-op, refused delete, undo, outside change, reload, prune."""
+    src = c.poster("poster")
+    doc = (await c.open_path(src)).data["doc_id"]
+    start = await c.fingerprint(doc)
+    good = await c.call("history", {"doc_id": doc, "action": "create", "label": "good"})
 
-
-async def k6_dry_run_and_detail(c: Ctx) -> None:
-    """dry_run plans without changing; detail=summary|full grow the result."""
-    doc_id = await c.open_fixture("k6")
-    before, snaps = await c.fingerprint(doc_id), await c.snapshot_count(doc_id)
-    plan = await c.call(
-        "edit",
-        {
-            "doc_id": doc_id,
-            "ops": [{"op": "fill", "select": {"tag": "rect"}, "color": "#00ff00"}],
-            "dry_run": True,
-        },
-    )
-    c.check(plan.data.get("dry_run") is True, "dry_run flagged")
-    matched = plan.data.get("plan", [{}])[0].get("matched") or []
-    c.check("bg" in matched, f"plan names the matched id: {plan.data.get('plan')}")
-    c.check(await c.fingerprint(doc_id) == before, "dry_run changed nothing")
-    c.check(await c.snapshot_count(doc_id) == snaps, "dry_run took no snapshot")
-
-    summary = await c.call(
-        "edit",
-        {
-            "doc_id": doc_id,
-            "ops": [{"op": "fill", "ids": ["bg"], "color": "#00ff00"}],
-            "detail": "summary",
-        },
-    )
-    c.check(len(summary.data.get("ops", [])) == 1, "summary: one line per op")
-    c.check("operation_id" not in summary.data, "summary has no operation_id")
-    full = await c.call(
-        "edit",
-        {
-            "doc_id": doc_id,
-            "ops": [{"op": "opacity", "ids": ["bg"], "opacity": 0.5}],
-            "detail": "full",
-        },
-    )
-    c.check(bool(full.data.get("operation_id")) and "outcomes" in full.data, "full detail")
-    default = await c.call(
-        "edit", {"doc_id": doc_id, "ops": [{"op": "move", "ids": ["dot"], "dx": 5, "dy": 0}]}
-    )
-    c.check("ops" not in default.data and "outcomes" not in default.data, "ids detail is compact")
-
-
-async def k7_noop(c: Ctx) -> None:
-    """A no-op edit reports changed=false and writes no snapshot."""
-    doc_id = await c.open_fixture("k7")
-    snaps = await c.snapshot_count(doc_id)
-    res = await c.call(
-        "edit", {"doc_id": doc_id, "ops": [{"op": "fill", "ids": ["bg"], "color": "#ff0000"}]}
-    )
-    c.check(res.data.get("changed") is False, f"changed=false: {res.data}")
-    c.check(not res.data.get("snapshot_id"), "no snapshot id")
-    c.check(await c.snapshot_count(doc_id) == snaps, "no snapshot written")
-    none = await c.call(
-        "edit",
-        {
-            "doc_id": doc_id,
-            "ops": [{"op": "replace_color", "from_color": "#abcdef", "to_color": "#000000"}],
-        },
-    )
-    c.check(none.data.get("changed") is False, "replace_color matching nothing is a no-op")
-
-
-async def k8_inspect(c: Ctx) -> None:
-    """include sections, select, limit/truncated, several doc_ids."""
-    doc_id = await c.open_fixture("k8")
-    other = await c.open_fixture("k8b")
-    res = await c.call(
-        "inspect",
-        {"doc_id": doc_id, "include": ["summary", "objects", "styles", "validate", "quality"]},
-    )
-    for key in ("summary", "objects", "styles", "validate", "quality"):
-        c.check(key in res.data, f"section {key} present")
-    rows = res.data["objects"]["objects"]
-    c.check(res.data["objects"].get("columns") == ["id", "tag", "bbox", "fill"], "compact rows")
-    c.check(all(isinstance(r, list) and len(r) == 4 for r in rows), f"rows are 4-tuples: {rows}")
-    sel = await c.call("inspect", {"doc_id": doc_id, "select": {"tag": "rect"}})
-    c.check(list(sel.data) == ["doc_id", "objects"], "select alone returns only objects")
-    c.check([r[0] for r in sel.data["objects"]["objects"]] == ["bg"], "select by tag")
-    cut = await c.call("inspect", {"doc_id": doc_id, "include": ["objects"], "limit": 1})
-    c.check(cut.data["objects"].get("truncated") is True, "limit sets truncated=true")
-    multi = await c.call("inspect", {"doc_id": [doc_id, other], "include": ["quality"]})
-    c.check(set(multi.data.get("docs", {})) == {doc_id, other}, "one entry per doc_id")
-    c.check("consistency" in multi.data, "set verdict for several docs")
-
-
-async def k9_render(c: Ctx) -> None:
-    """render page and one object; argument errors name the fix."""
-    doc_id = await c.open_fixture("k9")
-    msg = await c.fail("render", {"doc_id": doc_id, "target": "object"})
-    c.check("requires object_id" in msg, msg)
-    msg = await c.fail("render", {"doc_id": doc_id, "target": "object", "object_id": "nope"})
-    c.check("inspect(include=['objects'])" in msg, msg)
-    c.needs_engine("render")
-    page = await c.call("render", {"doc_id": doc_id, "width_px": 300})
-    c.check(page.images == 1 and page.data.get("all_blank") is False, "page image, not blank")
-    obj = await c.call("render", {"doc_id": doc_id, "target": "object", "object_id": "dot"})
-    c.check(obj.images == 1, "object image")
-    opened = await c.call("open", {"path": str(c.fixture("k9b")), "render": "inline"})
-    c.check(opened.images == 1, "open(render='inline') without ops shows the page")
-
-
-async def k10_history(c: Ctx) -> None:
-    """create -> edit -> list -> restore; reload after an external change; prune."""
-    src = c.fixture("k10")
-    doc_id = (await c.call("open", {"path": str(src)})).data["doc_id"]
-    original = await c.fingerprint(doc_id)
-    cp = await c.call("history", {"doc_id": doc_id, "action": "create", "label": "checkpoint"})
-    checkpoint = cp.data.get("snapshot_id")
-    c.check(bool(checkpoint), "checkpoint created")
-    await c.call(
-        "edit",
-        {"doc_id": doc_id, "ops": [{"op": "delete", "ids": ["dot"]}], "approval_token": TOKEN},
-    )
-    c.check("dot" not in ids_of(await c.objects(doc_id)), "dot deleted")
-    listed = await c.call("history", {"doc_id": doc_id, "action": "list"})
-    labels = [s.get("label") for s in listed.data.get("snapshots", [])]
-    c.check("checkpoint" in labels, f"label listed: {labels}")
+    # Mistake 1: moved the wrong group off the page -> back to the checkpoint.
+    await c.edit(doc, [{"op": "move", "ids": ["header"], "dx": 900}])
     back = await c.call(
-        "history", {"doc_id": doc_id, "action": "restore", "snapshot_id": checkpoint}
+        "history", {"doc_id": doc, "action": "restore", "snapshot_id": good.data["snapshot_id"]}
     )
-    c.check(bool(back.data.get("pre_restore_snapshot_id")), "restore snapshots first")
-    c.check(await c.fingerprint(doc_id) == original, "restored to the checkpoint")
+    c.check(bool(back.data.get("pre_restore_snapshot_id")), "restore is itself reversible")
+    c.check(await c.fingerprint(doc) == start, "checkpoint restored exactly")
 
-    src.write_text(FIXTURE_SVG.replace("Hello", "Reloaded"), encoding="utf-8")
-    reloaded = await c.call("history", {"doc_id": doc_id, "action": "reload"})
-    c.check(bool(reloaded.data.get("pre_reload_snapshot_id")), "reload snapshots first")
-    texts = await c.objects(doc_id, {"text": "reloaded"})
-    c.check("label" in ids_of(texts), "working copy re-read from the source file")
-    pruned = await c.call("history", {"doc_id": doc_id, "action": "prune"})
-    c.check("retained" in pruned.data, f"prune reports counts: {pruned.data}")
-    msg = await c.fail("history", {"doc_id": doc_id, "action": "restore"})
-    c.check("call history(action='list')" in msg, msg)
+    # Mistake 2: a typo in a long call -> nothing applied, error names the op and a suggestion.
+    snaps = await c.snapshot_count(doc)
+    call: list[dict[str, Any]] = [
+        {"op": "create_rect", "x": 300, "y": 180, "width": 80, "height": 36, "fill": "#ffffff",
+         "id": "badge"},
+        {"op": "replace_text", "ids": ["headline"], "text": "Final Sale"},
+        {"op": "fill", "ids": ["brand-nam"], "color": OLD_NAVY},
+    ]  # fmt: skip
+    msg = await c.fail("edit", {"doc_id": doc, "ops": call})
+    c.check(msg.startswith("ops[2] fill:") and "brand-name" in msg, f"suggests the id: {msg}")
+    c.check(await c.fingerprint(doc) == start and await c.snapshot_count(doc) == snaps, "no-op")
+    call[2] = {"op": "fill", "ids": ["brand-name"], "color": OLD_NAVY}
+    await c.edit(doc, call)
+    c.check(await c.snapshot_count(doc) == snaps + 1, "corrected call = one snapshot")
+    c.check("badge" in await c.ids(doc), "badge exists after the retry")
+
+    # Asking for what is already true is a no-op, not an error.
+    noop = await c.edit(doc, [{"op": "fill", "ids": ["brand-name"], "color": OLD_NAVY}])
+    c.check(noop.data.get("changed") is False and not noop.data.get("snapshot_id"), "no-op")
+    c.check(await c.snapshot_count(doc) == snaps + 1, "no-op wrote nothing")
+
+    # Delete: refused, planned, approved, undone.
+    msg = await c.fail("edit", {"doc_id": doc, "ops": [{"op": "delete", "ids": ["burst"]}]})
+    c.check("delete is HIGH risk; re-call with approval_token" in msg, msg)
+    plan = await c.edit(doc, [{"op": "delete", "select": {"tag": "path"}}], dry_run=True)
+    c.check(plan.data.get("needs_approval") is True and plan.data.get("risk") == "high", "plan")
+    c.check("burst" in plan.data["plan"][0]["matched"], f"plan names burst: {plan.data}")
+    gone = await c.edit(doc, [{"op": "delete", "ids": ["burst"]}], approval_token=TOKEN)
+    c.check(gone.data["snapshot_id"] in str(gone.data.get("undo")), "result names its undo")
+    c.check("burst" not in await c.ids(doc), "burst deleted")
+    await c.call(
+        "history", {"doc_id": doc, "action": "restore", "snapshot_id": gone.data["snapshot_id"]}
+    )
+    now = await c.ids(doc)
+    c.check({"burst", "badge"} <= now, "undo brings burst back and keeps the earlier fix")
+
+    # Someone edits the source file; reload picks it up, and is itself reversible.
+    src.write_text(src.read_text(encoding="utf-8").replace("Spring Sale", "Autumn Sale"), "utf-8")
+    reloaded = await c.call("history", {"doc_id": doc, "action": "reload"})
+    c.check("headline" in await c.ids(doc, {"text": "autumn"}), "reload re-read the source")
+    c.check("badge" not in await c.ids(doc), "reload dropped the working-copy edits")
+    await c.call("history", {"doc_id": doc, "action": "restore",
+                             "snapshot_id": reloaded.data["pre_reload_snapshot_id"]})  # fmt: skip
+    c.check("badge" in await c.ids(doc) and "headline" in await c.ids(doc, {"text": "final"}),
+            "restore before the reload brings the edits back")  # fmt: skip
+
+    msg = await c.fail("history", {"doc_id": doc, "action": "restore"})
+    c.check("history(action='list')" in msg, msg)
+    pruned = await c.call("history", {"doc_id": doc, "action": "prune"})
+    c.check(pruned.data.get("retained", 0) >= 1, f"prune keeps snapshots: {pruned.data}")
+    final = await c.call("inspect", {"doc_id": doc, "include": ["validate"]})
+    c.check(final.data["validate"]["ok"] is True, "document still valid")
 
 
-async def k11_export_variants(c: Ctx) -> None:
-    """dry_run + byte_budget, save_as to a new file, then engine exports (profiles, sets)."""
-    doc_id = await c.open_fixture("k11")
-    other = await c.open_fixture("k11b")
-    dry = await c.call(
-        "export",
-        {
-            "doc_id": doc_id,
-            "targets": [{"kind": "file", "format": "png", "width_px": 512}],
-            "dry_run": True,
-            "byte_budget": 10,
-        },
-    )
-    c.check(dry.data.get("dry_run") is True and dry.data.get("projected_bytes", 0) > 0, "projected")
-    c.check(dry.data.get("within_budget") is False, "a 10-byte budget is exceeded")
-    c.check("artifacts" not in dry.data, "dry_run reports a plan, no artifacts")
-    dest = c.ws / "k11-saved.svg"
-    saved = await c.call(
-        "export", {"doc_id": doc_id, "targets": [{"kind": "save_as", "dest_path": str(dest)}]}
-    )
-    c.check(dest.exists() and "<svg" in dest.read_text(encoding="utf-8"), "save_as wrote the file")
-    c.check(not Path(str(saved.data["saved"]["path"])).is_absolute(), "saved path is relative")
-    msg = await c.fail(
-        "export",
-        {
-            "doc_id": [doc_id, other],
-            "targets": [{"kind": "save_as", "dest_path": str(c.ws / "x.svg")}],
-        },
-    )
+async def wf4_variants_contact_sheet(c: Ctx) -> None:
+    """Three variants, compare them, compose a sheet, change a variant, rebuild, export the set."""
+    docs = [(await c.open_path(c.poster(f"poster-{v}"))).data["doc_id"] for v in "abc"]
+    a, b, cc = docs
+    await c.edit(b, [{"op": "replace_text", "ids": ["headline"], "text": "Sale B"},
+                     {"op": "palette", "mapping": {OLD_RED: TEAL}}])  # fmt: skip
+    await c.edit(cc, [{"op": "replace_text", "ids": ["headline"], "text": "Sale C"},
+                      {"op": "palette", "mapping": {OLD_RED: "#e9c46a"}}])  # fmt: skip
+    multi = await c.call("inspect", {"doc_id": docs, "include": ["quality", "validate"]})
+    c.check(set(multi.data.get("docs", {})) == set(docs), "one entry per variant")
+    c.check("consistency" in multi.data, "set verdict across variants")
+    c.check(bool(await c.ids(a, {"fill": OLD_RED})), "A keeps the original accent")
+    c.check(not await c.ids(b, {"fill": OLD_RED}) and not await c.ids(cc, {"fill": OLD_RED}),
+            "B and C have no old accent left (CSS included)")  # fmt: skip
+
+    grid = {"op": "grid", "doc_ids": docs, "rows": 1, "cols": 3, "cell": 400, "gap": 20}
+    canvas = {"width": 1240, "height": 300, "viewBox": "0 0 1240 300", "background": "#ffffff"}
+    sheet = await c.call("open", {"canvas": canvas, "ops": [grid], **c.inline()})
+    sid = sheet.data["doc_id"]
+    c.check(bool(await c.ids(sid, {"text": "sale b"})), "variant B is on the sheet")
+    if c.engine:
+        img = sheet.image()
+        c.check(near(pixel(img, 20, 250, 1240), OLD_RED) and near(pixel(img, 440, 250, 1240), TEAL),
+                "each variant keeps its own CSS accent on the sheet")  # fmt: skip
+
+    # The client changes B after the sheet exists: the sheet holds a copy, so rebuild it.
+    await c.edit(b, [{"op": "replace_text", "ids": ["headline"], "text": "Sale B2"}])
+    c.check(not await c.ids(sid, {"text": "sale b2"}), "sheet is a copy, not a live link")
+    sheet2 = (await c.call("open", {"canvas": canvas, "ops": [grid]})).data["doc_id"]
+    c.check(bool(await c.ids(sheet2, {"text": "sale b2"})), "rebuilt sheet shows the change")
+
+    msg = await c.fail("export", {"doc_id": docs, "targets": [
+        {"kind": "save_as", "dest_path": str(c.ws / "x.svg")}]})  # fmt: skip
     c.check("call export once per doc_id" in msg, msg)
-
-    c.needs_engine("file/profile export")
-    icons = await c.call(
-        "export", {"doc_id": doc_id, "targets": [{"kind": "profile", "name": "icons"}]}
-    )
-    c.check(len(icons.data.get("artifacts", [])) >= 2, "icon ladder written")
-    pdf = await c.call(
-        "export", {"doc_id": doc_id, "targets": [{"kind": "profile", "name": "print"}]}
-    )
-    c.check(any(a.get("format") == "pdf" for a in pdf.data.get("artifacts", [])), "print PDF")
-    both = await c.call(
-        "export", {"doc_id": [doc_id, other], "targets": [{"kind": "file", "format": "png"}]}
-    )
-    names = [Path(str(a.get("path"))).name for a in both.data.get("artifacts", [])]
-    c.check(len(names) == 2, f"one PNG per document: {names}")
-    c.check(
-        any(f"-{doc_id}-" in n for n in names) and any(f"-{other}-" in n for n in names),
-        f"file names carry the doc_id: {names}",
-    )
+    await c.save(sheet2, "sheets/contact.svg")
+    c.check("Sale B2" in (c.ws / "sheets/contact.svg").read_text(encoding="utf-8"), "sheet saved")
+    if c.has_engine("set export + sheet PDF"):
+        batch = await c.call("export", {"doc_id": docs, "targets": [
+            {"kind": "file", "format": "png", "width_px": 400}]})  # fmt: skip
+        names = [Path(str(x["path"])).name for x in batch.data.get("artifacts", [])]
+        c.check(len(names) == 3, f"one PNG per variant: {names}")
+        c.check(all(any(f"-{d}-" in n for n in names) for d in docs), f"doc_id in names: {names}")
+        pdf = await c.call("export", {"doc_id": sheet2, "targets": [
+            {"kind": "file", "format": "pdf"}]})  # fmt: skip
+        (art,) = pdf.data["artifacts"]
+        c.check((c.ws.parent / art["path"]).read_bytes().startswith(b"%PDF"), "sheet PDF")
 
 
-async def k12_discovery(c: Ctx) -> None:
-    """help(goal|op|topic) and the out-of-scope answer."""
-    goal = await c.call("help", {"goal": "make the svg smaller for the web"})
-    matches = goal.data["goal"].get("matches") or []
-    uses = [u for m in matches if isinstance(m, dict) for u in m.get("use", [])]
-    c.check("edit:optimize_web" in uses, f"goal maps to edit:optimize_web: {uses}")
-    c.check(any(isinstance(m, dict) and m.get("example") for m in matches), "example call")
-    oos = await c.call("help", {"goal": "retouch the pixels of this photo"})
-    c.check(oos.data["goal"].get("out_of_scope") is True, "photo retouch is out of scope")
-    op = await c.call("help", {"op": "fill"})
-    c.check(op.data["op"].get("example", {}).get("op") == "fill", "op reference with example")
-    ops = await c.call("help", {"topic": "ops"})
-    c.check("groups" in ops.data.get("ops", {}), "ops index grouped")
-    diag = await c.call("help", {"topic": "diagnose"})
-    c.check("capabilities" in diag.data, "diagnose returns the capability matrix")
-    msg = await c.fail("help", {"op": "bogus"})
-    c.check("help(topic='ops')" in msg, msg)
+async def wf5_bulk_selectors(c: Ctx) -> None:
+    """120 rects edited purely by selectors: counts, max_matches, max risk, bulk delete, budget."""
+    doc = (await c.call("open", {"svg": grid_svg()})).data["doc_id"]
+    total = len(await c.objects(doc))
+    c.check(total == 120, f"120 rects: {total}")
+    snaps = await c.snapshot_count(doc)
+    red, quad = "#cc0000", [0, 0, 240, 200]
+    ops: list[dict[str, Any]] = [
+        {"op": "fill", "select": {"fill": red, "bbox": quad}, "color": "#ffcc00"},
+        {"op": "fill", "select": {"fill": red}, "color": TEAL},
+        {"op": "move", "select": {"fill": "#0055cc"}, "dx": 2},
+    ]
+    msg = await c.fail("edit", {"doc_id": doc, "ops": ops})
+    c.check(msg.startswith("ops[2]") and "max_matches" in msg, f"too broad selector: {msg}")
+    ops[2]["select"]["max_matches"] = 200
+    done = await c.edit(doc, ops, detail="full")
+    counts = [len(o.get("matched") or []) for o in done.data["outcomes"]]
+    c.check(counts == [10, 30, 80], f"matches per op: {counts}")
+    c.check(not await c.ids(doc, {"fill": red}) and await c.snapshot_count(doc) == snaps + 1,
+            "no red left, one snapshot for the whole call")  # fmt: skip
+
+    # One delete among ten creates makes the whole call HIGH: nothing created without a token.
+    creates = [{"op": "create_rect", "x": i * 10, "y": 0, "width": 8, "height": 8,
+                "fill": "#00aa00"} for i in range(10)]  # fmt: skip
+    mixed: list[dict[str, Any]] = [*creates, {"op": "delete", "ids": ["c0_1"]}]
+    msg = await c.fail("edit", {"doc_id": doc, "ops": mixed})
+    c.check(msg.startswith("ops[10] delete is HIGH risk"), msg)
+    c.check(len(await c.objects(doc)) == total, "none of the ten rects exists")
+    c.check((await c.edit(doc, mixed, dry_run=True)).data.get("risk") == "high", "max risk")
+    low = await c.edit(doc, creates)
+    c.check(low.data.get("risk") == "medium" and len(low.data["created"]) == 10, "creates only")
+
+    # Bulk delete after a preview of the count.
+    sel = {"op": "delete", "select": {"fill": TEAL, "max_matches": 200}}
+    plan = await c.edit(doc, [sel], dry_run=True)
+    c.check(len(plan.data["plan"][0]["matched"]) == 30, f"plan: {plan.data['plan']}")
+    await c.edit(doc, [sel], approval_token=TOKEN)
+    c.check(len(await c.objects(doc)) == total + 10 - 30, "30 deleted")
+
+    budget = {"doc_id": doc, "targets": [{"kind": "file", "format": "png", "width_px": 4000}],
+              "byte_budget": 1000}  # fmt: skip
+    dry = await c.call("export", {**budget, "dry_run": True})
+    c.check(dry.data.get("within_budget") is False and "artifacts" not in dry.data, "over budget")
+    if c.has_engine("page render"):
+        img = (await c.call("render", {"doc_id": doc, "width_px": 480})).image()
+        c.check(near(pixel(img, 22, 20, 480), "#ffcc00"), "c0_0 yellow")
+        c.check(near(pixel(img, 62, 20, 480), "#0055cc"), "c0_1 blue, moved")
+        c.check(pixel(img, 420, 340, 480)[3] < 40, "c8_10 deleted")
 
 
-async def k13_actionable_errors(c: Ctx) -> None:
-    """Errors are one line, name the next call and never leak host paths."""
-    doc_id = await c.open_fixture("k13")
-    msg = await c.fail("inspect", {"doc_id": "d_gone"})
-    # One server serves every scenario, so the list may be truncated before this doc_id.
-    c.check(
-        msg.startswith("document id not found; open ids: ")
-        and (doc_id in msg or msg.endswith(" more)")),
-        msg,
-    )
-    msg = await c.fail("open", {"path": "../../etc/passwd"})
-    c.check(msg.startswith("path rejected:") and str(c.ws) not in msg and "/etc" not in msg, msg)
-    msg = await c.fail("open", {"path": str(REPO_ROOT / "README.md")})
-    c.check(msg.startswith("path rejected:") and str(REPO_ROOT) not in msg, msg)
-    msg = await c.fail("export", {"doc_id": doc_id, "targets": [{"kind": "nope"}]})
-    c.check(msg.startswith("invalid export arguments: ") and one_line(msg), msg)
-    msg = await c.fail("inspect", {"doc_id": doc_id, "include": ["bogus"]})
-    c.check(msg.startswith("invalid inspect arguments: ") and one_line(msg), msg)
-    msg = await c.fail("edit", {"doc_id": doc_id, "ops": [{"op": "fill", "ids": ["bg"]}]})
-    c.check("ops[0].fill.color: Field required" in msg, msg)
-    msg = await c.fail(
+async def wf6_path_ops(c: Ctx) -> None:
+    """Icon from primitives via union, difference, stroke_to_path, combine, break_apart + undo."""
+    res = await c.call(
         "open",
         {
-            "canvas": {"width": 10, "height": 10},
-            "ops": [{"op": "fill", "ids": ["x"], "color": "#000"}],
+            "canvas": {"width": 64, "height": 64},
+            "ops": [
+                {"op": "create_rect", "x": 8, "y": 8, "width": 48, "height": 48,
+                 "fill": NAVY, "id": "plate"},
+                {"op": "create_circle", "cx": 32, "cy": 8, "r": 8, "fill": NAVY, "id": "knob"},
+                {"op": "create_circle", "cx": 32, "cy": 32, "r": 10, "fill": "#000000",
+                 "id": "hole"},
+                {"op": "create_circle", "cx": 32, "cy": 32, "r": 28, "fill": "none",
+                 "stroke": "#f4a261", "stroke_width": "3", "id": "ring"},
+            ],
         },
+    )  # fmt: skip
+    doc = res.data["doc_id"]
+    union = [{"op": "union", "ids": ["plate", "knob"]}]
+    msg = await c.fail("edit", {"doc_id": doc, "ops": union})
+    c.check("union is HIGH risk; re-call with approval_token" in msg, msg)
+    plan = await c.edit(doc, union, dry_run=True)
+    c.check(plan.data.get("risk") == "high" and plan.data.get("needs_approval") is True, "plan")
+    c.check(plan.data["plan"][0]["matched"] == ["plate", "knob"], f"plan: {plan.data}")
+    if not c.has_engine("path ops"):
+        return
+
+    await c.edit(doc, union, approval_token=TOKEN)
+    c.check(await c.ids(doc) == {"plate", "hole", "ring"}, "union merged knob into plate")
+    c.check((await c.row(doc, "plate"))["tag"] == "path", "union result is a path")
+    cut = await c.edit(doc, [{"op": "difference", "ids": ["plate", "hole"]}],
+                       approval_token=TOKEN, render="inline")  # fmt: skip
+    img = cut.image()
+    c.check(pixel(img, 32, 32, 64)[3] < 40, "difference punched a transparent hole")
+    c.check(near(pixel(img, 14, 32, 64), NAVY), "plate still navy beside the hole")
+    await c.edit(doc, [{"op": "stroke_to_path", "ids": ["ring"]},
+                       {"op": "simplify", "ids": ["ring"]}], approval_token=TOKEN)  # fmt: skip
+    ring = await c.row(doc, "ring")
+    c.check(ring["tag"] == "path" and ring.get("fill") == "#f4a261", f"stroke became fill: {ring}")
+
+    snaps = await c.snapshot_count(doc)
+    await c.edit(doc, [{"op": "combine", "ids": ["plate", "ring"]}], approval_token=TOKEN)
+    c.check(len(await c.objects(doc)) == 1, "combine made one compound path")
+    apart = await c.edit(doc, [{"op": "break_apart", "select": {"tag": "path"}}],
+                         approval_token=TOKEN)  # fmt: skip
+    pieces = len(await c.objects(doc))
+    c.check(pieces >= 3, f"break_apart split the compound path: {pieces}")
+    # Iteration: "no, keep it combined" -> undo only the last step.
+    await c.call("history", {"doc_id": doc, "action": "restore",
+                             "snapshot_id": apart.data["snapshot_id"]})  # fmt: skip
+    c.check(len(await c.objects(doc)) == 1, "undo of break_apart keeps the combine")
+    c.check(await c.snapshot_count(doc) == snaps + 3, "combine + break_apart + restore snapshots")
+
+    out = await c.call("export", {"doc_id": doc, "targets": [
+        {"kind": "file", "format": "png", "width_px": 128},
+        {"kind": "save_as", "dest_path": str(c.ws / "icon-paths.svg")}]})  # fmt: skip
+    c.check(len(out.data.get("artifacts", [])) >= 1, "PNG exported")
+    svg = (c.ws / "icon-paths.svg").read_text(encoding="utf-8")
+    c.check("<path" in svg and "<circle" not in svg and "<rect" not in svg, "only paths left")
+
+
+async def wf7_foreign_svg_security(c: Ctx) -> None:
+    """Graft and replace foreign SVG: HIGH risk, scrubbed, sandboxed paths, all reversible."""
+    doc = (await c.open_path(c.fixture("logo"))).data["doc_id"]
+    start = await c.fingerprint(doc)
+    fragment = (
+        '<g xmlns="http://www.w3.org/2000/svg" id="badge">'
+        '<circle id="ins" cx="20" cy="20" r="8" fill="#00aa00" onload="alert(1)"/>'
+        "<script>alert(2)</script></g>"
     )
-    c.check(msg.startswith("opened ") and "but ops failed" in msg, f"names the opened doc: {msg}")
+    insert = [{"op": "insert_svg", "svg": fragment}]
+    msg = await c.fail("edit", {"doc_id": doc, "ops": insert})
+    c.check("insert_svg is HIGH risk; re-call with approval_token" in msg, msg)
+    _, err = await c.attempt("edit", {"doc_id": doc, "ops": insert, "approval_token": TOKEN})
+    if not err:
+        c.check("ins" in await c.ids(doc), "safe part of the fragment inserted")
+
+    # Mid-flow the agent tries a path outside the sandbox.
+    for bad in ("../../etc/passwd", str(REPO_ROOT / "README.md")):
+        msg = await c.fail("open", {"path": bad})
+        c.check(msg.startswith("path rejected:") and "/etc" not in msg and str(REPO_ROOT)
+                not in msg, f"no host path leaked: {msg}")  # fmt: skip
+
+    # An entity-expanding replacement must not read host files.
+    xxe = ('<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
+           '<svg xmlns="http://www.w3.org/2000/svg"><text id="t">&x;</text></svg>')  # fmt: skip
+    await c.attempt("edit", {"doc_id": doc, "ops": [{"op": "set_svg", "svg": xxe}],
+                             "approval_token": TOKEN})  # fmt: skip
+    await c.save(doc, "probe.svg")
+    c.check("root:" not in (c.ws / "probe.svg").read_text(encoding="utf-8"), "no entity expansion")
+
+    replace = [{"op": "set_svg", "svg": '<svg xmlns="http://www.w3.org/2000/svg" width="10" '
+                'height="10"><rect id="only" width="10" height="10"/></svg>'}]  # fmt: skip
+    swap = await c.edit(doc, replace, approval_token=TOKEN)
+    c.check(await c.ids(doc) == {"only"}, "document replaced")
+    await c.call("history", {"doc_id": doc, "action": "restore",
+                             "snapshot_id": swap.data["snapshot_id"]})  # fmt: skip
+    c.check({"bg", "dot", "label"} <= await c.ids(doc), "restore undid the replacement")
+    await c.save(doc, "foreign.svg")
+    text = (c.ws / "foreign.svg").read_text(encoding="utf-8")
+    c.check("<script" not in text and "onload" not in text, f"scrubbed output {err}")
+    c.check(err != "" or start != await c.fingerprint(doc), "fragment either refused or added")
 
 
-# --- R: risk and approval --------------------------------------------------------------------
+async def wf8_long_iteration(c: Ctx) -> None:
+    """Twelve edit rounds on one doc, deep restore, continue, prune: history stays exact."""
+    doc = (await c.open_path(c.fixture("loop"))).data["doc_id"]
+    base = await c.snapshot_count(doc)
+    rounds: list[str] = []
+    for i in range(1, 13):
+        res = await c.edit(doc, [
+            {"op": "move", "ids": ["dot"], "dx": 5},
+            {"op": "create_rect", "x": i * 14, "y": 2, "width": 10, "height": 10,
+             "fill": "#00aa00", "id": f"step{i}"},
+        ])  # fmt: skip
+        rounds.append(res.data["snapshot_id"])
+        c.check(await c.snapshot_count(doc) == base + i, f"round {i}: exactly one snapshot")
+        if i % 4 == 0 and c.has_engine(f"render round {i}"):
+            img = (await c.call("render", {"doc_id": doc, "width_px": 200})).image()
+            c.check(near(pixel(img, 100 + 5 * i, 60, 200), "#ff0000"), f"dot moved in round {i}")
 
+    # "Round 3 was the good one": the snapshot of round 4 holds the state after round 3.
+    await c.call("history", {"doc_id": doc, "action": "restore", "snapshot_id": rounds[3]})
+    now = await c.ids(doc)
+    c.check({"step1", "step2", "step3"} <= now and "step4" not in now, f"state after 3: {now}")
+    c.check(centre((await c.row(doc, "dot"))["bbox"])[0] == 115, "dot moved exactly 3x5")
+    for i in (13, 14):
+        await c.edit(doc, [{"op": "create_rect", "x": 0, "y": i * 4, "width": 4, "height": 4,
+                            "id": f"step{i}"}])  # fmt: skip
+    now = await c.ids(doc)
+    c.check({"step13", "step14"} <= now and "step12" not in now, "work continues after restore")
 
-async def r1_delete_needs_token(c: Ctx) -> None:
-    """delete without token is refused; dry_run plans it; with token it runs at risk high."""
-    doc_id = await c.open_fixture("r1")
-    before, snaps = await c.fingerprint(doc_id), await c.snapshot_count(doc_id)
-    delete = [{"op": "delete", "ids": ["bg"]}]
-    msg = await c.fail("edit", {"doc_id": doc_id, "ops": delete})
-    c.check(msg == "ops[0] delete is HIGH risk; re-call with approval_token", msg)
-    c.check(await c.fingerprint(doc_id) == before, "refused call changed nothing")
-    c.check(await c.snapshot_count(doc_id) == snaps, "refused call took no snapshot")
-    plan = await c.call("edit", {"doc_id": doc_id, "ops": delete, "dry_run": True})
-    c.check(plan.data.get("needs_approval") is True and plan.data.get("risk") == "high", "plan")
-    c.check(await c.fingerprint(doc_id) == before, "dry_run changed nothing")
-    done = await c.call("edit", {"doc_id": doc_id, "ops": delete, "approval_token": TOKEN})
-    c.check(done.data.get("risk") == "high" and done.data.get("changed") is True, "deleted")
-    c.check(
-        f"snapshot_id='{done.data.get('snapshot_id')}'" in str(done.data.get("undo")),
-        "HIGH edit names its undo call",
-    )
-    c.check("bg" not in ids_of(await c.objects(doc_id)), "bg is gone")
-    msg = await c.fail("edit", {"doc_id": doc_id, "ops": delete, "approval_token": TOKEN})
-    c.check("not found" in msg, f"deleting an unknown id is an error: {msg}")
-
-
-async def r2_max_risk(c: Ctx) -> None:
-    """One delete among ten creates makes the whole call HIGH; nothing is created without token."""
-    doc_id = await c.open_fixture("r2")
-    count = len(await c.objects(doc_id))
-    ops: list[dict[str, Any]] = [
-        {"op": "create_rect", "x": i * 10, "y": 0, "width": 8, "height": 8, "fill": "#00aa00"}
-        for i in range(10)
-    ]
-    ops.append({"op": "delete", "ids": ["label"]})
-    msg = await c.fail("edit", {"doc_id": doc_id, "ops": ops})
-    c.check(msg.startswith("ops[10] delete is HIGH risk"), msg)
-    c.check(len(await c.objects(doc_id)) == count, "no rect created")
-    plan = await c.call("edit", {"doc_id": doc_id, "ops": ops, "dry_run": True})
-    c.check(plan.data.get("risk") == "high", "call risk is the maximum over the ops")
-    low = await c.call("edit", {"doc_id": doc_id, "ops": ops[:10]})
-    c.check(low.data.get("risk") == "medium" and len(low.data.get("created", [])) == 10, "medium")
-
-
-async def r3_svg_ops_need_token(c: Ctx) -> None:
-    """set_svg and insert_svg are HIGH."""
-    doc_id = await c.open_fixture("r3")
-    insert = [
-        {
-            "op": "insert_svg",
-            "svg": '<circle xmlns="http://www.w3.org/2000/svg" id="ins" cx="5" cy="5" r="4"/>',
-        }
-    ]
-    replace = [
-        {
-            "op": "set_svg",
-            "svg": '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
-            '<rect id="only" width="10" height="10"/></svg>',
-        }
-    ]
-    for ops in (insert, replace):
-        msg = await c.fail("edit", {"doc_id": doc_id, "ops": ops})
-        c.check(msg.endswith("is HIGH risk; re-call with approval_token"), msg)
-    await c.call("edit", {"doc_id": doc_id, "ops": insert, "approval_token": TOKEN})
-    c.check("ins" in ids_of(await c.objects(doc_id)), "fragment inserted")
-    await c.call("edit", {"doc_id": doc_id, "ops": replace, "approval_token": TOKEN})
-    c.check(ids_of(await c.objects(doc_id)) == {"only"}, "document replaced")
-
-    # Even an approved fragment goes through the scrubber: a <script> is refused or stripped.
-    script = '<g xmlns="http://www.w3.org/2000/svg" id="evil"><script>alert(1)</script></g>'
-    _, err = await c.attempt(
-        "edit",
-        {
-            "doc_id": doc_id,
-            "ops": [{"op": "insert_svg", "svg": script}],
-            "approval_token": TOKEN,
-        },
-    )
-    dest = c.ws / "r3-check.svg"
-    await c.call(
-        "export", {"doc_id": doc_id, "targets": [{"kind": "save_as", "dest_path": str(dest)}]}
-    )
-    c.check("<script" not in dest.read_text(encoding="utf-8"), f"no script in the document {err}")
-
-
-async def r4_save_as_overwrite(c: Ctx) -> None:
-    """save_as to an existing file needs overwrite=true AND a token."""
-    doc_id = await c.open_fixture("r4")
-    dest = c.ws / "r4-out.svg"
-    target: dict[str, Any] = {"kind": "save_as", "dest_path": str(dest)}
-    first = await c.call("export", {"doc_id": doc_id, "targets": [target]})
-    c.check(dest.exists() and not first.data["saved"].get("overwritten"), "first save is new")
-    await c.call(
-        "edit", {"doc_id": doc_id, "ops": [{"op": "fill", "ids": ["bg"], "color": "#00ff00"}]}
-    )
-    old = sha256(dest)
-    msg = await c.fail("export", {"doc_id": doc_id, "targets": [target]})
-    c.check("overwrite=True and an approval_token" in msg, msg)
-    msg = await c.fail("export", {"doc_id": doc_id, "targets": [{**target, "overwrite": True}]})
-    c.check("approval_token" in msg, msg)
-    c.check(sha256(dest) == old, "refused saves left the file alone")
-    done = await c.call(
-        "export",
-        {"doc_id": doc_id, "targets": [{**target, "overwrite": True}], "approval_token": TOKEN},
-    )
-    c.check(done.data["saved"].get("overwritten") is True, "overwritten flagged")
-    c.check(sha256(dest) != old, "file content replaced")
-
-
-async def r5_blank_token(c: Ctx) -> None:
-    """A whitespace-only token is not an approval."""
-    doc_id = await c.open_fixture("r5")
-    msg = await c.fail(
-        "edit", {"doc_id": doc_id, "ops": [{"op": "delete", "ids": ["bg"]}], "approval_token": "  "}
-    )
-    c.check(msg == "ops[0] delete is HIGH risk; re-call with approval_token", msg)
-    c.check("bg" in ids_of(await c.objects(doc_id)), "bg still there")
+    pruned = await c.call("history", {"doc_id": doc, "action": "prune"})
+    c.check(pruned.data.get("retained", 0) >= 1, f"prune keeps snapshots: {pruned.data}")
+    c.check({"bg", "label", "dot"} <= await c.ids(doc), "original ids stable through it all")
+    final = await c.call("inspect", {"doc_id": doc, "include": ["validate"]})
+    c.check(final.data["validate"]["ok"] is True, "document valid after 16 edits")
 
 
 # --- runner ----------------------------------------------------------------------------------
@@ -694,24 +717,14 @@ async def r5_blank_token(c: Ctx) -> None:
 Scenario = Callable[[Ctx], Awaitable[None]]
 
 SCENARIOS: dict[str, Scenario] = {
-    "K1": k1_logo_from_scratch,
-    "K2": k2_recolor_and_web_export,
-    "K3": k3_dollar_refs,
-    "K4": k4_selector_instead_of_lookup,
-    "K5": k5_atomic_rollback,
-    "K6": k6_dry_run_and_detail,
-    "K7": k7_noop,
-    "K8": k8_inspect,
-    "K9": k9_render,
-    "K10": k10_history,
-    "K11": k11_export_variants,
-    "K12": k12_discovery,
-    "K13": k13_actionable_errors,
-    "R1": r1_delete_needs_token,
-    "R2": r2_max_risk,
-    "R3": r3_svg_ops_need_token,
-    "R4": r4_save_as_overwrite,
-    "R5": r5_blank_token,
+    "WF1": wf1_logo_feedback_delivery,
+    "WF2": wf2_brand_refresh,
+    "WF3": wf3_mistakes_and_recovery,
+    "WF4": wf4_variants_contact_sheet,
+    "WF5": wf5_bulk_selectors,
+    "WF6": wf6_path_ops,
+    "WF7": wf7_foreign_svg_security,
+    "WF8": wf8_long_iteration,
 }
 
 
@@ -722,9 +735,9 @@ def title(fn: Scenario) -> str:
 def server_env(ws: Path) -> dict[str, str]:
     env = dict(os.environ)
     env["INKSCAPE_MCP_WORKSPACE_ROOTS"] = str(ws)
-    # Core surface only: live and raw actions stay off (scenarios cover neither).
+    # Live stays off; path ops (WF6) are behind the operator gate.
     env["INKSCAPE_MCP_LIVE_ENABLED"] = "0"
-    env["INKSCAPE_MCP_RAW_ACTION_ENABLED"] = "0"
+    env["INKSCAPE_MCP_RAW_ACTION_ENABLED"] = "1"
     return env
 
 
@@ -755,13 +768,15 @@ async def run(args: argparse.Namespace, ws: Path, keys: list[str]) -> list[dict[
         tools = sorted(t.name for t in await client.list_tools())
         print(f"server tools ({len(tools)}): {', '.join(tools)}", flush=True)
         for key in keys:
-            ctx = Ctx(client, ws, engine, args.require_inkscape)
+            wf_ws = ws / key.lower()
+            wf_ws.mkdir()
+            ctx = Ctx(client, wf_ws, engine, args.require_inkscape)
             started = time.monotonic()
             status, note = "PASS", ""
             try:
                 await SCENARIOS[key](ctx)
-            except Skipped as exc:
-                status, note = "SKIP", str(exc)
+                if ctx.skipped:
+                    status, note = "SKIP", "no inkscape, skipped: " + ", ".join(ctx.skipped)
             except Failed as exc:
                 status, note = "FAIL", str(exc)
             except Exception as exc:
@@ -789,8 +804,8 @@ async def run(args: argparse.Namespace, ws: Path, keys: list[str]) -> list[dict[
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--list", action="store_true", help="list scenarios and exit")
-    parser.add_argument("--only", help="comma-separated scenario ids, e.g. K1,R1")
+    parser.add_argument("--list", action="store_true", help="list workflows and exit")
+    parser.add_argument("--only", help="comma-separated workflow ids, e.g. WF1,WF6")
     parser.add_argument("--cmd", default="uv run inkscape-mcp", help="server command (STDIO)")
     parser.add_argument("--in-process", action="store_true", help="use the in-memory client")
     parser.add_argument("--require-inkscape", action="store_true", help="SKIP becomes FAIL")
@@ -808,7 +823,7 @@ def main() -> int:
     keys = [k.strip().upper() for k in args.only.split(",")] if args.only else list(SCENARIOS)
     unknown = [k for k in keys if k not in SCENARIOS]
     if unknown:
-        parser.error(f"unknown scenario(s): {', '.join(unknown)}; see --list")
+        parser.error(f"unknown workflow(s): {', '.join(unknown)}; see --list")
 
     ws = Path(tempfile.mkdtemp(prefix="scenario_smoke_"))
     try:
