@@ -7,6 +7,8 @@ here: `tool_tags.apply_disclosure` hides `live`/`live_edit` and `actions` per th
 
 from fastmcp import FastMCP
 
+from inkscape_mcp.tools._middleware import CompactValidationErrors
+
 
 def register_all(mcp: FastMCP) -> None:
     """Register every tool on `mcp`. Re-registering replaces the earlier registration."""
@@ -30,5 +32,6 @@ def register_all(mcp: FastMCP) -> None:
 def build_app() -> FastMCP:
     """A fresh FastMCP app with only the tools (no instructions, resources or prompts)."""
     app: FastMCP = FastMCP("inkscape-mcp", on_duplicate="replace")
+    app.add_middleware(CompactValidationErrors())
     register_all(app)
     return app

@@ -19,6 +19,7 @@ from inkscape_mcp.render.profiles import (
     create_icon_set,
     export_print_profile,
     export_web_profile,
+    profile_specs,
 )
 from inkscape_mcp.tools._result import guarded, ok, require_doc, to_tool_error
 
@@ -107,6 +108,12 @@ def _profile(
     return export_print_profile(doc_id, out_dir=out_dir, name_prefix=prefix)
 
 
+def _add_projection(result: dict[str, Any], projected_bytes: int, within_budget: bool) -> None:
+    """Fold one batch's dry-run projection into the per-document totals."""
+    result["projected_bytes"] = result.get("projected_bytes", 0) + projected_bytes
+    result["within_budget"] = result.get("within_budget", True) and within_budget
+
+
 def _export_one(
     doc_id: str,
     targets: list[Target],
@@ -148,8 +155,7 @@ def _export_one(
                         }
                         for i in batch.items
                     )
-                    result["projected_bytes"] = batch.projected_total_bytes
-                    result["within_budget"] = batch.within_budget
+                    _add_projection(result, batch.projected_total_bytes, batch.within_budget)
                 else:
                     result["artifacts"].extend(
                         _artifact(
@@ -164,7 +170,31 @@ def _export_one(
                     )
             elif isinstance(target, ProfileTarget):
                 if dry_run:
-                    result["plan"].append({"profile": target.name})
+                    specs = profile_specs(
+                        target.name,
+                        width_px=target.width_px,
+                        widths=target.widths,
+                        scales=target.scales,
+                        sizes=target.sizes,
+                    )
+                    planned = export_batch(
+                        doc_id,
+                        specs,
+                        dry_run=True,
+                        byte_budget=byte_budget,
+                        out_dir=out_dir,
+                        name_prefix=prefix,
+                    )
+                    result["plan"].extend(
+                        {
+                            "profile": target.name,
+                            "format": i.format,
+                            "width_px": i.width_px,
+                            "projected_bytes": i.projected_bytes,
+                        }
+                        for i in planned.items
+                    )
+                    _add_projection(result, planned.projected_total_bytes, planned.within_budget)
                     continue
                 prof = _profile(doc_id, target, out_dir, prefix)
                 result["artifacts"].extend(

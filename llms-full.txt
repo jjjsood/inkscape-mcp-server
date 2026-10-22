@@ -89,7 +89,7 @@ Description:
 Risk class: medium
 Key params: doc_id: string, action: string, snapshot_id: ['string', 'null'], label: ['string', 'null']
 Description:
-    Undo/redo safety net. Every edit already writes one snapshot. action='list' shows them; 'create' checkpoints now (optional label); 'restore' rolls the working copy back to `snapshot_id` (itself reversible: it snapshots first); 'prune' reclaims old snapshots; 'reload' re-reads the source file under the same doc_id (pre-reload snapshot taken). Example: history(doc_id, action='restore', snapshot_id='snap-0003')
+    Undo/redo safety net. Every edit already writes one snapshot. action='list' shows them; 'create' checkpoints now (optional label); 'restore' rolls the working copy back to `snapshot_id` (itself reversible: it snapshots first); 'prune' reclaims old snapshots and live frames; 'reload' re-reads the source file under the same doc_id (pre-reload snapshot taken). Example: history(doc_id, action='restore', snapshot_id='snap-0003')
 
 ### Live
 

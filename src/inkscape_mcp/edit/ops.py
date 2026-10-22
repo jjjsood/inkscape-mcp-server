@@ -69,6 +69,7 @@ from inkscape_mcp.edit.pipeline import EditApplyError, EditResult, apply_edit
 from inkscape_mcp.logging_setup import get_logger
 from inkscape_mcp.registry import DocEntry, Registry, get_registry
 from inkscape_mcp.render.cli import RenderError, render_preview
+from inkscape_mcp.validation_errors import format_validation_errors
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.limits import LimitExceeded, check_input_bytes_size
 from inkscape_mcp.workspace.risk import RiskClass
@@ -1147,7 +1148,7 @@ class Grid(_Op):
 
     def apply(self, run: _Run) -> str:
         pairs = collection_engine.resolve_grid_assets(
-            doc_ids=self.doc_ids, object_ids=self.source_ids, source_doc_id=self.source_doc_id
+            doc_ids=self.doc_ids, source_ids=self.source_ids, source_doc_id=self.source_doc_id
         )
         mutate, plan = collection_engine.make_compose_grid(
             pairs,
@@ -1311,17 +1312,6 @@ _OPS_ADAPTER: TypeAdapter[list[Op]] = TypeAdapter(list[Op])
 # --- public API -------------------------------------------------------------
 
 
-def _loc_path(loc: tuple[int | str, ...]) -> str:
-    """`(3, 'fill', 'color')` -> `ops[3].fill.color`."""
-    if not loc:
-        return "ops"
-    head, *rest = loc
-    out = f"ops[{head}]" if isinstance(head, int) else f"ops.{head}"
-    for part in rest:
-        out += f"[{part}]" if isinstance(part, int) else f".{part}"
-    return out
-
-
 def parse_ops(raw: list[Any]) -> list[Op]:
     """Validate + coerce a raw op list into typed ops, or raise :class:`OpError`.
 
@@ -1335,10 +1325,8 @@ def parse_ops(raw: list[Any]) -> list[Op]:
     try:
         return _OPS_ADAPTER.validate_python(raw)
     except ValidationError as exc:
-        errors = exc.errors()
-        shown = "; ".join(f"{_loc_path(e['loc'])}: {e['msg']}" for e in errors[:3])
-        more = f" (+{len(errors) - 3} more)" if len(errors) > 3 else ""
-        raise OpError(f"invalid ops: {shown}{more}") from exc
+        detail = format_validation_errors(exc.errors(include_url=False), root="ops")
+        raise OpError(f"invalid ops: {detail}") from exc
 
 
 def ops_risk(ops: list[Op]) -> RiskClass:

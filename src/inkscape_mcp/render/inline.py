@@ -9,13 +9,9 @@ embedded.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-import mcp.types as mcp_types
-from fastmcp.tools import ToolResult
 from fastmcp.utilities.types import Image
-from pydantic import BaseModel
 
 from inkscape_mcp.config import get_settings
 from inkscape_mcp.logging_setup import get_logger
@@ -97,44 +93,3 @@ def inline_image(
     except OSError:  # pragma: no cover
         return None
     return Image(data=data, format=fmt)
-
-
-#: Local-only artifact path fields scrubbed from the human/agent-facing TEXT payload when the
-#: raster is attached inline: they are workspace-root-relative (sec.12, never absolute), so a client
-#: that tries to `Read` them resolves against its own CWD (!= the server workspace root) and fails.
-#: The full values stay in `structured_content` for machine consumers and schema validation.
-_INLINE_SCRUBBED_PATH_FIELDS = ("artifact_path", "workspace_relative_path")
-
-#: Appended to the inline text payload so the agent trusts the attached image instead of chasing a
-#: path it cannot resolve.
-_INLINE_NOTE = (
-    "Raster attached inline as an image — view it directly. The artifact is stored server-side "
-    "at a workspace-relative path (see structured output); it is NOT on your local filesystem, "
-    "so do not Read it."
-)
-
-
-def with_inline[ModelT: BaseModel](result: ModelT, image: Image | None) -> ModelT | ToolResult:
-    """Return the bare structured `result`, or a `ToolResult` carrying it PLUS the inline image.
-
-    When `image` is None the bare Pydantic model is returned unchanged (existing direct callers and
-    structured-output consumers see exactly the same shape as before — is additive). When an
-    image is present the inline raster is appended as an MCP ImageContent block (so the agent
-    perceives its output without a second `Read`), the full structured result is preserved in
-    `structured_content` (so `.artifact_path` / dims / `stale` remain machine-readable), and the
-    human-facing TEXT payload is built WITHOUT the workspace-relative path fields — replaced by a
-    short note — so a path-chasing agent is not lured into a `Read` of a server-side path it cannot
-    resolve (1B).
-    """
-    if image is None:
-        return result
-    structured = result.model_dump()
-    display = {k: v for k, v in structured.items() if k not in _INLINE_SCRUBBED_PATH_FIELDS}
-    display["note"] = _INLINE_NOTE
-    return ToolResult(
-        content=[
-            mcp_types.TextContent(type="text", text=json.dumps(display)),
-            image.to_image_content(),
-        ],
-        structured_content=structured,
-    )

@@ -35,6 +35,7 @@ from inkscape_mcp.live.transport import (
     LiveNotAvailable,
 )
 from inkscape_mcp.logging_setup import get_logger
+from inkscape_mcp.registry import doc_not_found_message, get_registry
 from inkscape_mcp.render.batch import BatchError
 from inkscape_mcp.render.cli import InvalidObjectId, RenderError
 from inkscape_mcp.render.inline import inline_image
@@ -96,7 +97,7 @@ def to_tool_error(exc: BaseException, *, limit_msg: str = DEFAULT_LIMIT_MSG) -> 
     if isinstance(exc, ToolError):
         return exc
     if isinstance(exc, KeyError | DocumentNotFound | EditApplyError):
-        return ToolError("document id not found")
+        return ToolError(doc_not_found_message())
     if isinstance(exc, TargetNotFound):
         return ToolError("object id not found in document")
     if isinstance(exc, InspectionError | UnsafeXMLError):
@@ -187,12 +188,10 @@ def inline_png(doc_id: str, workspace_relative_path: str | None) -> Image | None
 
 def require_doc(doc_id: str) -> None:
     """Fail fast with the standard message when `doc_id` is not an open document."""
-    from inkscape_mcp.registry import get_registry
-
     try:
         get_registry().get(doc_id)
     except KeyError as exc:
-        raise ToolError("document id not found") from exc
+        raise ToolError(doc_not_found_message()) from exc
 
 
 def doc_summary(doc_id: str) -> dict[str, Any]:

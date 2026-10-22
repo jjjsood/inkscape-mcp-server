@@ -12,6 +12,7 @@ from __future__ import annotations
 from fastmcp import FastMCP
 
 from inkscape_mcp.overview import SYSTEM_OVERVIEW
+from inkscape_mcp.tools._middleware import CompactValidationErrors
 
 # Shared app instance. Resource and prompt modules import this and attach via @mcp.resource /
 # @mcp.prompt; the tool modules are attached by `tools.register_all`.
@@ -21,6 +22,7 @@ from inkscape_mcp.overview import SYSTEM_OVERVIEW
 # generated discovery surface (`help` / `llms.txt`) for specifics — so the
 # model holds the idioms without having to open a docs/ file.
 mcp: FastMCP = FastMCP("inkscape-mcp", instructions=SYSTEM_OVERVIEW, on_duplicate="replace")
+mcp.add_middleware(CompactValidationErrors())
 
 
 def register_tools() -> None:

@@ -1,10 +1,10 @@
-"""Live administration: host support probe, helper install, socket arming, live-error mapping.
+"""Live administration: host support probe, helper install, socket arming.
 
-The engine behind the live admin tools. Everything here is host/session scaffolding rather than
-document editing: `check_live_support` probes every transport, `live_install_helper` copies the
-shipped extension-socket helper into the Inkscape user extensions dir, `live_arm_socket` launches a
-headful Inkscape with the helper auto-invoked, and `map_live_error` turns a live-layer exception
-into a stable, host-path-free `ToolError` (sec.12) that names the next tool to call.
+The engine behind the `live` admin actions. Everything here is host/session scaffolding rather than
+document editing: `check_live_support` probes every transport (`live(action='check')`),
+`live_install_helper` copies the shipped extension-socket helper into the Inkscape user extensions
+dir, and `live_arm_socket` launches a headful Inkscape with the helper auto-invoked. Live-layer
+exceptions are mapped to host-path-free `ToolError`s by `tools/_result.py`.
 """
 
 from __future__ import annotations
@@ -17,25 +17,16 @@ from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 
 from inkscape_mcp.config import get_settings
-from inkscape_mcp.edit.dom import EditError
 from inkscape_mcp.live.selection import READ_REQUIRED, best_available, probe_transports
 from inkscape_mcp.live.socket_backend import SocketArmError, arm_socket_helper, is_helper_installed
-from inkscape_mcp.live.transport import (
-    LiveCapabilityUnsupported,
-    LiveConnectionError,
-    LiveDisabled,
-    LiveError,
-    LiveNotAvailable,
-    TransportProbe,
-)
+from inkscape_mcp.live.transport import TransportProbe
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
-from inkscape_mcp.workspace.risk import PolicyViolation
 
 _logger = get_logger("live.admin")
 
 
 class LiveSupport(BaseModel):
-    """Per-host live capability report (`check_live_support`).
+    """Per-host live capability report (`live(action='check')`).
 
     Lists EVERY transport probed on this host (not one assumed by OS) with its availability, plus
     the best read-capable transport and whether the helper extension is installed.
@@ -108,48 +99,12 @@ def _no_extensions_dir_message() -> str:
     """Stable, host-path-free message when the Inkscape extensions dir is undeterminable.
 
     This is a capability ABSENCE (no Inkscape data dir on this runtime), so it names the discovery
-    tools so the agent can inspect what this runtime supports rather than retry blindly.
+    tool so the agent can inspect what this runtime supports rather than retry blindly.
     """
     return (
         "could not determine the Inkscape extensions directory; "
-        "call list_capabilities to see what this runtime supports"
+        "call help(topic='diagnose') to see what this runtime supports"
     )
-
-
-def map_live_error(exc: Exception) -> ToolError:
-    """Map a live-layer exception to a stable, host-path-free `ToolError`."""
-    if isinstance(exc, PolicyViolation):
-        # Approval gate message, built from the policy layer — already safe (no host path).
-        return ToolError(str(exc))
-    if isinstance(exc, EditError):
-        # Validation message, built from typed parameters — already safe (no host path).
-        return ToolError(str(exc))
-    if isinstance(exc, LiveDisabled):
-        # CAPABILITY-ABSENT: live mode is gated off — name the config switch (already
-        # present) AND the probe tool so the agent can confirm readiness.
-        return ToolError(
-            "live mode is disabled (set INKSCAPE_MCP_LIVE_ENABLED=1 to enable); "
-            "call check_live_support to inspect live readiness"
-        )
-    if isinstance(exc, LiveNotAvailable):
-        # CAPABILITY-ABSENT: no live session — name the connect + probe tools so the
-        # agent establishes one rather than retrying blindly.
-        return ToolError(
-            "no live session available; call live_connect to connect "
-            "(or check_live_support to probe what this host supports)"
-        )
-    if isinstance(exc, LiveCapabilityUnsupported):
-        # CAPABILITY-ABSENT: the active transport lacks this op — name the probe tool so
-        # the agent can pick a transport that supports it.
-        return ToolError(
-            "the active live transport does not support this operation; "
-            "call check_live_support to see which transport supports it"
-        )
-    if isinstance(exc, LiveConnectionError):
-        return ToolError("live session communication failed")
-    if isinstance(exc, LiveError):
-        return ToolError("live operation failed")
-    return ToolError("live operation failed")
 
 
 def check_live_support() -> LiveSupport:
@@ -187,7 +142,7 @@ def live_install_helper() -> HelperInstallResult:
         # CAPABILITY-ABSENT: name the config switch AND the probe tool.
         raise ToolError(
             "live mode is disabled (set INKSCAPE_MCP_LIVE_ENABLED=1 to enable); "
-            "call check_live_support to inspect live readiness"
+            "call live(action='check') to inspect live readiness"
         )
     try:
         from inkscape_mcp.runtime.capabilities import get_cached_capabilities
@@ -220,7 +175,7 @@ def live_arm_socket() -> SocketArmResult:
     if not s.live_enabled:
         raise ToolError(
             "live mode is disabled (set INKSCAPE_MCP_LIVE_ENABLED=1 to enable); "
-            "call check_live_support to inspect live readiness"
+            "call live(action='check') to inspect live readiness"
         )
 
     # Ensure the helper files exist first (idempotent install), so the launched Inkscape can find

@@ -48,6 +48,10 @@ _logger = get_logger("engine.process")
 #: command's echo line always precedes it) or equals the lone banner prompt.
 PROMPT = "> "
 
+#: Upper bound (s) on how long `execute` waits for the stderr reader thread after a command's
+#: prompt has arrived on stdout. It ends early as soon as stderr output shows up.
+_STDERR_SETTLE_S = 0.01
+
 #: The plaintext stderr line Inkscape prints for an unknown/misspelled action. Detected and
 #: surfaced as a clean :class:`EngineActionError` (mirrors the "action_absent"
 #: class) so a bad action never silently no-ops.
@@ -270,6 +274,10 @@ class EngineProcess:
 
         frame = self._wait_for_prompt(timeout)
         with self._cond:
+            # stderr has its own reader thread, so the prompt on stdout can be seen a moment before
+            # the thread has stored the (earlier-written) error line. Give it a short, bounded
+            # chance; it returns immediately when stderr output arrives.
+            self._cond.wait_for(lambda: len(self._err) > err_mark, timeout=_STDERR_SETTLE_S)
             stderr_window = self._err[err_mark:]
 
         output_lines = self._strip_frame(frame, command)

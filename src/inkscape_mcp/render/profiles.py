@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 
 from inkscape_mcp.config import Settings, get_settings
 from inkscape_mcp.logging_setup import get_logger
+from inkscape_mcp.render.batch import ExportSpec
 from inkscape_mcp.render.cli import RenderResult, export_document
 
 _logger = get_logger("render.profiles")
@@ -258,6 +259,44 @@ def _resolve_web_widths(
     return [(width_px, None)]
 
 
+def _icon_sizes(sizes: list[int] | None, s: Settings) -> list[int]:
+    """The requested (or default) icon sizes, each validated; raises `ProfileSizeError`."""
+    requested = list(sizes) if sizes is not None else list(DEFAULT_ICON_SIZES)
+    for size in requested:
+        if size <= 0:
+            raise ProfileSizeError("icon size must be a positive integer")
+        if size > s.max_export_px:
+            raise ProfileSizeError("icon size exceeds the configured pixel cap")
+    return requested
+
+
+def profile_specs(
+    name: str,
+    *,
+    width_px: int | None = None,
+    widths: list[int] | None = None,
+    scales: list[int] | None = None,
+    sizes: list[int] | None = None,
+    settings: Settings | None = None,
+) -> list[ExportSpec]:
+    """The exports a profile would produce, as specs, for a dry-run size projection.
+
+    Mirrors `export_web_profile` / `create_icon_set` / `export_print_profile` (same size validation,
+    same order) without touching Inkscape. Raises `ProfileSizeError` for an invalid size.
+    """
+    s = _settings(settings)
+    if name == "web":
+        resolved = _resolve_web_widths(
+            width_px if width_px is not None else DEFAULT_WEB_WIDTH_PX, widths, scales
+        )
+        return [ExportSpec(format="png", width_px=w) for w, _ in resolved] + [
+            ExportSpec(format="svg")
+        ]
+    if name == "icons":
+        return [ExportSpec(format="png", width_px=n) for n in _icon_sizes(sizes, s)]
+    return [ExportSpec(format="pdf")]
+
+
 def create_icon_set(
     doc_id: str,
     sizes: list[int] | None = None,
@@ -278,15 +317,9 @@ def create_icon_set(
     Raises `SandboxViolation` for an out-of-workspace `out_dir`.
     """
     s = _settings(settings)
-    requested = list(sizes) if sizes is not None else list(DEFAULT_ICON_SIZES)
-
-    # Validate every size up front so an oversized/invalid request is rejected before Inkscape
-    # is ever invoked (and so a partial icon set is never written).
-    for size in requested:
-        if size <= 0:
-            raise ProfileSizeError("icon size must be a positive integer")
-        if size > s.max_export_px:
-            raise ProfileSizeError("icon size exceeds the configured pixel cap")
+    # Validated up front so an oversized/invalid request is rejected before Inkscape is ever
+    # invoked (and so a partial icon set is never written).
+    requested = _icon_sizes(sizes, s)
 
     artifacts: list[ProfileArtifact] = []
     for size in requested:

@@ -74,3 +74,29 @@ def test_unexpected_failures_are_opaque(tool_app, tool_ws, monkeypatch) -> None:
     monkeypatch.setattr("inkscape_mcp.snapshots.create_snapshot", boom)
     msg = _fail(tool_app, "history", {"doc_id": doc, "action": "create"})
     assert "secret" not in msg and "/host" not in msg
+
+
+@pytest.mark.parametrize(
+    ("tool", "args", "where"),
+    [
+        ("export", {"doc_id": "d", "targets": [{"kind": "nope"}]}, "targets"),
+        ("inspect", {"doc_id": "d", "include": ["bogus"]}, "include"),
+        (
+            "export",
+            {"doc_id": "d", "targets": [{"kind": "file", "format": "png"}] * 1 + [{}]},
+            "targets",
+        ),
+    ],
+)
+def test_invalid_arguments_are_one_short_line(tool_app, tool, args, where) -> None:
+    msg = _fail(tool_app, tool, args)
+    assert msg.startswith(f"invalid {tool} arguments: ") and where in msg
+    assert "\n" not in msg and "pydantic.dev" not in msg and "input_value" not in msg
+    assert msg.count(";") <= 2  # at most three problems
+
+
+def test_unknown_doc_id_lists_open_ids(tool_app, tool_ws) -> None:
+    assert "no document is open" in _fail(tool_app, "inspect", {"doc_id": "d_gone"})
+    doc = open_doc(tool_ws)
+    msg = _fail(tool_app, "inspect", {"doc_id": "d_gone"})
+    assert msg.startswith("document id not found; open ids: ") and doc in msg

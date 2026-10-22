@@ -314,7 +314,9 @@ def _run_query_all(query_path: Path, settings: Settings) -> tuple[float, float, 
     try:
         result: ProcessResult = run_inkscape(args, settings=settings)
     except ProcessError as exc:
-        raise ContentBBoxError("inkscape engine unavailable") from exc
+        raise ContentBBoxError(
+            "inkscape engine unavailable on this runtime; call help(topic='diagnose')"
+        ) from exc
 
     if result.timed_out:
         _logger.error("content bbox query timed out", extra={"duration_s": result.duration_s})

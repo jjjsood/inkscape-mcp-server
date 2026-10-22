@@ -74,3 +74,5 @@ def test_prune(tool_app, tool_ws) -> None:
     _recolor(tool_app, doc, "#0000ff")
     res = _hist(tool_app, doc, "prune")
     assert res["doc_id"] == doc and "retained" in res
+    assert "pruned_operations" in res
+    assert res["live_frames"]["pruned"] == 0  # the live-frame pass ran and reports its outcome

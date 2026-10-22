@@ -360,7 +360,9 @@ def run_path_op(
         try:
             result: ProcessResult = run_inkscape(args, settings=s)
         except ProcessError as exc:
-            raise PathOpError("inkscape engine unavailable") from exc
+            raise PathOpError(
+                "inkscape engine unavailable on this runtime; call help(topic='diagnose')"
+            ) from exc
 
         if result.timed_out:
             _logger.error("path op timed out", extra={"op": op, "duration_s": result.duration_s})

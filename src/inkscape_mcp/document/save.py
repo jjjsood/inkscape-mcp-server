@@ -44,7 +44,7 @@ from inkscape_mcp.operations import (
     new_operation,
     update_operation,
 )
-from inkscape_mcp.registry import DocEntry, Registry, get_registry
+from inkscape_mcp.registry import DocEntry, Registry, doc_not_found_message, get_registry
 from inkscape_mcp.validate import ValidationReport, validate_document
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.paths import (
@@ -256,7 +256,7 @@ def save_document_as(
     try:
         pre_report = validate_document(doc_id, registry=registry)
     except (DocumentNotFound, KeyError) as exc:
-        raise ToolError("document id not found") from exc
+        raise ToolError(doc_not_found_message()) from exc
     except InspectionError as exc:
         raise ToolError("document could not be parsed safely") from exc
 

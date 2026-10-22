@@ -42,8 +42,6 @@ def test_ok_has_one_text_block_and_no_structured_content() -> None:
 @pytest.mark.parametrize(
     ("exc", "expected"),
     [
-        (KeyError("x"), "document id not found"),
-        (DocumentNotFound("x"), "document id not found"),
         (TargetNotFound("x"), "object id not found in document"),
         (InspectionError("x"), "document could not be parsed safely"),
         (OpError("ops[2] fill: id 'a' not found"), "ops[2] fill: id 'a' not found"),
@@ -58,6 +56,11 @@ def test_ok_has_one_text_block_and_no_structured_content() -> None:
 )
 def test_error_map(exc: Exception, expected: str) -> None:
     assert str(to_tool_error(exc)) == expected
+
+
+@pytest.mark.parametrize("exc", [KeyError("x"), DocumentNotFound("x")])
+def test_unknown_doc_names_next_step(exc: Exception) -> None:
+    assert str(to_tool_error(exc)).startswith("document id not found; ")
 
 
 def test_limit_message_is_per_call() -> None:

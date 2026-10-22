@@ -141,10 +141,7 @@ def _validate_spec(
     """
     fmt = spec.format.lower().strip()
     if fmt not in _FORMATS:
-        raise BatchError(
-            f"spec {index}: unsupported format (expected one of: png, pdf, svg); "
-            f"call list_capabilities to see the supported export formats"
-        )
+        raise BatchError(f"spec {index}: unsupported format (expected one of: png, pdf, svg)")
     if spec.width_px is not None:
         if spec.width_px <= 0:
             raise BatchError(f"spec {index}: width_px must be a positive integer")

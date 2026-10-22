@@ -22,8 +22,9 @@ MAX_LABEL_LEN = 256
 DESCRIPTION = (
     "Undo/redo safety net. Every edit already writes one snapshot. action='list' shows them; "
     "'create' checkpoints now (optional label); 'restore' rolls the working copy back to "
-    "`snapshot_id` (itself reversible: it snapshots first); 'prune' reclaims old snapshots; "
-    "'reload' re-reads the source file under the same doc_id (pre-reload snapshot taken). "
+    "`snapshot_id` (itself reversible: it snapshots first); 'prune' reclaims old snapshots and "
+    "live frames; 'reload' re-reads the source file under the same doc_id (pre-reload snapshot "
+    "taken). "
     "Example: history(doc_id, action='restore', snapshot_id='snap-0003')"
 )
 
@@ -75,11 +76,19 @@ def history(
         }
     elif action == "prune":
         pruned = retention.prune_document(doc_id, registry=reg)
+        frames = pruned.live_frames
         payload = {
             "doc_id": doc_id,
             "pruned_snapshots": len(pruned.pruned_snapshot_ids),
+            "pruned_operations": len(pruned.pruned_operation_ids),
             "retained": pruned.retained_count,
             "freed_bytes": pruned.freed_bytes,
+            "live_frames": frames
+            and {
+                "pruned": frames.pruned_frames,
+                "retained": frames.retained_frames,
+                "freed_bytes": frames.freed_bytes,
+            },
         }
     else:  # reload
         pre = snapshots_engine.create_snapshot(doc_id, label="pre-reload", registry=reg)

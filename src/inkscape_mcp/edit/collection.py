@@ -43,6 +43,7 @@ from inkscape_mcp.edit.dom import (
     prepend_transform,
 )
 from inkscape_mcp.edit.pipeline import MutateFn
+from inkscape_mcp.registry import doc_not_found_message
 
 __all__ = [
     "MAX_CELLS",
@@ -182,25 +183,25 @@ def make_compose_grid(
     minting needs the live target tree).
     """
     if rows < 1 or cols < 1:
-        raise EditError("compose_grid rows and cols must each be >= 1")
+        raise EditError("grid rows and cols must each be >= 1")
     if rows * cols > MAX_CELLS:
-        raise EditError(f"compose_grid too large: {rows}x{cols} exceeds {MAX_CELLS} cells")
+        raise EditError(f"grid too large: {rows}x{cols} exceeds {MAX_CELLS} cells")
     if not (math.isfinite(cell) and cell > 0):
-        raise EditError("compose_grid cell must be a finite number greater than 0")
+        raise EditError("grid cell must be a finite number greater than 0")
     _require_finite("gap", gap)
     _require_finite("padding", padding)
     if gap < 0 or padding < 0:
-        raise EditError("compose_grid gap and padding must be >= 0")
+        raise EditError("grid gap and padding must be >= 0")
     if not cells:
-        raise EditError("compose_grid requires at least one asset")
+        raise EditError("grid requires at least one asset")
     if len(cells) > rows * cols:
         raise EditError(
-            f"compose_grid has {len(cells)} assets but only {rows * cols} cells ({rows}x{cols})"
+            f"grid has {len(cells)} assets but only {rows * cols} cells ({rows}x{cols})"
         )
 
     inner = cell - 2 * padding
     if inner <= 0:
-        raise EditError("compose_grid padding leaves no room in the cell (2*padding >= cell)")
+        raise EditError("grid padding leaves no room in the cell (2*padding >= cell)")
 
     plan: list[GridCell] = [
         GridCell(row=i // cols, col=i % cols, group_id="", source=label)
@@ -266,7 +267,7 @@ def make_place_document(
     _require_finite("x", x)
     _require_finite("y", y)
     if not (math.isfinite(scale) and scale > 0):
-        raise EditError("place_document scale must be a finite number greater than 0")
+        raise EditError("place scale must be a finite number greater than 0")
 
     def mutate(tree: etree._ElementTree) -> str:
         root = tree.getroot()
@@ -521,51 +522,49 @@ def build_consistency_verdict(
 def resolve_grid_assets(
     *,
     doc_ids: list[str] | None,
-    object_ids: list[str] | None,
+    source_ids: list[str] | None,
     source_doc_id: str | None,
 ) -> list[tuple[etree._Element, str]]:
-    """Resolve the ordered `(source_element, label)` pairs for `compose_grid` from one input mode.
+    """Resolve the ordered `(source_element, label)` pairs for the `grid` op from one input mode.
 
     EXACTLY ONE source mode is allowed (ADR-002 — a small, unambiguous tool, not a dispatcher):
 
     - `doc_ids`: each whole document's ROOT element is the asset (one cell per document). The root
       is grafted as-is; the placement engine deep-copies + re-ids it, so the source working copies
       are never mutated.
-    - `object_ids` (+ `source_doc_id`): each named object in the ONE `source_doc_id` is an asset.
+    - `source_ids` (+ `source_doc_id`): each named object in the ONE `source_doc_id` is an asset.
 
     Reads each source through `_load_tree` (safe parse). Raises `ToolError` with a stable,
     host-path-free message for a bad mode combination, an unknown id, or a missing object.
     """
     has_docs = bool(doc_ids)
-    has_objects = bool(object_ids)
+    has_objects = bool(source_ids)
     if has_docs == has_objects:
-        raise ToolError(
-            "compose_grid requires EXACTLY ONE of doc_ids OR object_ids (with source_doc_id)"
-        )
+        raise ToolError("grid requires EXACTLY ONE of doc_ids OR source_ids (with source_doc_id)")
 
     pairs: list[tuple[etree._Element, str]] = []
     if has_docs:
         if source_doc_id is not None:
-            raise ToolError("source_doc_id is only valid with object_ids, not doc_ids")
+            raise ToolError("source_doc_id is only valid with source_ids, not doc_ids")
         for did in doc_ids or []:
             try:
                 _entry, root = _load_tree(did)
             except DocumentNotFound as exc:
-                raise ToolError("document id not found") from exc
+                raise ToolError(doc_not_found_message()) from exc
             except InspectionError as exc:
                 raise ToolError("document could not be parsed safely") from exc
             pairs.append((root, did))
         return pairs
 
     if source_doc_id is None:
-        raise ToolError("object_ids requires source_doc_id (the document the objects live in)")
+        raise ToolError("source_ids requires source_doc_id (the document the objects live in)")
     try:
         _entry, root = _load_tree(source_doc_id)
     except DocumentNotFound as exc:
-        raise ToolError("document id not found") from exc
+        raise ToolError(doc_not_found_message()) from exc
     except InspectionError as exc:
         raise ToolError("document could not be parsed safely") from exc
-    for oid in object_ids or []:
+    for oid in source_ids or []:
         elem = find_by_id(root, oid)
         if elem is None:
             raise ToolError("object id not found in document")

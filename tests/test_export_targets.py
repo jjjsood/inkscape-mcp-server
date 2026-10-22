@@ -140,6 +140,41 @@ def test_dry_run_plans_without_writing(tool_app, tool_ws, engine) -> None:
     assert engine == []
 
 
+@pytest.mark.parametrize(
+    ("profile", "formats"),
+    [
+        ({"name": "web", "widths": [256, 512]}, ["png", "png", "svg"]),
+        ({"name": "icons", "sizes": [16, 32]}, ["png", "png"]),
+        ({"name": "print"}, ["pdf"]),
+    ],
+)
+def test_dry_run_projects_profile_sizes(tool_app, tool_ws, engine, profile, formats) -> None:
+    doc = open_doc(tool_ws)
+    data = _export(tool_app, doc, [{"kind": "profile", **profile}], dry_run=True)
+    assert [p["format"] for p in data["plan"]] == formats
+    assert all(p["profile"] == profile["name"] and p["projected_bytes"] > 0 for p in data["plan"])
+    assert data["projected_bytes"] == sum(p["projected_bytes"] for p in data["plan"])
+    assert engine == []
+
+
+def test_dry_run_totals_add_up_across_targets(tool_app, tool_ws, engine) -> None:
+    doc = open_doc(tool_ws)
+    data = _export(
+        tool_app,
+        doc,
+        [{"kind": "file", "format": "png", "width_px": 128}, {"kind": "profile", "name": "print"}],
+        dry_run=True,
+    )
+    assert data["projected_bytes"] == sum(p["projected_bytes"] for p in data["plan"])
+
+
+def test_dry_run_rejects_what_the_real_run_would(tool_app, tool_ws, engine) -> None:
+    doc = open_doc(tool_ws)
+    with pytest.raises(ToolError, match="icon size"):
+        _export(tool_app, doc, [{"kind": "profile", "name": "icons", "sizes": [0]}], dry_run=True)
+    assert engine == []
+
+
 def test_budget_refuses_an_oversized_batch(tool_app, tool_ws, engine) -> None:
     doc = open_doc(tool_ws)
     with pytest.raises(ToolError, match="budget"):

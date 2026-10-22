@@ -39,7 +39,7 @@ from inkscape_mcp.edit.collection import (
 )
 from inkscape_mcp.edit.optimize import DEFAULT_PRECISION, analyze_optimizations
 from inkscape_mcp.logging_setup import get_logger
-from inkscape_mcp.registry import Registry, get_registry
+from inkscape_mcp.registry import Registry, doc_not_found_message, get_registry
 from inkscape_mcp.validate import (
     Finding,
     _data_uri_decoded_size,
@@ -338,7 +338,7 @@ def collect_signals(doc_ids: list[str]) -> dict[str, ConsistencySignals]:
         try:
             _entry, root = _load_tree(doc_id)
         except DocumentNotFound as exc:
-            raise ToolError("document id not found") from exc
+            raise ToolError(doc_not_found_message()) from exc
         except InspectionError as exc:
             raise ToolError("document could not be parsed safely") from exc
         signals[doc_id] = consistency_signals(root)

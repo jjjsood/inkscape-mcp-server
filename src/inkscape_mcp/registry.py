@@ -265,6 +265,18 @@ def get_registry() -> Registry:
     return _registry_singleton
 
 
+def doc_not_found_message(*, limit: int = 5) -> str:
+    """`document id not found` plus the next step: the open ids, or how to open one.
+
+    Host-path-free: only registry ids are listed, never source paths.
+    """
+    ids = [e.doc_id for e in get_registry().list_documents()]
+    if not ids:
+        return "document id not found; no document is open, call open(path=…|svg=…|canvas=…) first"
+    shown = ", ".join(ids[:limit]) + (f" (+{len(ids) - limit} more)" if len(ids) > limit else "")
+    return f"document id not found; open ids: {shown}"
+
+
 def reset_registry() -> None:
     """Drop the cached singleton (test helper)."""
     global _registry_singleton
