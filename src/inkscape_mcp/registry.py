@@ -76,7 +76,7 @@ class Registry:
 
         A relative `source_path` is anchored to `workspace_roots[0]` (the document root, NOT the
         process CWD) before validation — matching the sibling write APIs `save_document_as` /
-        `live_sync_to_workspace` and the one-location contract. An absolute path is
+        `open(from_live=...)` and the one-location contract. An absolute path is
         passed through unchanged. The anchor only chooses the base; `resolve_read_path` remains the
         sole containment + symlink authority, so a relative `../`-escape, an absolute path outside
         the workspace, or a symlink whose target leaves the sandbox is still rejected with

@@ -5,7 +5,7 @@ Pure functions over the WORKING COPY of a registered document. Extends the valid
 `validate_document` findings and adds quantitative METRICS (object/node counts, embedded-raster
 weight, font coverage, viewBox health) plus OPTIMIZATION OPPORTUNITIES sourced from the
 optimizer (`inkscape_mcp.edit.optimize.analyze_optimizations`) so the opportunities it names are
-exactly what `svg_web_optimize` would strip.
+exactly what `optimize_web` would strip.
 
 The `*_set` collection helpers at the bottom (`require_unique_doc_ids`, `collect_signals`,
 `build_set_verdict`) are the scaffolding shared by the set tools (export / optimize / quality): each
@@ -83,7 +83,7 @@ _GENERIC_FONTS = frozenset(
     }
 )
 
-#: Human-readable hints for each optimization opportunity code (all removed by `svg_web_optimize`).
+#: Human-readable hints for each optimization opportunity code (all removed by `optimize_web`).
 _OPPORTUNITY_MESSAGES = {
     "editor_metadata": "editor-only metadata/attributes/comments can be stripped",
     "unused_defs": "unreferenced <defs> templates can be removed",
@@ -130,7 +130,7 @@ class QualityMetrics(BaseModel):
 
 
 class OptimizationOpportunity(BaseModel):
-    """One optimization opportunity — consistent with what `svg_web_optimize` would strip.
+    """One optimization opportunity — consistent with what `optimize_web` would strip.
 
     `code` is a stable machine identifier; `count` is how many items would be cleaned up; `message`
     is human-readable and host-path-free.
@@ -244,7 +244,7 @@ def quality_report(
     Resolves `doc_id` via the registry; raises `DocumentNotFound` for an unknown id and
     `InspectionError` if the working copy cannot be parsed safely (the tool layer maps both to
     `ToolError`). `precision` is the decimal precision used when counting reducible-coordinate
-    opportunities (matching `svg_web_optimize`'s default).
+    opportunities (matching `optimize_web`'s default).
     """
     reg = registry if registry is not None else get_registry()
     try:

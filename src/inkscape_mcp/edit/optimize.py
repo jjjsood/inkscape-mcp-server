@@ -1,7 +1,7 @@
 """Web-optimization edit engine (ADR-005 direct DOM).
 
 Pure ``mutate(tree) -> str`` builder for the one tool that genuinely mutates the document,
-``svg_web_optimize``. It edits the parsed working tree IN MEMORY and returns a short human summary,
+``optimize_web``. It edits the parsed working tree IN MEMORY and returns a short human summary,
 so it plugs straight into :func:`inkscape_mcp.edit.pipeline.apply_edit` (snapshot + Operation
 Record + before/after preview — reversible, medium risk). No MCP decorators here; the
 ``inkscape_mcp.tools.optimize`` layer wraps this and maps exceptions to ``ToolError``.
@@ -374,7 +374,7 @@ def analyze_optimizations(
     """Count (without mutating) what :func:`optimize_web_mutate` would remove/rewrite.
 
     Read-only: used by ``quality_report`` so the optimization opportunities it reports are
-    exactly what ``svg_web_optimize`` strips. ``precision`` is clamped into range rather than
+    exactly what ``optimize_web`` strips. ``precision`` is clamped into range rather than
     raising (a report should never fail on a stray value). ``keep_ids`` mirrors the optimizer's
     allowlist: listed ids are treated as live, so a kept id is NOT counted as an unreferenced-id /
     unused-defs / empty-group opportunity (keeps the count cross-joinable with an optimize run that

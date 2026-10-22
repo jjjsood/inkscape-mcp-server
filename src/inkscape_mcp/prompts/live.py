@@ -2,8 +2,8 @@
 
 A Prompt orients the agent on HOW to run the live-view loop safely; it adds ZERO authority (ADR-006)
 — it issues no command and grants no capability, it merely describes the perceive→decide→act→observe
-loop and the rules around it. The actual work happens through the existing typed tools, with every
-mutation still gated by `run_live_mutation` (HIGH + approval).
+loop and the rules around it. The actual work happens through the `live` and `live_edit` tools,
+with every mutation still gated (HIGH risk + approval token).
 
 Registered via ``@mcp.prompt`` against the shared app; the module import (wired in
 ``server.register_tools``) runs the decorator and self-registers the prompt.
@@ -28,26 +28,29 @@ def live_canvas_assist(goal: str) -> str:
     return (
         "You are a live-canvas co-pilot for a RUNNING Inkscape instance. Work toward this goal:\n"
         f"  {clean_goal}\n\n"
-        "Drive the canvas with ONE bounded perceive→decide→act→observe iteration at a time, "
-        "using `live_session_step`. You — not the tool — decide each act; the tool embeds no "
-        "autonomy. The loop is bounded and cancelable BY CONSTRUCTION: each `live_session_step` "
-        "is exactly one iteration, you choose whether to call it again, and you may stop at any "
-        "point. There is no server-side autonomous run.\n\n"
+        "Drive the canvas with ONE bounded perceive→decide→act→observe iteration at a time, with "
+        "the `live` and `live_edit` tools. You — not the tools — decide each act; they embed no "
+        "autonomy. The loop is bounded and cancelable BY CONSTRUCTION: every call is one step, you "
+        "choose whether to make another, and you may stop at any point. There is no server-side "
+        "autonomous run. Both tools connect automatically; `live(action='check')` shows what "
+        "this host supports if they cannot.\n\n"
         "Loop:\n"
-        "1. PERCEIVE — call `live_session_step` with NO action first to read the structured "
-        "`LiveScene` (selection ids + bboxes, viewport, canvas, visible objects) and a frame. "
+        "1. PERCEIVE — `live(action='observe', include=['selection', 'inspect', 'view'])` returns "
+        "the selection (ids + bboxes), the selected objects' details and an inline PNG of the "
+        "canvas in ONE call (`scene` adds the visible objects, `document` the document info). "
         "Reason over STRUCTURE, not pixels.\n"
-        "2. DECIDE — pick ONE semantic act from the fixed set: `apply` (validated style and/or "
-        "transform on the selection), `insert_svg` (a safe-parsed SVG fragment), or `set_text` "
-        "(replace the selected text). There is NO raw-Action or code path.\n"
-        "3. ACT — call `live_session_step` again with that `action`, its validated params, and "
-        "an `approval_token`. Mutating a running session is HIGH risk: the act is REFUSED without "
-        "an approval token. Every act flows through the same governed write path as the standalone "
-        "live write tools, producing a Live Operation Record with before/after frames.\n"
-        "4. OBSERVE — the step returns the after-scene plus a focused before/after "
-        "`live_diff_view` linked to the operation. Inspect it, then decide whether to iterate.\n\n"
-        "Between iterations, use `live_wait_for_change` to react to the user's own GUI edits "
-        "instead of busy-looping. Connect with `live_connect` first; sync results into the "
-        "workspace with `live_sync_to_workspace` when you want a tracked, snapshotted copy. Never "
-        "attempt to mutate without an approval token, and keep every act within the fixed set."
+        "2. DECIDE — pick ONE semantic act from the fixed set: `apply` (validated `style` and/or "
+        "`transform` on the selection), `insert_svg` (a safe-parsed `svg_fragment`), or `set_text` "
+        "(replace the selected text). There is NO free-text Action or code path.\n"
+        "3. ACT — `live_edit(action=..., ..., observe='render', approval_token=...)`. Mutating a "
+        "running session is HIGH risk: the act is REFUSED without an approval token. It produces a "
+        "Live Operation Record, and `observe='render'` returns the canvas afterwards "
+        "(`observe='diff'` a before/after overlay).\n"
+        "4. OBSERVE — inspect the picture; `live(action='diff', operation_id=...)` shows exactly "
+        "what an act changed. Then decide whether to iterate.\n\n"
+        "Between iterations, use `live(action='wait')` to react to the user's own GUI edits "
+        "instead of busy-looping; `live(action='viewport', ...)` moves the view. To work on the "
+        "canvas as a tracked, snapshotted workspace document, `open(from_live={'dest_path': "
+        "'...'})`. Never attempt to mutate without an approval token, and keep every act within "
+        "the fixed set."
     )

@@ -31,23 +31,23 @@ def test_all_four_prompts_registered() -> None:
 
 def test_web_export_prompt_points_at_shipped_tools() -> None:
     body = prepare_web_export()
-    assert "export_web_profile" in body
-    assert "export_batch" in body
+    assert "'name': 'web'" in body and "'kind': 'file'" in body
+    assert "optimize_web" in body and "dry_run" in body
 
 
 def test_icon_set_prompt_points_at_shipped_tools() -> None:
     body = prepare_icon_set()
-    assert "create_icon_set" in body
+    assert "'name': 'icons'" in body and "sizes" in body
 
 
 def test_print_export_prompt_points_at_shipped_tools() -> None:
     body = prepare_print_export()
-    assert "export_print_profile" in body
+    assert "'name': 'print'" in body and "resize_canvas" in body
 
 
 def test_theme_recoloring_prompt_points_at_shipped_tools() -> None:
     body = theme_recoloring()
-    assert "apply_palette" in body
+    assert "palette" in body
     assert "replace_color" in body
 
 

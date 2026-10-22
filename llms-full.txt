@@ -121,15 +121,293 @@ Key params: goal: ['string', 'null'], op: ['string', 'null'], topic: ['string', 
 Description:
     Ask for guidance. goal='make the svg smaller' -> the tool:op to use + an example call; op='fill' -> that edit op's fields, risk and a valid example; topic='ops' lists every op, 'capabilities' shows what this runtime supports, 'diagnose' re-probes it; stat_paths=[...] returns size + sha256 of workspace files. No arguments: the short workflow. Example: help(op='create_rect')
 
+## Edit ops
+
+ops that act on objects take ids=[...] or select={tag,fill,stroke,text,id_prefix,bbox}; '$<n>' names the id op n created.
+help(op=NAME) gives fields and an example.
+
+### create
+
+#### create_rect
+Risk: medium · creates an id
+Does: Create a `<rect>`.
+Fields: id: str | None?, parent: str | None?, x: float, y: float, width: float, height: float, rx: float | None?, ry: float | None?, fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Example: {"op":"create_rect","x":0,"y":0,"width":200,"height":100,"fill":"#3366ff","id":"bg"}
+
+#### create_circle
+Risk: medium · creates an id
+Does: Create a `<circle>`.
+Fields: id: str | None?, parent: str | None?, cx: float, cy: float, r: float, fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Example: {"op":"create_circle","cx":50,"cy":50,"r":40,"fill":"#ffcc00"}
+
+#### create_ellipse
+Risk: medium · creates an id
+Does: Create an `<ellipse>`.
+Fields: id: str | None?, parent: str | None?, cx: float, cy: float, rx: float, ry: float, fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Example: {"op":"create_ellipse","cx":50,"cy":50,"rx":40,"ry":20}
+
+#### create_line
+Risk: medium · creates an id
+Does: Create a `<line>`.
+Fields: id: str | None?, parent: str | None?, x1: float, y1: float, x2: float, y2: float, stroke: str | None?, stroke_width: str | None?
+Example: {"op":"create_line","x1":0,"y1":0,"x2":100,"y2":100,"stroke":"#000000","stroke_width":"2"}
+
+#### create_polygon
+Risk: medium · creates an id
+Does: Create a closed `<polygon>` from `[x, y]` points.
+Fields: id: str | None?, parent: str | None?, points: list[tuple[float, float]], fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Example: {"op":"create_polygon","points":[[0,0],[100,0],[50,80]],"fill":"#cc3333"}
+
+#### create_polyline
+Risk: medium · creates an id
+Does: Create an open `<polyline>` from `[x, y]` points.
+Fields: id: str | None?, parent: str | None?, points: list[tuple[float, float]], fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Example: {"op":"create_polyline","points":[[0,0],[50,40],[100,0]],"stroke":"#000000"}
+
+#### create_path
+Risk: medium · creates an id
+Does: Create a `<path>` from path data `d`.
+Fields: id: str | None?, parent: str | None?, d: str, fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Example: {"op":"create_path","d":"M10 10 L90 10 L50 80 Z","fill":"#228833"}
+
+#### create_text
+Risk: medium · creates an id
+Does: Create a `<text>` at `(x, y)`.
+Fields: id: str | None?, parent: str | None?, x: float, y: float, text: str, fill: str | None?, stroke: str | None?, stroke_width: str | None?
+Example: {"op":"create_text","x":20,"y":60,"text":"Hello","fill":"#222222"}
+
+#### create_group
+Risk: medium · creates an id
+Does: Create an empty `<g>`.
+Fields: id: str | None?, parent: str | None?
+Example: {"op":"create_group","id":"logo"}
+
+#### create_use
+Risk: medium · creates an id
+Does: Create a `<use>` instance of the existing object `href`.
+Fields: id: str | None?, parent: str | None?, href: str, x: float | None?, y: float | None?, transform: str | None?
+Example: {"op":"create_use","href":"bg","x":10,"y":10}
+
+#### linear_gradient
+Risk: medium · creates an id
+Does: Add a `<linearGradient>` to `<defs>`; use it as `url(#id)` or `url(#$n)` in a later paint.
+Fields: stops: list[Stop], x1: str?, y1: str?, x2: str?, y2: str?, id: str | None?
+Example: {"op":"linear_gradient","id":"sky","stops":[{"offset":0,"color":"#ffffff"},{"offset":1,"color":"#3366ff"}]}
+
+#### radial_gradient
+Risk: medium · creates an id
+Does: Add a `<radialGradient>` to `<defs>`; use it as `url(#id)` or `url(#$n)` in a later paint.
+Fields: stops: list[Stop], cx: str?, cy: str?, r: str?, fx: str | None?, fy: str | None?, id: str | None?
+Example: {"op":"radial_gradient","id":"glow","stops":[{"offset":0,"color":"#ffff00"},{"offset":1,"color":"#ff8800"}]}
+
+#### group
+Risk: medium · creates an id
+Does: Wrap the targets in a new `<g>` (the new group's id is `id`, or minted).
+Fields: ids: list[str] | None?, select: Selector | None?, id: str | None?
+Example: {"op":"group","ids":["a","b"],"id":"pair"}
+
+#### reparent
+Risk: medium
+Does: Move each target under the existing object `parent` (appended last, so painted on top).
+Fields: ids: list[str] | None?, select: Selector | None?, parent: str
+Example: {"op":"reparent","ids":["a"],"parent":"pair"}
+
+### style
+
+#### fill
+Risk: medium
+Does: Set the fill colour (or `url(#id)`) of the targets, optionally with a fill opacity.
+Fields: ids: list[str] | None?, select: Selector | None?, color: str, opacity: float | None?
+Example: {"op":"fill","ids":["bg"],"color":"#ff0000"}
+
+#### stroke
+Risk: medium
+Does: Set stroke colour / width / opacity of the targets (at least one of the three).
+Fields: ids: list[str] | None?, select: Selector | None?, color: str | None?, width: str | None?, opacity: float | None?
+Example: {"op":"stroke","ids":["bg"],"color":"#000000","width":"2"}
+
+#### opacity
+Risk: medium
+Does: Set the element-level opacity (0..1) of the targets.
+Fields: ids: list[str] | None?, select: Selector | None?, opacity: float
+Example: {"op":"opacity","ids":["bg"],"opacity":0.5}
+
+#### replace_color
+Risk: medium
+Does: Replace colour `from_color` by `to_color` document-wide, or within `ids` / `select`.
+Fields: ids: list[str] | None?, select: Selector | None?, from_color: str, to_color: str
+Example: {"op":"replace_color","from_color":"#ff0000","to_color":"#00aa00"}
+
+#### palette
+Risk: medium
+Does: Apply many colour replacements (`mapping` old -> new), document-wide or within a scope.
+Fields: ids: list[str] | None?, select: Selector | None?, mapping: dict[str, str]
+Example: {"op":"palette","mapping":{"#ff0000":"#00aa00","#0000ff":"#222222"}}
+
+#### font
+Risk: medium
+Does: Set font family / size / weight (at least one) on text targets.
+Fields: ids: list[str] | None?, select: Selector | None?, family: str | None?, size: str | None?, weight: str | None?
+Example: {"op":"font","select":{"tag":"text"},"family":"DejaVu Sans","size":"24"}
+
+### object
+
+#### replace_text
+Risk: medium
+Does: Replace the text content of text targets.
+Fields: ids: list[str] | None?, select: Selector | None?, text: str
+Example: {"op":"replace_text","ids":["title"],"text":"New title"}
+
+#### duplicate
+Risk: medium · creates an id
+Does: Duplicate each target in place (clone stacked just above). `new_id` needs one target.
+Fields: ids: list[str] | None?, select: Selector | None?, new_id: str | None?
+Example: {"op":"duplicate","ids":["bg"],"new_id":"bg2"}
+
+#### rename
+Risk: medium
+Does: Change the id and/or label of one target; references to the old id are rewritten.
+Fields: ids: list[str] | None?, select: Selector | None?, new_id: str | None?, label: str | None?
+Example: {"op":"rename","ids":["bg"],"new_id":"background","label":"Background"}
+
+#### delete
+Risk: high · needs approval_token
+Does: Delete the targets (HIGH risk: needs an `approval_token`).
+Fields: ids: list[str] | None?, select: Selector | None?
+Example: {"op":"delete","ids":["bg"]}
+
+### transform
+
+#### move
+Risk: medium
+Does: Translate each target by `(dx, dy)`.
+Fields: ids: list[str] | None?, select: Selector | None?, dx: float, dy: float
+Example: {"op":"move","ids":["bg"],"dx":10,"dy":-5}
+
+#### scale
+Risk: medium
+Does: Scale each target by `sx` (and `sy`, default `sx`) about the parent origin.
+Fields: ids: list[str] | None?, select: Selector | None?, sx: float, sy: float | None?
+Example: {"op":"scale","ids":["bg"],"sx":1.5}
+
+#### rotate
+Risk: medium
+Does: Rotate each target by `degrees` (about `(cx, cy)` when both are given).
+Fields: ids: list[str] | None?, select: Selector | None?, degrees: float, cx: float | None?, cy: float | None?
+Example: {"op":"rotate","ids":["bg"],"degrees":45}
+
+#### tile
+Risk: medium · creates an id
+Does: Lay out a `rows` x `cols` grid of clones of each target, `dx` / `dy` apart.
+Fields: ids: list[str] | None?, select: Selector | None?, rows: int, cols: int, dx: float, dy: float
+Example: {"op":"tile","ids":["bg"],"rows":2,"cols":3,"dx":120,"dy":120}
+
+#### resize_canvas
+Risk: medium
+Does: Set the canvas width/height (optionally adjusting the viewBox, or adding a bleed).
+Fields: width: str, height: str, adjust_viewbox: bool?, bleed: float | None?, bleed_color: str?
+Example: {"op":"resize_canvas","width":"400","height":"300"}
+
+#### normalize_viewbox
+Risk: medium
+Does: Normalize / repair the root viewBox.
+Fields: 
+Example: {"op":"normalize_viewbox"}
+
+#### fit_to_content
+Risk: medium
+Does: Set the root viewBox to the content bounding box (measured by Inkscape).
+Fields: 
+Example: {"op":"fit_to_content"}
+
+### compose
+
+#### set_svg
+Risk: high · needs approval_token
+Does: REPLACE the whole document with `svg` (root `<svg>`, allowlist-scrubbed). HIGH risk.
+Fields: svg: str
+Example: {"op":"set_svg","svg":"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\"/>"}
+
+#### insert_svg
+Risk: high · needs approval_token · creates an id
+Does: Graft an SVG fragment under `parent` (default: the root; allowlist-scrubbed). HIGH risk.
+Fields: svg: str, parent: str | None?, unwrap: bool?
+Example: {"op":"insert_svg","svg":"<circle xmlns=\"http://www.w3.org/2000/svg\" cx=\"5\" cy=\"5\" r=\"4\"/>"}
+
+#### place
+Risk: medium · creates an id
+Does: Place another document (or one of its objects) here at `(x, y)` scaled by `scale`. A same-document source is read from the CURRENT in-memory state; another document is read from its saved working copy. The placed content is wrapped in a new `<g>` (the created id).
+Fields: source_doc_id: str, source_id: str | None?, x: float, y: float, scale: float?
+Example: {"op":"place","source_doc_id":"doc-other","x":10,"y":10,"scale":0.5}
+
+#### grid
+Risk: medium · creates an id
+Does: Lay documents (`doc_ids`) or objects of one document (`source_doc_id` + `source_ids`) out in a `rows` x `cols` grid of `cell`-sized cells in THIS document (sources are read from their saved working copies).
+Fields: rows: int, cols: int, cell: float, doc_ids: list[str] | None?, source_doc_id: str | None?, source_ids: list[str] | None?, gap: float?, scale_to_fit: bool?, padding: float?
+Example: {"op":"grid","doc_ids":["doc-a","doc-b"],"rows":1,"cols":2,"cell":128}
+
+### path
+
+#### simplify
+Risk: high · needs approval_token
+Does: Simplify the targeted paths (fewer nodes; lossy).
+Fields: ids: list[str] | None?, select: Selector | None?
+Example: {"op":"simplify","ids":["p1"]}
+
+#### union
+Risk: high · needs approval_token · creates an id
+Does: Boolean union of >= 2 targets into one path (the bottom-most id survives).
+Fields: ids: list[str] | None?, select: Selector | None?
+Example: {"op":"union","ids":["p1","p2"]}
+
+#### difference
+Risk: high · needs approval_token · creates an id
+Does: Boolean difference: the bottom-most target minus the others (its id survives).
+Fields: ids: list[str] | None?, select: Selector | None?
+Example: {"op":"difference","ids":["p1","p2"]}
+
+#### combine
+Risk: high · needs approval_token · creates an id
+Does: Combine >= 2 paths into one compound path (the bottom-most id survives).
+Fields: ids: list[str] | None?, select: Selector | None?
+Example: {"op":"combine","ids":["p1","p2"]}
+
+#### break_apart
+Risk: high · needs approval_token
+Does: Break compound paths into their sub-paths.
+Fields: ids: list[str] | None?, select: Selector | None?
+Example: {"op":"break_apart","ids":["p1"]}
+
+#### stroke_to_path
+Risk: high · needs approval_token
+Does: Convert strokes to filled outline paths.
+Fields: ids: list[str] | None?, select: Selector | None?
+Example: {"op":"stroke_to_path","ids":["p1"]}
+
+#### cleanup
+Risk: high · needs approval_token
+Does: Clean up the targeted paths (alias of simplify in Inkscape 1.4).
+Fields: ids: list[str] | None?, select: Selector | None?
+Example: {"op":"cleanup","ids":["p1"]}
+
+### optimize
+
+#### optimize_web
+Risk: medium
+Does: Web-optimize: strip editor data / unused defs, drop empty groups, round numbers.
+Fields: precision: int?, keep_ids: list[str] | None?
+Example: {"op":"optimize_web","precision":3}
+
+
 ## Prompts
 
 #### compose_artwork
 Args: goal
-Description: On-ramp the generative loop: create → draw → render(inline) → validate → export.
+Description: On-ramp the generative loop: open → edit(render='inline') → look → export.
 
-Orients the agent to build new artwork toward `goal` from a blank canvas using the typed
-authoring tools, preview the inline raster, validate, then export. Guidance only — it executes
-nothing and adds no authority; the work flows through the gated tools it names.
+Orients the agent to build new artwork toward `goal` from a blank canvas with typed `edit` ops,
+look at the inline picture, validate, then export. Guidance only — it executes nothing and
+adds no authority; the work flows through the gated tools it names.
 
 #### live_canvas_assist
 Args: goal
@@ -153,12 +431,12 @@ Description: Orient the agent on exporting a document as web-ready assets (PNG +
 
 #### restyle_artwork
 Args: goal
-Description: On-ramp the OBJECT-TARGETED restyle loop: find → set_fill/set_stroke → render → export.
+Description: On-ramp the OBJECT-TARGETED restyle loop: select → fill/stroke ops → render → export.
 
-Orients the agent to restyle SPECIFIC objects toward `goal` — address them with `find_objects`,
-change each one's fill/stroke/opacity, preview, then export. This is the per-object companion to
-the document-wide `theme_recoloring` prompt (which swaps colors across the WHOLE document via
-`replace_color` / `apply_palette`). Guidance only; adds no authority.
+Orients the agent to restyle SPECIFIC objects toward `goal` — address them with `select`,
+change each one's fill/stroke/opacity in one `edit` call, look, then export. This is the
+per-object companion to the document-wide `theme_recoloring` prompt (which swaps colors across
+the WHOLE document via `replace_color` / `palette`). Guidance only; adds no authority.
 
 #### theme_recoloring
 Args: (none)

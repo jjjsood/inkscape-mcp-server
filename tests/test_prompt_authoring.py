@@ -28,23 +28,26 @@ def test_compose_prompt_returns_non_empty_str_with_goal() -> None:
     assert "draw a blue logo" in body
 
 
-def test_compose_prompt_references_e14_create_render_export_tools() -> None:
+def test_compose_prompt_references_the_open_edit_render_export_tools() -> None:
     body = compose_artwork("anything")
-    for tool in (
-        "create_document",
+    for name in (
+        "open(",
+        "edit(",
+        "render='inline'",
         "create_rect",
         "create_text",
-        "add_linear_gradient",
-        "add_radial_gradient",
-        "set_fill",
+        "linear_gradient",
+        "radial_gradient",
+        "'fill'",
         "create_group",
-        "find_objects",
-        "render_preview",
-        "validate_document",
-        "export_document",
-        "restore_snapshot",
+        "inspect(",
+        "render(",
+        "'validate'",
+        "export(",
+        "'$n'",
+        "history(",
     ):
-        assert tool in body, f"compose_artwork omits {tool!r}"
+        assert name in body, f"compose_artwork omits {name!r}"
 
 
 def test_restyle_prompt_returns_non_empty_str_with_goal() -> None:
@@ -56,14 +59,8 @@ def test_restyle_prompt_returns_non_empty_str_with_goal() -> None:
 
 def test_restyle_prompt_is_object_targeted_and_references_tools() -> None:
     body = restyle_artwork("anything")
-    for tool in (
-        "find_objects",
-        "set_fill",
-        "set_stroke",
-        "render_preview",
-        "export_document",
-    ):
-        assert tool in body, f"restyle_artwork omits {tool!r}"
+    for name in ("inspect(", "select", "fill", "stroke", "opacity", "render(", "export("):
+        assert name in body, f"restyle_artwork omits {name!r}"
 
 
 def test_authoring_prompts_grant_no_raw_action_authority() -> None:
@@ -71,6 +68,7 @@ def test_authoring_prompts_grant_no_raw_action_authority() -> None:
     for body in (compose_artwork("x"), restyle_artwork("x")):
         assert "run_raw_action" not in body
         assert "--actions" not in body
+        assert "actions(" not in body
 
 
 def test_empty_goal_is_handled() -> None:

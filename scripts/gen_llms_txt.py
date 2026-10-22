@@ -13,14 +13,15 @@ What it writes (at the SERVER ROOT — the parent of this ``scripts/`` dir):
 
 * ``llms.txt`` — a concise machine-readable INDEX: project one-liner, run/transport, env config
   (pulled from ``inkscape_mcp.config`` ENV_* constants), then every tool grouped by category with
-  its ONE-LINE purpose (first docstring line) + risk class.
-* ``llms-full.txt`` — the FULL manifest: per tool the name, full templated description, risk class,
-  and key params (param names + JSON-schema types from the tool's input schema); plus prompts and
-  resources sections; plus the same env/run config.
+  its ONE-LINE purpose (first docstring line) + risk class, then the edit ops by group.
+* ``llms-full.txt`` — the FULL manifest: per tool the name, full description, risk class, and key
+  params (param names + JSON-schema types from the tool's input schema); then the full op
+  reference (per op: risk, fields, a validated example — the same data as ``help(op=...)`` and the
+  ``inkscape://ops`` resource, from ``inkscape_mcp.edit.op_docs``); plus prompts and resources
+  sections; plus the same env/run config.
 
-Risk class is DERIVED, never hardcoded per-tool: it is parsed from the ``Risk class:`` line that the
-6-part docstring template guarantees on every tool. Categories are derived from the tool's
-defining module (``tool.fn.__module__``) via ``_TOOL_GROUPS``.
+A tool's risk class is DERIVED, never hardcoded here: it is the ceiling ``risk_for(tool)`` reports
+(``inkscape_mcp.runtime.capabilities``). Categories come from the tool name via ``_TOOL_GROUPS``.
 
 Run inside ``inkscape-mcp-server/``::
 
@@ -32,6 +33,7 @@ DO NOT edit the generated ``llms.txt`` / ``llms-full.txt`` by hand — re-run th
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -205,6 +207,56 @@ def _grouped_tools(tools: list[Any]) -> list[tuple[str, list[Any]]]:
     return out
 
 
+def _op_reference() -> dict[str, Any]:
+    """The full op reference (groups, per-op fields/risk/example) from the op union itself."""
+    from inkscape_mcp.edit.op_docs import ops_reference
+
+    return ops_reference()
+
+
+def _ops_index_lines(ref: dict[str, Any]) -> list[str]:
+    """The compact op listing for ``llms.txt``: one line per group, HIGH-risk ops starred."""
+    lines = [
+        "## Edit ops (the `ops` list of `edit` and `open`; `help(op=NAME)` has fields + example)",
+        "",
+        f"{ref['targets']}.",
+        "Starred ops are HIGH risk (need approval_token).",
+        "",
+    ]
+    for group, ops in ref["groups"].items():
+        names = ", ".join(
+            f"{name}{'*' if ref['ops'][name]['risk'] == 'high' else ''}" for name in ops
+        )
+        lines.append(f"- {group}: {names}")
+    lines.append("")
+    return lines
+
+
+def _ops_full_lines(ref: dict[str, Any]) -> list[str]:
+    """The per-op reference for ``llms-full.txt``: risk, fields and a validated example."""
+    lines = ["## Edit ops", "", f"{ref['targets']}.", f"{ref['more']}."]
+    for group, ops in ref["groups"].items():
+        lines += ["", f"### {group}"]
+        for name in ops:
+            op = ref["ops"][name]
+            flags = [f"Risk: {op['risk']}"]
+            if op.get("needs_approval"):
+                flags.append("needs approval_token")
+            if op.get("creates_id"):
+                flags.append("creates an id")
+            fields = ", ".join(f"{n}: {t}" for n, t in op["fields"].items())
+            lines += [
+                "",
+                f"#### {name}",
+                " · ".join(flags),
+                f"Does: {op['does']}",
+                f"Fields: {fields}",
+                f"Example: {json.dumps(op['example'], separators=(',', ':'), ensure_ascii=False)}",
+            ]
+    lines.append("")
+    return lines
+
+
 def render_index(surface: dict[str, Any]) -> str:
     """Build the concise ``llms.txt`` INDEX content."""
     tools: list[Any] = surface["tools"]
@@ -234,6 +286,8 @@ def render_index(surface: dict[str, Any]) -> str:
             risk = _risk_class(tool)
             lines.append(f"- {tool.name} [risk: {risk}] — {purpose}")
     lines.append("")
+
+    lines += _ops_index_lines(_op_reference())
     return "\n".join(lines)
 
 
@@ -278,6 +332,9 @@ def render_full(surface: dict[str, Any]) -> str:
             lines.append("Description:")
             for desc_line in (tool.description or "(no description)").splitlines():
                 lines.append(f"    {desc_line}".rstrip())
+    lines.append("")
+
+    lines += _ops_full_lines(_op_reference())
     lines.append("")
 
     lines.append("## Prompts")

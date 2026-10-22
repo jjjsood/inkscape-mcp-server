@@ -70,3 +70,16 @@ Operator-tunable limits / gates (all optional, env-overridable):
 
 ### Help
 - help [risk: low] — Ask for guidance. goal='make the svg smaller' -> the tool:op to use + an example call; op='fill' -> that edit op's fields, risk and a valid example; topic='ops' lists every op, 'capabilities' shows what this runtime supports, 'diagnose' re-probes it; stat_paths=[...] returns size + sha256 of workspace files. No arguments: the short workflow. Example: help(op='create_rect')
+
+## Edit ops (the `ops` list of `edit` and `open`; `help(op=NAME)` has fields + example)
+
+ops that act on objects take ids=[...] or select={tag,fill,stroke,text,id_prefix,bbox}; '$<n>' names the id op n created.
+Starred ops are HIGH risk (need approval_token).
+
+- create: create_rect, create_circle, create_ellipse, create_line, create_polygon, create_polyline, create_path, create_text, create_group, create_use, linear_gradient, radial_gradient, group, reparent
+- style: fill, stroke, opacity, replace_color, palette, font
+- object: replace_text, duplicate, rename, delete*
+- transform: move, scale, rotate, tile, resize_canvas, normalize_viewbox, fit_to_content
+- compose: set_svg*, insert_svg*, place, grid
+- path: simplify*, union*, difference*, combine*, break_apart*, stroke_to_path*, cleanup*
+- optimize: optimize_web

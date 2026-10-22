@@ -1,55 +1,57 @@
 """In-context system overview delivered as MCP server ``instructions``.
 
-The Penpot survey's real onboarding edge is that its ``high_level_overview`` is delivered as MCP
-server **instructions** — so the model holds the document model + idioms every turn, not only if it
-happens to open a ``docs/`` file. Our equivalent prose already exists in
-``docs/agent-usage-guide.md``, but that sits OUTSIDE the agent's context. This module
-delivers a CONCISE orientation in-context via the FastMCP ``instructions`` field.
+The model should hold the document model + idioms every turn, not only if it happens to open a
+``docs/`` file, so a CONCISE orientation is delivered in-context via the FastMCP ``instructions``
+field.
 
-It is deliberately a SHORT orientation + pointers, NOT a second copy of the guide: it states the
-load-bearing invariants (document model + ``doc_id`` lifecycle, the working-copy + snapshot/restore
-reversibility idiom, the risk classes + ``approval_token`` gate, the intended tool ordering, and the
-render-and-look default) and then routes to the authoritative, generated discovery surface
-(``how_do_i`` / ``list_capabilities`` / ``llms.txt``) and the full guide for everything else. The
-deep detail stays single-sourced in the guide + the generated manifest; this never restates it.
-
-Audit: before this module the server was constructed as ``FastMCP("inkscape-mcp")`` with NO
-``instructions`` field — wired tool ANNOTATIONS, TAGS, progressive disclosure, and the
-``inkscape://prompts`` index, but no always-in-context overview. This closes that gap.
+It is deliberately a SHORT orientation + pointers, NOT a second copy of the agent usage guide
+(``docs/agent-usage-guide.md``): it states the load-bearing invariants (the ``open`` ->
+``edit(..., render='inline')`` -> ``export`` flow and the ``doc_id`` lifecycle, ops with ``$n``
+references and selectors, the snapshot/restore reversibility idiom, the risk classes +
+``approval_token`` gate, and the render-and-look default) and then routes to the discovery surface
+(``help`` / ``inkscape://ops`` / ``llms.txt``) for everything else. The deep detail stays
+single-sourced in the guide and the generated manifest.
 """
 
 from __future__ import annotations
 
 #: The concise, always-in-context overview handed to FastMCP as ``instructions``. Kept short on
-#: purpose — it orients, then points at the generated discovery surface for specifics.
+#: purpose — it orients, then points at the discovery surface for specifics.
 SYSTEM_OVERVIEW = """\
-inkscape-mcp makes Inkscape/SVG documents agent-ready through SMALL TYPED TOOLS (not a free-text
-run_action / execute_code portmanteau). Orientation:
+inkscape-mcp makes Inkscape/SVG documents agent-ready through ten result-oriented tools (not a
+free-text run_action / execute_code portmanteau). Orientation:
 
-Document model & lifecycle. Work is keyed by a `doc_id`: `create_document` (new blank) or
-`open_document` (existing workspace SVG) returns one; every other tool takes it. Typical flow:
-open/create -> inspect (`inspect_document` / `find_objects` for object ids) -> edit (typed DOM
-tools) -> `render_preview` to look -> `export_document` / `save_document_as`. All writes land on a
-WORKING COPY; the original source file is never modified.
+Flow. `open` (a workspace file, SVG text, a blank canvas, or the live canvas) returns a `doc_id`
+and can already apply the first `ops`. `edit(doc_id, ops=[...], render='inline')` applies MANY typed
+ops in ONE call and returns the ids it created plus a picture of the result. `export(doc_id,
+targets=[...])` writes png/pdf/svg files, profiles (web/icons/print) or save_as. All writes land on
+a WORKING COPY; the original source file is never modified.
 
-Reversibility. Every real mutation auto-snapshots first and emits an Operation Record (ADR-004). A
-genuine no-op writes nothing and reports `changed: false`. Undo with
-`restore_snapshot(doc_id, snapshot_id)`; `create_snapshot` checkpoints on demand; `list_snapshots`
-browses; `reload_document` re-reads the working copy from disk.
+Ops. An op is `{op: 'create_rect', x, y, width, height}`. `"$<n>"` names the id that op n of the
+same call created, so a whole drawing is one call; ops that act on objects take `ids` or a `select`
+({fill, stroke, tag, text, id_prefix, bbox}) instead of a separate lookup. A call is atomic: one bad
+op rejects the whole call and nothing changes. `dry_run=true` returns the plan. `help(topic='ops')`
+lists every op, `help(op=NAME)` shows its fields and a valid example (also: `inkscape://ops`).
 
-Risk classes & approval. Each tool declares a risk class: low (read/inspect/render/export),
-medium (create/style/text/transform — reversible, snapshot-backed), high (overwrite/delete/path
-geometry/Action chains — requires a per-operation `approval_token`, minted out of band), restricted
-(never ships). A high-risk tool refuses without a non-empty `approval_token`.
+Reversibility. Every real edit takes ONE snapshot and writes ONE Operation Record (ADR-004); a
+genuine no-op writes nothing and reports `changed: false`. `history(doc_id, action='restore',
+snapshot_id=...)` rolls back (itself reversible); 'create' checkpoints, 'list' browses, 'reload'
+re-reads the source file.
 
-Render and look before you trust an edit. After a mutating call, render and
-INSPECT the result — `render_preview` (headless) or `live_render_view` (live mode) — before relying
-on it; `restore_snapshot` reverts if it is wrong.
+Risk classes & approval. low (inspect/render/help/export), medium (edit ops: reversible,
+snapshot-backed), high (delete, set_svg/insert_svg, path ops, overwriting a file, running Actions:
+needs a per-operation `approval_token`, minted out of band), restricted (never ships). A call's risk
+is the MAX over its ops; a high-risk call without a non-empty `approval_token` is refused.
 
-Finding the right tool. Don't grep the surface: call `how_do_i(goal)` (natural-language goal ->
-tool names + how-to, and it flags out-of-scope goals), or `list_capabilities` for the runtime matrix
-plus the full intent map. The generated `llms.txt` / `llms-full.txt` manifest and
-`docs/agent-usage-guide.md` carry the full per-tool detail.
+Look before you trust. `edit(..., render='inline')` and `render(doc_id)` return a PNG you can see;
+check it, and `history(action='restore')` if it is wrong. `inspect(doc_id, include=[...],
+select=...)` reads structure, objects, validation and quality.
+
+Finding the right call. Don't grep the surface: `help(goal='make the svg smaller')` returns the
+`tool:op` to use plus an example call (and flags out-of-scope goals); `help(topic='capabilities')`
+shows what this runtime supports and `help(topic='diagnose')` re-probes it. `live` / `live_edit`
+steer a running Inkscape when live mode is enabled. The generated `llms.txt` / `llms-full.txt` and
+`docs/agent-usage-guide.md` carry the full detail.
 """
 
 __all__ = ["SYSTEM_OVERVIEW"]

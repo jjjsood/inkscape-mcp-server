@@ -542,7 +542,7 @@ def validate_document(doc_id: str, registry: Registry | None = None) -> Validati
     optimization opportunities (editor-only metadata, unused `<defs>`, unreferenced ids, empty
     groups, reducible coordinate precision): those are not defects, they are clean-up suggestions
     and live in `quality_report` as `opportunities` (sourced from the optimizer, exactly what
-    `svg_web_optimize` would strip). Keeping cruft out of validation means `ValidationReport.ok`
+    `optimize_web` would strip). Keeping cruft out of validation means `ValidationReport.ok`
     stays a true correctness gate rather than a style opinion. Use `quality_report` for the cruft
     signal.
 

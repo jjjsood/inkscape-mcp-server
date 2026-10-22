@@ -247,7 +247,7 @@ def _is_empty_marker_container(elem: etree._Element) -> bool:
 
     When a stroked object carries no marker, ``object-stroke-to-path`` still emits an empty
     ``<g inkscape:label="markers">`` (or a bare empty ``<g>`` / ``<path>``) wrapping nothing — a
-    no-op container the later ``svg_web_optimize`` pass strips. We drop it here so the conversion
+    no-op container the later ``optimize_web`` pass strips. We drop it here so the conversion
     leaves a clean tree in one call. A container is "empty" only when it has NO element
     children AND, for a ``path``, no ``d`` geometry, so a real marker subtree is never removed.
     """
@@ -440,7 +440,7 @@ def apply_path_op(
     # than letting it fall through to the SVG default black.
     #: it also leaves an empty marker container behind when the source had no marker — drop
     # that no-op stub here so the conversion lands a clean tree in one call (was stripped later by
-    # svg_web_optimize).
+    # optimize_web).
     if op == STROKE_TO_PATH:
         _restore_outline_fill(root, new_root, ids)
         _drop_empty_markers(root, new_root, ids)

@@ -46,9 +46,9 @@ ENV_LIVE_FRAME_KEEP_DAYS = "INKSCAPE_MCP_LIVE_FRAME_KEEP_DAYS"
 ENV_LIVE_FRAME_MAX_BYTES = "INKSCAPE_MCP_LIVE_FRAME_MAX_BYTES"
 
 #: Master live-mode gate (X1). Live mode is ON by default (operator-chosen); set this to a
-#: falsy value (`0`/`false`/`no`/`off`) to opt OUT. When off, `live_connect` refuses cleanly and
-#: headless is unaffected. This is the hard operator switch; `live_connect` / `live_disconnect` are
-#: the per-session runtime toggle on top of it.
+#: falsy value (`0`/`false`/`no`/`off`) to opt OUT. When off, the `live` / `live_edit` tools are
+#: hidden and refuse cleanly; headless is unaffected. This is the hard operator switch;
+#: `live(action='connect'|'disconnect')` are the per-session runtime toggle on top of it.
 ENV_LIVE_ENABLED = "INKSCAPE_MCP_LIVE_ENABLED"
 
 #: Headless shell engine gate (ADR-007). Selects the engine transport for the Inkscape-engine

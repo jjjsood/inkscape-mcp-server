@@ -110,3 +110,22 @@ def test_committed_files_are_up_to_date(tmp_path: Path) -> None:
             f"    uv run python scripts/gen_llms_txt.py\n"
             f"then commit the updated {name}."
         )
+
+
+def test_every_edit_op_is_documented_in_both_files(tmp_path: Path) -> None:
+    """The op reference comes from the op union, so a new op shows up without hand edits."""
+    from inkscape_mcp.edit.op_docs import op_models
+
+    gen = _load_generator()
+    out = gen.generate(dest=tmp_path)  # type: ignore[attr-defined]
+    missing_full = sorted(op for op in op_models() if f"#### {op}\n" not in out["llms-full.txt"])
+    assert not missing_full, f"ops missing from llms-full.txt: {missing_full}"
+    ops_section = out["llms.txt"].split("## Edit ops", 1)[1]
+    index_ops = {
+        op.strip().rstrip("*")
+        for line in ops_section.splitlines()
+        if line.startswith("- ")
+        for op in line.split(": ", 1)[1].split(",")
+    }
+    assert set(op_models()) <= index_ops
+    assert "Starred ops are HIGH risk" in out["llms.txt"] and "delete*" in out["llms.txt"]
