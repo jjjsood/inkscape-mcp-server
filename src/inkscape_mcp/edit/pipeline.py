@@ -64,12 +64,7 @@ from inkscape_mcp.config import (
     get_settings,
 )
 from inkscape_mcp.document.inspect import DocumentNotFound
-from inkscape_mcp.edit.dom import (
-    EditError,
-    TargetNotFound,
-    load_working_tree,
-    write_working_tree,
-)
+from inkscape_mcp.edit.dom import load_working_tree, write_working_tree
 from inkscape_mcp.logging_setup import get_logger, log_file_io
 from inkscape_mcp.operations import (
     OperationStatus,
@@ -270,9 +265,12 @@ def apply_edit(
     #    snapshot / preview / write has touched disk.
     try:
         summary = mutate(tree)
-    except (EditError, TargetNotFound):
-        # Mark the record discarded, but never let a failure here mask the real mutation error
-        # (e.g. the operations dir vanished): log and still re-raise the original cause.
+    except Exception:
+        # Any failure (EditError / TargetNotFound, but also an engine-level PathOpError or a
+        # LimitExceeded raised by an op kernel member) must retract the freshly-proposed record, or
+        # it would linger as an inert `proposed` entry. Mark the record discarded, but never let a
+        # failure here mask the real mutation error (e.g. the operations dir vanished): log and
+        # still re-raise the original cause.
         try:
             update_operation(record, registry, status=OperationStatus.DISCARDED)
         except Exception:

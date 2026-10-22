@@ -9,7 +9,7 @@
 
 inkscape-mcp — an MCP server that makes Inkscape/SVG documents agent-ready: inspect, edit safely (reversible), validate, render, and export.
 
-Surface: 99 tools, 7 prompts, 16 resources.
+Surface: 97 tools, 7 prompts, 16 resources.
 
 ## Run & transport
 Transport: STDIO only (local). No HTTP.
@@ -80,7 +80,6 @@ Operator-tunable limits / gates (all optional, env-overridable):
 - validate_document [risk: low] — Validate a loaded document and return structured, machine-readable findings.
 
 ### Edit
-- apply_edits [risk: medium] — Apply an ordered list of typed DOM edits to a document as ONE atomic, reversible operation.
 - apply_palette [risk: medium] — Apply many `from -> to` colour replacements in a single reversible operation.
 - delete_object [risk: high] — Delete objects by id from a document in ONE reversible, snapshot-backed operation.
 - duplicate_object [risk: medium] — Duplicate an object or group in place, inserting the clone right after the original.
@@ -165,5 +164,4 @@ Operator-tunable limits / gates (all optional, env-overridable):
 - save_document_as [risk: medium] — Save a document's current working-copy state to a NEW file in the workspace.
 - stat_artifact [risk: low] — Return the on-disk byte size + sha256 digest of one sandboxed artifact.
 - stat_artifacts [risk: low] — Stat a SET of sandboxed artifacts: per-file size + sha256 plus an aggregate byte total.
-- transform_objects [risk: medium] — Apply ONE typed op to EVERY object a selector matches — one atomic, reversible operation.
 - validate_action_chain [risk: low] — Dry-run-validate an ordered Action chain and return its resolved plan (NO mutation).

@@ -100,18 +100,8 @@ def register_tools() -> None:
     # section of list_capabilities/diagnose_runtime.
     # adds the HIGH-risk, reversible `delete_object` in the `dom` structural-edit module
     # (snapshot + Operation Record per op via the shared pipeline; approval-gated).
-    # adds the `batch.apply_edits` tool: N typed DOM edits (a discriminated union over the
-    # existing ops) applied through the SAME edit kernel as one validated-first, atomic, reversible
-    # operation (one snapshot + one Operation Record; risk = max over members, approval-gated when a
-    # member is high). No new authority — it composes existing typed edits (ADR-002/003/004).
-    # adds the `transform_objects` tool: a declarative SELECTOR (the find_objects predicate
-    # engine, verbatim) → ONE typed op (from the apply_edits member set, minus its target ids)
-    # fanned across every match, fed through the SAME atomic batch kernel (one snapshot + one Op
-    # Record; dry-run default; max_matches bound; risk = the op's class, approval-gated when high).
-    # No code escape hatch, no second matcher, no forked kernel (ADR-002/003/004).
     from inkscape_mcp.tools import (  # noqa: F401
         actions,
-        batch,
         compose,
         create,
         discover,
@@ -131,7 +121,6 @@ def register_tools() -> None:
         system,
         text_object,
         transform,
-        transform_objects,
         validate,
     )
 

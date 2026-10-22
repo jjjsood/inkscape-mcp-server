@@ -58,7 +58,7 @@ PROJECT_ONE_LINER = (
 _MODULE_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Create", ("create", "compose", "document")),
     ("Inspect", ("find", "validate", "quality")),
-    ("Edit", ("style", "text_object", "transform", "dom", "batch")),
+    ("Edit", ("style", "text_object", "transform", "dom")),
     ("Paths", ("paths",)),
     ("Export", ("export", "profiles", "export_batch")),
     ("Optimize", ("optimize",)),

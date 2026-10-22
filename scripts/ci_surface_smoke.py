@@ -53,10 +53,11 @@ from typing import Any
 #: (find_objects). Adds 1 read-only discoverability tool (how_do_i) and an additive `intents`
 #: section on the capabilities matrix (no new tool beyond how_do_i). Adds its read/verify and
 #: collection tools (stat_artifact[s], compose_grid + the *_set tools, delete_object, …) and
-#: adds 2 more (place_document, live_arm_socket) → 97. Adds the `apply_edits` typed batch
-#: tool → 98. Adds the `transform_objects` selector→op tool → 99. A future epic that changes
-#: the tool/prompt/resource set bumps the matching constant; the diff pinpoints what moved.
-EXPECTED_TOOLS = 99
+#: adds 2 more (place_document, live_arm_socket) → 97. (The typed-batch `apply_edits` and the
+#: `transform_objects` selector tool, both added later, were removed again by the op-kernel rework
+#: — their job is now `edit/ops.py`.) A future epic that changes the tool/prompt/resource set
+#: bumps the matching constant; the diff pinpoints what moved.
+EXPECTED_TOOLS = 97
 #: 5 prior prompts (export/recolor x4 + live_canvas_assist) + 2 authoring
 #: prompts (compose_artwork, restyle_artwork) = 7. No new @mcp.tool — tool count is unchanged.
 EXPECTED_PROMPTS = 7

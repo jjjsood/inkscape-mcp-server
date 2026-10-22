@@ -59,7 +59,7 @@ def _doc_id(ctx: dict[str, Any], result: Any) -> None:
 
 
 def legacy_scenarios(workdir: Path) -> list[Scenario]:
-    """Minimal realistic call sequences on the pre-rework surface (one batch edit, no extras)."""
+    """Minimal realistic call sequences on the pre-rework surface (one tool call per element)."""
     (workdir / "logo.svg").write_text(SAMPLE_SVG, encoding="utf-8")
     palette = {"#ff0000": "#3366cc"}
     return [
@@ -69,23 +69,24 @@ def legacy_scenarios(workdir: Path) -> list[Scenario]:
             [
                 Step("create_document", lambda c: {"width": 200, "height": 120}, _doc_id),
                 Step(
-                    "apply_edits",
+                    "create_rect",
                     lambda c: {
                         "doc_id": c["doc_id"],
-                        "edits": [
-                            {
-                                "op": "create_rect",
-                                "x": 0,
-                                "y": 0,
-                                "width": 200,
-                                "height": 120,
-                                "fill": "#3366cc",
-                                "object_id": "bg",
-                            },
-                            {"op": "create_circle", "cx": 100, "cy": 60, "r": 30, "fill": "#fff"},
-                            {"op": "create_text", "x": 20, "y": 100, "text": "Logo"},
-                        ],
+                        "x": 0,
+                        "y": 0,
+                        "width": 200,
+                        "height": 120,
+                        "fill": "#3366cc",
+                        "object_id": "bg",
                     },
+                ),
+                Step(
+                    "create_circle",
+                    lambda c: {"doc_id": c["doc_id"], "cx": 100, "cy": 60, "r": 30, "fill": "#fff"},
+                ),
+                Step(
+                    "create_text",
+                    lambda c: {"doc_id": c["doc_id"], "x": 20, "y": 100, "text": "Logo"},
                 ),
                 Step("render_preview", lambda c: {"doc_id": c["doc_id"], "width_px": 400}),
                 Step("export_document", lambda c: {"doc_id": c["doc_id"], "format": "png"}),

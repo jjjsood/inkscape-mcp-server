@@ -362,3 +362,14 @@ def before_after_previews(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setenv(ENV_EDIT_PREVIEWS, "before_after")
     get_settings.cache_clear()
+
+
+def run_ops(doc_id: str, *ops: dict[str, Any], **kwargs: Any) -> Any:
+    """Run typed ops as ONE atomic edit (`edit.ops.run_ops`); extra kwargs pass through.
+
+    Stands in for the `edit` tool in tests: each positional arg is one op dict, e.g.
+    ``run_ops(doc_id, {"op": "fill", "ids": ["r1"], "color": "#00f"}, approval_token="x")``.
+    """
+    from inkscape_mcp.edit.ops import run_ops as _run_ops
+
+    return _run_ops(doc_id, list(ops), **kwargs)

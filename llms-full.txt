@@ -9,7 +9,7 @@
 
 inkscape-mcp — an MCP server that makes Inkscape/SVG documents agent-ready: inspect, edit safely (reversible), validate, render, and export.
 
-Surface: 99 tools, 7 prompts, 16 resources.
+Surface: 97 tools, 7 prompts, 16 resources.
 
 ## Run & transport
 Transport: STDIO only (local). No HTTP.
@@ -703,47 +703,6 @@ Description:
     Risk class: low (read-only validation; document unchanged).
 
 ### Edit
-
-#### apply_edits
-Risk class: medium
-Key params: doc_id: string, edits: array, approval_token: string | null
-Description:
-    Apply an ordered list of typed DOM edits to a document as ONE atomic, reversible operation.
-
-    When to use: making SEVERAL edits to one document in a single call (draw + style + arrange,
-    re-theme + rename, …) instead of N separate tool round-trips. Each member is the SAME typed
-    edit the dedicated tool exposes — `apply_edits` adds atomicity + one snapshot, not new
-    authority. For a single edit, call the dedicated tool (`set_fill`, `move_object`, …); for path
-    geometry or cross-document composition use those tools directly (they are NOT batchable).
-
-    Key params: `edits` is a non-empty, ordered list (max 64) of typed edits, each tagged by an `op`
-    field that selects its schema — e.g. `{"op": "create_rect", "x": 0, "y": 0, "width": 100,
-    "height": 60, "fill": "#3366cc"}`, `{"op": "set_fill", "object_ids": ["logo"], "color": "red"}`,
-    `{"op": "move_object", "object_id": "logo", "dx": 10, "dy": 0}`. Supported ops mirror the typed
-    DOM tools: `set_fill` / `set_stroke` / `set_opacity` / `replace_color` / `apply_palette` /
-    `replace_text` / `set_font` / `duplicate_object` / `rename_object` / `delete_object` (high) /
-    `move_object` / `scale_object` / `rotate_object` / `resize_canvas` / `normalize_viewbox` /
-    `tile` / `create_rect` / `create_circle` / `create_ellipse` / `create_line` / `create_polygon` /
-    `create_polyline` / `create_path` / `create_text` / `create_group` / `group_objects` /
-    `reparent_object` / `create_use` / `add_linear_gradient` / `add_radial_gradient`. Validation is
-    two-phase: ALL members are validated before any mutation (one bad edit leaves the document
-    byte-identical), then applied in order with all-or-nothing rollback on any failure. If ANY
-    member is high-risk (a `delete_object` edit) the WHOLE batch is HIGH and requires a non-empty
-    `approval_token`; otherwise it is medium.
-
-    Render and look before you trust the edit: a batch changes several things at once, so call
-    `render_preview` (or `live_render_view` in live mode) afterwards and inspect the result before
-    relying on it — and `restore_snapshot(doc_id, snapshot_id)` reverts the whole batch in one step.
-
-    Return shape: `BatchEditResult` — the pipeline fields for the single batch operation
-    (`operation_id`, `snapshot_id`, `changed`, before/after preview; reversible) PLUS `edit_count`
-    and the effective `risk_class`.
-
-    Example: `apply_edits(doc_id, [{"op": "create_rect", "x": 0, "y": 0, "width": 100, "height": 60,
-    "fill": "#eee", "object_id": "bg"}, {"op": "create_text", "x": 10, "y": 30, "text": "Hi"}])`
-
-    Risk class: medium (effective risk is the MAX over members; a `delete_object` member escalates
-    the batch to high and requires `approval_token`). Reversible via the single pre-batch snapshot.
 
 #### apply_palette
 Risk class: medium
@@ -2395,48 +2354,6 @@ Description:
     Example: `stat_artifacts(["dist/16.png", "dist/32.png", "dist/64.png"])`
 
     Risk class: low (read-only stat; nothing is mutated, no Operation Record / snapshot).
-
-#### transform_objects
-Risk class: medium
-Key params: doc_id: string, selector: object, operation: any, dry_run: boolean, max_matches: integer, approval_token: string | null
-Description:
-    Apply ONE typed op to EVERY object a selector matches — one atomic, reversible operation.
-
-    When to use: bulk editing keyed by a predicate rather than by hand-listing ids — "recolour every
-    blue rect", "nudge every text down 4px", "delete every object whose id starts with tmp-". It is
-    `find_objects` (the SELECTOR) wired to ONE typed op fanned across the matches, run through the
-    SAME atomic batch kernel as `apply_edits`. For a known id list call the dedicated tool
-    (`set_fill`, `move_object`, …) or `apply_edits` directly; this adds NO authority — only the
-    select-then-apply fan-out (ADR-002/003: no free text, no raw Action, no loops/expressions).
-
-    Key params: `selector` is the SAME predicate `find_objects` takes (`tag` / `fill` / `stroke` /
-    `text` / `id_prefix` / `bbox`, full CSS-cascade paint match); `operation` is exactly ONE op
-    tagged by an `op` field — the accepted set is `set_fill` / `set_stroke` / `set_opacity` /
-    `set_font` / `move_object` / `scale_object` / `rotate_object` / `delete_object` (high), each
-    with the SAME params as its dedicated tool MINUS the target ids (those from the selector), e.g.
-    `{"op": "set_fill", "color": "#3366cc"}`, `{"op": "move_object", "dx": 0, "dy": 4}`. Document-
-    wide ops (`replace_color`, `apply_palette`, `resize_canvas`, `normalize_viewbox`), element
-    CREATION ops, and identity-conflicting per-id ops (`rename_object`, `replace_text`,
-    `duplicate_object`) are NOT accepted — they are not meaningful applied identically per match.
-    `dry_run=True` (DEFAULT) resolves + validates and returns the matched ids + the projected plan,
-    writing NOTHING; `dry_run=False` performs it. `max_matches` (default 64) REJECTS an over-broad
-    selector before any mutation. A `delete_object` op makes the operation HIGH and requires a
-    non-empty `approval_token`.
-
-    Render and look before you trust it: a transform changes many objects at once — call
-    `render_preview` (or `live_render_view` in live mode) afterwards and inspect the result, and
-    `restore_snapshot(doc_id, snapshot_id)` reverts the WHOLE transform in one step.
-
-    Return shape: `TransformObjectsResult` — `matched_ids` + `match_count`, the effective
-    `risk_class`, the `dry_run` flag, the projected `plan` (per-edit op + target id(s)); on a real
-    run also `applied` / `changed` / `summary` and the single `operation_id` / `snapshot_id` (the
-    revert target).
-
-    Example: `transform_objects(doc_id, {"tag": "rect", "fill": "#3366cc"}, {"op": "set_fill",
-    "color": "#ff0000"}, dry_run=False)`
-
-    Risk class: medium (the effective risk is the op's class; a `delete_object` op escalates the
-    operation to high and requires `approval_token`). Reversible via the pre-transform snapshot.
 
 #### validate_action_chain
 Risk class: low

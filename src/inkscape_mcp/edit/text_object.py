@@ -17,9 +17,17 @@ characters (sec.12).
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from lxml import etree
+from pydantic import BaseModel
 
+from inkscape_mcp.document.inspect import (
+    _build_parent_map,
+    _document_css_rules,
+    _font_families_from_value,
+    _own_paint_value,
+)
 from inkscape_mcp.edit.dom import (
     SAFE_ID_RE,
     EditError,
@@ -35,6 +43,7 @@ from inkscape_mcp.edit.dom import (
     set_style_property,
 )
 from inkscape_mcp.edit.pipeline import MutateFn
+from inkscape_mcp.fonts.coverage import suggest_covering_family, uncovered_chars
 
 #: Maximum text-content length accepted by :func:`replace_text` (characters). Bounds how much a
 #: single edit can write into a text node; well above any realistic label/paragraph.
@@ -57,6 +66,91 @@ def _local_name(elem: etree._Element) -> str:
     if not isinstance(tag, str):
         return ""
     return etree.QName(tag).localname
+
+
+class FontCoverage(BaseModel):
+    """Per-target glyph-coverage outcome for a `set_font` family change.
+
+    `object_id` is the edited text object; `family` is the effective FIRST font-family now applied
+    to it; `uncovered_chars` is the string of characters that family's OWN cmap cannot render (empty
+    when fully covered); `suggested_family` is a cmap-verified family that covers the uncovered
+    characters (None when coverage is fine or none was found). Coverage is read from the font file's
+    cmap, never from fontconfig auto-substitution.
+    """
+
+    object_id: str
+    family: str
+    uncovered_chars: str
+    suggested_family: str | None = None
+
+
+def resolve_first_family(
+    elem: etree._Element,
+    css_rules: list[Any],
+    parents: dict[etree._Element, etree._Element],
+) -> str | None:
+    """Effective first `font-family` for a text element (cascade + inheritance), or None.
+
+    Mirrors the validate engine's resolution: `<style>` rules < presentation attr < inline style,
+    inheriting from the nearest ancestor that sets it; returns the FIRST family in the comma list.
+    """
+    current: etree._Element | None = elem
+    while current is not None:
+        own = _own_paint_value(current, css_rules, "font-family")
+        if own is not None and own.strip().lower() != "inherit":
+            families = _font_families_from_value(own)
+            return families[0] if families else None
+        current = parents.get(current)
+    return None
+
+
+def font_coverage_for_root(
+    root: etree._Element, object_ids: list[str]
+) -> tuple[bool, list[FontCoverage]]:
+    """Compute per-target glyph coverage on a parsed (possibly in-memory) tree.
+
+    Resolves each target's effective first `font-family` (cascade + inheritance, the SAME resolution
+    validate uses) and tests its text against the family's OWN cmap. Returns `(coverage_ok,
+    details)`: `coverage_ok` is False iff some target has a non-empty uncovered set; `details`
+    carries one entry per target whose coverage was determinable. Best effort — a target that is
+    missing, has no family, no text, or whose font is unknown is skipped.
+    """
+    css_rules = _document_css_rules(root)
+    parents = _build_parent_map(root)
+    by_id: dict[str, etree._Element] = {}
+    for elem in root.iter():
+        if isinstance(elem.tag, str):
+            eid = elem.get("id")
+            if eid is not None:
+                by_id.setdefault(eid, elem)
+
+    details: list[FontCoverage] = []
+    ok = True
+    for oid in object_ids:
+        target = by_id.get(oid)
+        if target is None:
+            continue
+        family = resolve_first_family(target, css_rules, parents)
+        if not family:
+            continue
+        text = "".join(t for t in target.itertext() if isinstance(t, str))
+        if not text.strip():
+            continue
+        missing = uncovered_chars(family, text)
+        if missing is None:
+            continue  # coverage unknown (not installed / no fontconfig) — owned by missing_font
+        suggestion = suggest_covering_family(missing) if missing else None
+        if missing:
+            ok = False
+        details.append(
+            FontCoverage(
+                object_id=oid,
+                family=family,
+                uncovered_chars=missing,
+                suggested_family=suggestion,
+            )
+        )
+    return ok, details
 
 
 def make_replace_text(object_id: str, text: str) -> MutateFn:
@@ -250,9 +344,12 @@ def make_delete_objects(object_ids: list[str]) -> MutateFn:
 
 
 __all__ = [
+    "FontCoverage",
+    "font_coverage_for_root",
     "make_delete_objects",
     "make_duplicate_object",
     "make_rename_object",
     "make_replace_text",
     "make_set_font",
+    "resolve_first_family",
 ]

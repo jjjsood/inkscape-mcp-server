@@ -424,45 +424,6 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
         group="edit",
         keywords=["duplicate", "copy object", "rename object", "change id", "clone object"],
     ),
-    IntentEntry(
-        goal_pattern="Apply several typed edits at once (batch) in one atomic operation",
-        tools=["apply_edits"],
-        how_to="Call apply_edits with an ordered list of typed `op` edits (one snapshot, atomic).",
-        group="edit",
-        keywords=[
-            "batch edit",
-            "multiple edits",
-            "several edits",
-            "many edits at once",
-            "apply edits",
-            "atomic edits",
-            "edit in one call",
-            "combine edits",
-        ],
-    ),
-    IntentEntry(
-        goal_pattern="Bulk-edit every object matching a selector (recolour all blue rects, etc.)",
-        tools=["transform_objects"],
-        how_to=(
-            "Call transform_objects with a find_objects selector + ONE typed op (set_fill / "
-            "move_object / delete_object / …); dry_run first, then dry_run=false."
-        ),
-        group="edit",
-        keywords=[
-            "bulk edit",
-            "bulk",
-            "every object",
-            "all the",
-            "recolor all",
-            "recolour all",
-            "nudge all",
-            "move all",
-            "delete all",
-            "select then apply",
-            "all matching",
-            "apply to every",
-        ],
-    ),
     # --- canvas / layout ---
     IntentEntry(
         goal_pattern="Resize the canvas or fit it to the content",

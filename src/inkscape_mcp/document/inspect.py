@@ -1267,3 +1267,7 @@ def find_objects(
         engine_boxes=engine_boxes,
     )
     return FindResult(doc_id=doc_id, objects=matched, count=len(matched))
+
+
+#: Public name for the attribute-derived element box (used by the op kernel for `created[].bbox`).
+bbox_of = _bbox_of

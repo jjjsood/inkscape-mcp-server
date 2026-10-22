@@ -20,47 +20,23 @@ from collections.abc import Callable
 from typing import Any
 
 from fastmcp.exceptions import ToolError
-from lxml import etree
-from pydantic import BaseModel, Field
+from pydantic import Field
 
-from inkscape_mcp.document.inspect import (
-    DocumentNotFound,
-    InspectionError,
-    _build_parent_map,
-    _document_css_rules,
-    _font_families_from_value,
-    _load_tree,
-    _own_paint_value,
-)
+from inkscape_mcp.document.inspect import DocumentNotFound, InspectionError, _load_tree
 from inkscape_mcp.edit.dom import EditError, TargetNotFound
 from inkscape_mcp.edit.pipeline import EditApplyError, EditResult, MutateFn, apply_edit
 from inkscape_mcp.edit.text_object import (
+    FontCoverage,
+    font_coverage_for_root,
     make_duplicate_object,
     make_rename_object,
     make_replace_text,
     make_set_font,
 )
-from inkscape_mcp.fonts.coverage import suggest_covering_family, uncovered_chars
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
 from inkscape_mcp.server import mcp
 
 _logger = get_logger("tools.text_object")
-
-
-class FontCoverage(BaseModel):
-    """Per-target glyph-coverage outcome for a `set_font` family change.
-
-    `object_id` is the edited text object; `family` is the effective FIRST font-family now applied
-    to it; `uncovered_chars` is the string of characters that family's OWN cmap cannot render (empty
-    when fully covered); `suggested_family` is a cmap-verified family that covers the uncovered
-    characters (None when coverage is fine or none was found). Coverage is read from the font file's
-    cmap, never from fontconfig auto-substitution.
-    """
-
-    object_id: str
-    family: str
-    uncovered_chars: str
-    suggested_family: str | None = None
 
 
 class SetFontResult(EditResult):
@@ -81,74 +57,15 @@ class SetFontResult(EditResult):
 def _coverage_for_targets(doc_id: str, object_ids: list[str]) -> tuple[bool, list[FontCoverage]]:
     """Compute per-target glyph coverage from the POST-edit working copy.
 
-    Re-reads the working tree, resolves each target's effective first `font-family` (cascade +
-    inheritance, the SAME resolution validate uses), and tests its text against the family's OWN
-    cmap. Returns `(coverage_ok, details)`: `coverage_ok` is False iff some target has a non-empty
-    uncovered set; `details` carries one entry per target whose coverage was determinable. Best
-    effort — never raises (a parse/font fault yields `(True, [])` so a coverage probe can't break
-    the edit that already succeeded).
+    Re-reads the working tree and delegates to :func:`font_coverage_for_root`. Best effort — never
+    raises (a parse/font fault yields `(True, [])` so a coverage probe can't break the edit that
+    already succeeded).
     """
     try:
         _entry, root = _load_tree(doc_id)
     except (DocumentNotFound, InspectionError):
         return True, []
-
-    css_rules = _document_css_rules(root)
-    parents = _build_parent_map(root)
-    by_id: dict[str, etree._Element] = {}
-    for elem in root.iter():
-        if isinstance(elem.tag, str):
-            eid = elem.get("id")
-            if eid is not None:
-                by_id.setdefault(eid, elem)
-
-    details: list[FontCoverage] = []
-    ok = True
-    for oid in object_ids:
-        target = by_id.get(oid)
-        if target is None:
-            continue
-        family = _resolve_first_family(target, css_rules, parents)
-        if not family:
-            continue
-        text = "".join(t for t in target.itertext() if isinstance(t, str))
-        if not text.strip():
-            continue
-        missing = uncovered_chars(family, text)
-        if missing is None:
-            continue  # coverage unknown (not installed / no fontconfig) — owned by missing_font
-        suggestion = suggest_covering_family(missing) if missing else None
-        if missing:
-            ok = False
-        details.append(
-            FontCoverage(
-                object_id=oid,
-                family=family,
-                uncovered_chars=missing,
-                suggested_family=suggestion,
-            )
-        )
-    return ok, details
-
-
-def _resolve_first_family(
-    elem: etree._Element,
-    css_rules: list[Any],
-    parents: dict[etree._Element, etree._Element],
-) -> str | None:
-    """Effective first `font-family` for a text element (cascade + inheritance), or None.
-
-    Mirrors the validate engine's resolution: `<style>` rules < presentation attr < inline style,
-    inheriting from the nearest ancestor that sets it; returns the FIRST family in the comma list.
-    """
-    current: etree._Element | None = elem
-    while current is not None:
-        own = _own_paint_value(current, css_rules, "font-family")
-        if own is not None and own.strip().lower() != "inherit":
-            families = _font_families_from_value(own)
-            return families[0] if families else None
-        current = parents.get(current)
-    return None
+    return font_coverage_for_root(root, object_ids)
 
 
 def _apply(

@@ -42,10 +42,6 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
     {
         # delete
         "delete_object",
-        # batch: may include a destructive member (delete / replace_*), so hint destructive
-        "apply_edits",
-        # selector->op fan-out: may carry a delete_object op, so hint destructive
-        "transform_objects",
         # overwrite / replace whole-or-part document content
         "save_document_as",
         "set_document_svg",
@@ -202,7 +198,6 @@ TITLE_OVERRIDES: dict[str, str] = {
     "create_snapshot": "Create snapshot",
     "add_linear_gradient": "Add linear gradient",
     "add_radial_gradient": "Add radial gradient",
-    "apply_edits": "Apply edits (batch)",
     "apply_palette": "Apply palette",
     "boolean_difference": "Boolean difference",
     "boolean_union": "Boolean union",
@@ -262,7 +257,6 @@ TITLE_OVERRIDES: dict[str, str] = {
     "stroke_to_path": "Stroke to path",
     "svg_web_optimize": "Optimize SVG for web",
     "tile": "Tile object",
-    "transform_objects": "Transform objects (selector)",
     "validate_action_chain": "Validate action chain",
     "validate_document": "Validate document",
     "capture_frame": "Capture frame",

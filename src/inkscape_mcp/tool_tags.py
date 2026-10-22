@@ -60,8 +60,6 @@ _MODULE_DOMAIN: dict[str, str] = {
     "text_object": "edit",
     "compose": "edit",
     "dom": "edit",
-    "batch": "edit",
-    "transform_objects": "edit",
     "document": "edit",
     "find": "edit",
     "snapshots": "edit",

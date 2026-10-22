@@ -42,11 +42,7 @@ medium (create/style/text/transform — reversible, snapshot-backed), high (over
 geometry/Action chains — requires a per-operation `approval_token`, minted out of band), restricted
 (never ships). A high-risk tool refuses without a non-empty `approval_token`.
 
-Batching. `apply_edits` applies an ordered list of typed edits as ONE atomic, reversible operation
-(validate-all first, all-or-nothing, one snapshot) — use it to make several edits in a single call
-instead of N round-trips. Its effective risk is the max over its members.
-
-Render and look before you trust an edit. After a mutating call (especially a batch), render and
+Render and look before you trust an edit. After a mutating call, render and
 INSPECT the result — `render_preview` (headless) or `live_render_view` (live mode) — before relying
 on it; `restore_snapshot` reverts if it is wrong.
 
