@@ -1,57 +1,93 @@
-"""Intent → tool discoverability map.
+"""Intent → (tool, op) discoverability map.
 
-A curated, dependency-free mapping from natural-language *goals* to the concrete MCP tool name(s)
-that achieve them, plus a deterministic keyword matcher and an out-of-scope detector. Pure module —
-no MCP decorators, no LLM, no fuzzy lib — so it can be imported both by the `how_do_i` tool
-(`inkscape_mcp.tools.discover`) and by the runtime capability probe (`inkscape_mcp.runtime.probe`,
-which surfaces the same map in its `intents` section) without an import cycle.
+A curated, dependency-free mapping from natural-language *goals* to the tool call(s) that achieve
+them, plus a deterministic keyword matcher and an out-of-scope detector. Pure module — no MCP
+decorators, no LLM, no fuzzy lib — so it can be imported both by the `help` tool
+(`inkscape_mcp.tools.help_`) and by the runtime capability probe (`inkscape_mcp.runtime.probe`)
+without an import cycle.
 
 Design (ADR-002/003):
 
-* `how_do_i` and the `intents` capability section only RETURN guidance (tool names + a one-line
-  how-to). They execute nothing. There is no raw-action escape hatch and no portmanteau tool.
+* `help(goal=...)` and the `intents` capability section only RETURN guidance: the `(tool, op)`
+  pair(s) to use, a one-line how-to and an example call. They execute nothing.
+* A target names a tool and, where the tool is a dispatcher, the op: for `edit` the op name
+  (`edit:create_rect`), for `open` the source mode (`open:canvas`), for `inspect` the include
+  section, for `export` the target kind, and for `render`, `history`, `live`, `live_edit`,
+  `actions` and `help` the `target` / `action` / `topic` value. Its string form is `tool:op`.
 * The matcher is a simple lowercase keyword/substring scorer over `INTENT_MAP`; ties and ordering
   are deterministic. No external dependency.
-* Out-of-scope goals (raster/pixel editing, arbitrary Actions/extensions/scripts, network fetch,
-  code execution) are detected FIRST and returned as an explicit out-of-scope result that names WHY,
+* Out-of-scope goals (raster/pixel editing, arbitrary extensions/scripts, network fetch, code
+  execution) are detected FIRST and returned as an explicit out-of-scope result that names WHY,
   rather than being mis-mapped to a tool.
 
-Every tool name referenced by `INTENT_MAP` must be a REAL registered tool. A test
-(`tests/test_intent_discovery.py`) asserts this against the live `mcp.list_tools()` surface so the
-map cannot silently drift from the tool surface.
+Every target must be a REAL tool and op, and every example call must validate against the tool's
+schema. `tests/test_intents.py` asserts this against the registered tool surface so the map cannot
+silently drift from it.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
+
+_PLACEHOLDER_DOC = "<doc_id>"
+
+
+class IntentTarget(BaseModel):
+    """One `(tool, op)` a goal is served by; `op` is the dispatcher value (see module docstring)."""
+
+    tool: str = Field(description="One of the registered tools.")
+    op: str | None = Field(
+        default=None, description="Edit op / open mode / action / section / target kind."
+    )
+
+    @property
+    def key(self) -> str:
+        """`tool:op`, or just `tool` when the tool has no dispatcher value here."""
+        return f"{self.tool}:{self.op}" if self.op else self.tool
+
+
+class IntentCall(BaseModel):
+    """An example call: the tool and its arguments (`<doc_id>` stands for a real document id)."""
+
+    tool: str
+    args: dict[str, Any]
 
 
 class IntentEntry(BaseModel):
-    """One curated goal → tool(s) mapping with the keywords that select it.
+    """One curated goal → (tool, op) mapping with the keywords that select it.
 
     `keywords` are matched (lowercased substring) against the user's goal to score this entry; they
-    are NOT shown as guidance. `tools` are real registered tool names; `how_to` is a one-line
-    instruction; `group` names the broad surface area (create/inspect/edit/paths/export/...).
+    are NOT shown as guidance. `example` is the explicit example call; when it is None and the
+    first target is an `edit` op, the op's validated example from `edit/op_docs.py` is used.
     """
 
     goal_pattern: str = Field(
         description="Human-readable description of the goal this entry serves."
     )
-    tools: list[str] = Field(description="Real registered MCP tool name(s) that achieve the goal.")
-    how_to: str = Field(description="One-line how-to: which tool to call and the gist of how.")
+    targets: list[IntentTarget] = Field(description="The `(tool, op)` pair(s) that achieve it.")
+    how_to: str = Field(description="One-line how-to: which call to make and the gist of how.")
     group: str = Field(description="Broad surface group, e.g. 'create', 'inspect', 'export'.")
     keywords: list[str] = Field(
         description="Lowercase keywords/phrases scored against the goal (matching only, not shown)."
     )
+    example: IntentCall | None = Field(default=None, description="Explicit example call, if any.")
 
 
 class IntentMatch(BaseModel):
-    """A scored guidance hit returned by `how_do_i` (subset of an `IntentEntry`, no keywords)."""
+    """A scored guidance hit returned by `help(goal=...)` (an `IntentEntry` without keywords)."""
 
     goal_pattern: str = Field(description="What this matched entry is for.")
-    tools: list[str] = Field(description="Real registered tool name(s) to use.")
-    how_to: str = Field(description="One-line how-to for the matched tool(s).")
-    group: str = Field(description="Broad surface group of the matched tool(s).")
+    targets: list[IntentTarget] = Field(description="The `(tool, op)` pair(s) to use.")
+    how_to: str = Field(description="One-line how-to for the matched call(s).")
+    group: str = Field(description="Broad surface group of the matched call(s).")
+    example: IntentCall | None = Field(default=None, description="An example call to start from.")
+
+    @property
+    def keys(self) -> list[str]:
+        """The targets as `tool:op` strings."""
+        return [t.key for t in self.targets]
 
 
 class OutOfScopeRule(BaseModel):
@@ -89,21 +125,17 @@ OUT_OF_SCOPE_RULES: tuple[OutOfScopeRule, ...] = (
         ],
     ),
     OutOfScopeRule(
-        label="arbitrary Actions / extensions / scripts",
+        label="arbitrary extensions / scripts",
         reason=(
-            "Per ADR-003 there is no raw-action/extension/script escape hatch in the MVP surface. "
-            "Use the small typed tools instead; raw Inkscape Actions and arbitrary "
-            "extension/script execution are not exposed."
+            "Arbitrary extensions, scripts and macros are not exposed (ADR-003). The only way to "
+            "reach Inkscape beyond the typed edit ops is the advanced `actions` tool, which runs "
+            "allow-listed Actions and extensions only, and only when the operator enables it "
+            "(INKSCAPE_MCP_RAW_ACTION_ENABLED)."
         ),
         keywords=[
-            "arbitrary action",
-            "arbitrary inkscape action",
-            "raw action",
-            "run an action",
-            "run actions",
+            "arbitrary extension",
             "run an extension",
             "run extension",
-            "arbitrary extension",
             "run a script",
             "run script",
             "run a macro",
@@ -155,94 +187,127 @@ OUT_OF_SCOPE_RULES: tuple[OutOfScopeRule, ...] = (
 )
 
 
-#: The curated intent map: COMMON goals → the right entry tool(s). It does not list every tool;
-#: it routes the common natural-language goals to the correct entry point. Every name here must be a
-#: real registered tool (guarded by `tests/test_intent_discovery.py`).
+def _target(spec: str) -> IntentTarget:
+    tool, _, op = spec.partition(":")
+    return IntentTarget(tool=tool, op=op or None)
+
+
+def _entry(
+    goal_pattern: str,
+    group: str,
+    use: list[str],
+    how_to: str,
+    keywords: list[str],
+    example: IntentCall | None = None,
+) -> IntentEntry:
+    """Build an entry from `tool[:op]` strings."""
+    return IntentEntry(
+        goal_pattern=goal_pattern,
+        targets=[_target(u) for u in use],
+        how_to=how_to,
+        group=group,
+        keywords=keywords,
+        example=example,
+    )
+
+
+def _call(tool: str, **args: Any) -> IntentCall:
+    return IntentCall(tool=tool, args=args)
+
+
+def _doc_call(tool: str, **args: Any) -> IntentCall:
+    return IntentCall(tool=tool, args={"doc_id": _PLACEHOLDER_DOC, **args})
+
+
+#: The curated intent map: COMMON goals → the right `(tool, op)`. It does not list every op; it
+#: routes the common natural-language goals to the correct entry point (`help(topic='ops')` lists
+#: every op). Guarded by `tests/test_intents.py`.
 INTENT_MAP: tuple[IntentEntry, ...] = (
-    # --- create / draw ---
-    IntentEntry(
-        goal_pattern="Draw a rectangle / square",
-        tools=["create_rect"],
-        how_to="Call create_rect with x, y, width, height (and rx/ry for rounded corners).",
-        group="create",
-        keywords=["rectangle", "rect", "square", "box", "draw a rect", "draw a box"],
+    # --- create / draw (all are `edit` ops; several can share ONE call) ---
+    _entry(
+        "Draw a rectangle / square",
+        "create",
+        ["edit:create_rect"],
+        "edit(ops=[{op:'create_rect', x, y, width, height}]); rx/ry round the corners.",
+        ["rectangle", "rect", "square", "box", "draw a rect", "draw a box"],
     ),
-    IntentEntry(
-        goal_pattern="Draw a circle",
-        tools=["create_circle"],
-        how_to="Call create_circle with cx, cy, r.",
-        group="create",
-        keywords=["circle", "draw a circle", "round dot", "disc"],
+    _entry(
+        "Draw a circle",
+        "create",
+        ["edit:create_circle"],
+        "edit(ops=[{op:'create_circle', cx, cy, r}]).",
+        ["circle", "draw a circle", "round dot", "disc"],
     ),
-    IntentEntry(
-        goal_pattern="Draw an ellipse / oval",
-        tools=["create_ellipse"],
-        how_to="Call create_ellipse with cx, cy, rx, ry.",
-        group="create",
-        keywords=["ellipse", "oval", "draw an ellipse"],
+    _entry(
+        "Draw an ellipse / oval",
+        "create",
+        ["edit:create_ellipse"],
+        "edit(ops=[{op:'create_ellipse', cx, cy, rx, ry}]).",
+        ["ellipse", "oval", "draw an ellipse"],
     ),
-    IntentEntry(
-        goal_pattern="Draw a line",
-        tools=["create_line"],
-        how_to="Call create_line with x1, y1, x2, y2.",
-        group="create",
-        keywords=["line", "draw a line", "segment", "straight line"],
+    _entry(
+        "Draw a line",
+        "create",
+        ["edit:create_line"],
+        "edit(ops=[{op:'create_line', x1, y1, x2, y2, stroke}]).",
+        ["line", "draw a line", "segment", "straight line"],
     ),
-    IntentEntry(
-        goal_pattern="Draw a polygon or polyline",
-        tools=["create_polygon", "create_polyline"],
-        how_to="Call create_polygon (closed) or create_polyline (open) with a list of points.",
-        group="create",
-        keywords=["polygon", "polyline", "many sided", "triangle", "points shape"],
+    _entry(
+        "Draw a polygon or polyline",
+        "create",
+        ["edit:create_polygon", "edit:create_polyline"],
+        "create_polygon (closed) or create_polyline (open) with points=[[x,y],...].",
+        ["polygon", "polyline", "many sided", "triangle", "points shape"],
     ),
-    IntentEntry(
-        goal_pattern="Draw an arbitrary path / freeform shape",
-        tools=["create_path"],
-        how_to="Call create_path with an SVG path `d` string.",
-        group="create",
-        keywords=["path", "freeform", "bezier", "curve", "draw a path", "path data", "d string"],
+    _entry(
+        "Draw an arbitrary path / freeform shape",
+        "create",
+        ["edit:create_path"],
+        "edit(ops=[{op:'create_path', d:'M10 10 L90 10 Z'}]) with an SVG path `d` string.",
+        ["path", "freeform", "bezier", "curve", "draw a path", "path data", "d string"],
     ),
-    IntentEntry(
-        goal_pattern="Add text / a label",
-        tools=["create_text"],
-        how_to="Call create_text with x, y and the text content.",
-        group="create",
-        keywords=["add text", "write text", "label", "caption", "type text", "place text"],
+    _entry(
+        "Add text / a label",
+        "create",
+        ["edit:create_text"],
+        "edit(ops=[{op:'create_text', x, y, text}]); style it with the `font` op.",
+        ["add text", "write text", "label", "caption", "type text", "place text"],
     ),
-    IntentEntry(
-        goal_pattern="Group objects together / make a group",
-        tools=["create_group", "group_objects"],
-        how_to="Use group_objects to wrap existing object ids; create_group makes an empty group.",
-        group="create",
-        keywords=["group", "make a group", "group objects", "combine into group", "wrap in group"],
+    _entry(
+        "Group objects together / make a group",
+        "create",
+        ["edit:group", "edit:create_group"],
+        "group wraps existing ids (ids=[...]); create_group makes an empty group to fill later.",
+        ["group", "make a group", "group objects", "combine into group", "wrap in group"],
     ),
-    IntentEntry(
-        goal_pattern="Move an object into another group / reparent",
-        tools=["reparent_object"],
-        how_to="Call reparent_object with the object id and the target parent group id.",
-        group="create",
-        keywords=["reparent", "move into group", "change parent", "nest object"],
+    _entry(
+        "Move an object into another group / reparent",
+        "create",
+        ["edit:reparent"],
+        "edit(ops=[{op:'reparent', ids:[...], parent:'<group id>'}]).",
+        ["reparent", "move into group", "change parent", "nest object"],
     ),
-    IntentEntry(
-        goal_pattern="Reuse / clone an element via <use>",
-        tools=["create_use"],
-        how_to="Call create_use referencing an existing element id to instance it.",
-        group="create",
-        keywords=["use element", "clone", "instance", "reuse element", "symbol reference"],
+    _entry(
+        "Reuse / clone an element via <use>",
+        "create",
+        ["edit:create_use"],
+        "edit(ops=[{op:'create_use', href:'<element id>', x, y}]) instances an existing element.",
+        ["use element", "clone", "instance", "reuse element", "symbol reference"],
     ),
-    IntentEntry(
-        goal_pattern="Add a gradient fill (linear or radial)",
-        tools=["add_linear_gradient", "add_radial_gradient"],
-        how_to="Define one with add_linear_gradient / add_radial_gradient, then set_fill to it.",
-        group="create",
-        keywords=["gradient", "linear gradient", "radial gradient", "color fade", "blend colors"],
+    _entry(
+        "Add a gradient fill (linear or radial)",
+        "create",
+        ["edit:linear_gradient", "edit:radial_gradient"],
+        "Define it with linear_gradient/radial_gradient (id + stops), then fill with 'url(#id)'; "
+        "both can be ops of the same call.",
+        ["gradient", "linear gradient", "radial gradient", "color fade", "blend colors"],
     ),
-    IntentEntry(
-        goal_pattern="Create a brand-new blank document",
-        tools=["create_document"],
-        how_to="Call create_document with width/height/units to start a new SVG in the workspace.",
-        group="create",
-        keywords=[
+    _entry(
+        "Create a brand-new blank document",
+        "create",
+        ["open:canvas"],
+        "open(canvas={width, height}, ops=[...first edits...], render='inline') returns a doc_id.",
+        [
             "new document",
             "blank document",
             "blank svg",
@@ -251,28 +316,53 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "start a new",
             "create canvas",
         ],
+        _call(
+            "open",
+            canvas={"width": 200, "height": 100, "background": "#ffffff"},
+            ops=[{"op": "create_circle", "cx": 100, "cy": 50, "r": 30, "fill": "#3366ff"}],
+            render="inline",
+        ),
     ),
-    IntentEntry(
-        goal_pattern="Replace the whole document SVG or insert an SVG fragment",
-        tools=["set_document_svg", "insert_svg_fragment"],
-        how_to="Use set_document_svg to replace the doc; insert_svg_fragment to paste a snippet.",
-        group="create",
-        keywords=["set svg", "replace svg", "insert svg", "paste svg", "svg fragment", "raw svg"],
+    _entry(
+        "Replace the whole document SVG or insert an SVG fragment",
+        "create",
+        ["edit:set_svg", "edit:insert_svg"],
+        "set_svg replaces the document; insert_svg pastes a snippet "
+        "(both HIGH risk: approval_token).",
+        [
+            "set svg",
+            "replace svg",
+            "insert svg",
+            "paste svg",
+            "svg fragment",
+            "svg snippet",
+            "snippet",
+            "raw svg",
+        ],
     ),
-    # --- inspect / find ---
-    IntentEntry(
-        goal_pattern="Open an existing SVG file to work on it",
-        tools=["open_document"],
-        how_to="Call open_document with the workspace path to get a doc_id for the other tools.",
-        group="inspect",
-        keywords=["open", "load file", "open svg", "load svg", "open a document", "load document"],
+    _entry(
+        "Compose several documents or objects into a grid / place one document in another",
+        "create",
+        ["edit:grid", "edit:place"],
+        "grid lays out doc_ids (or source_ids of one source_doc_id) in rows x cols; place puts one "
+        "document into this one at x, y.",
+        ["contact sheet", "sprite sheet", "grid of documents", "place document", "compose grid"],
     ),
-    IntentEntry(
-        goal_pattern="Understand a document's structure (tree, layers, styles, fonts, assets)",
-        tools=["inspect_document"],
-        how_to="Call inspect_document with the doc_id for the full structural picture and ids.",
-        group="inspect",
-        keywords=[
+    # --- open / inspect / find ---
+    _entry(
+        "Open an existing SVG file to work on it",
+        "inspect",
+        ["open:path"],
+        "open(path='logo.svg') returns a doc_id for all other tools; add ops to edit right away.",
+        ["open", "load file", "open svg", "load svg", "open a document", "load document"],
+        _call("open", path="logo.svg"),
+    ),
+    _entry(
+        "Understand a document's structure (tree, layers, styles, fonts, assets)",
+        "inspect",
+        ["inspect:summary", "inspect:tree", "inspect:layers"],
+        "inspect(doc_id, include=['summary','tree','layers','styles','fonts','assets']).",
+        [
             "inspect",
             "structure",
             "what is in",
@@ -281,13 +371,15 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "outline document",
             "overview",
         ],
+        _doc_call("inspect", include=["summary", "tree"]),
     ),
-    IntentEntry(
-        goal_pattern="Find specific objects by color / tag / text / position",
-        tools=["find_objects"],
-        how_to="Call find_objects with filters (fill/stroke/tag/text/id_prefix/bbox) for ids.",
-        group="inspect",
-        keywords=[
+    _entry(
+        "Find specific objects by color / tag / text / position",
+        "inspect",
+        ["inspect:objects"],
+        "inspect(doc_id, select={fill, stroke, tag, text, id_prefix, bbox}); edit ops accept the "
+        "same `select` instead of ids.",
+        [
             "find",
             "find objects",
             "locate",
@@ -298,27 +390,30 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "select by",
             "get ids",
         ],
+        _doc_call("inspect", select={"fill": "#ff0000"}),
     ),
-    IntentEntry(
-        goal_pattern="Validate that a document is well-formed / correct",
-        tools=["validate_document"],
-        how_to="Call validate_document with the doc_id to check well-formedness and report issues.",
-        group="inspect",
-        keywords=["validate", "is it valid", "check document", "well formed", "lint", "verify svg"],
+    _entry(
+        "Validate that a document is well-formed / correct",
+        "inspect",
+        ["inspect:validate"],
+        "inspect(doc_id, include=['validate']) checks well-formedness and reports issues.",
+        ["validate", "is it valid", "check document", "well formed", "lint", "verify svg"],
+        _doc_call("inspect", include=["validate"]),
     ),
-    IntentEntry(
-        goal_pattern="Get quality metrics for a document",
-        tools=["quality_report"],
-        how_to="Call quality_report with the doc_id for machine-readable quality metrics.",
-        group="inspect",
-        keywords=["quality", "metrics", "quality report", "health", "score document"],
+    _entry(
+        "Get quality metrics for a document",
+        "inspect",
+        ["inspect:quality"],
+        "inspect(doc_id, include=['quality']) returns machine-readable quality metrics.",
+        ["quality", "metrics", "quality report", "health", "score document"],
+        _doc_call("inspect", include=["quality"]),
     ),
-    IntentEntry(
-        goal_pattern="See what the runtime / server can do (capabilities)",
-        tools=["list_capabilities"],
-        how_to="Call list_capabilities for the runtime matrix (incl. this intents map).",
-        group="inspect",
-        keywords=[
+    _entry(
+        "See what the runtime / server can do (capabilities)",
+        "inspect",
+        ["help:capabilities"],
+        "help(topic='capabilities') shows the runtime matrix; help(topic='ops') lists every op.",
+        [
             "capabilities",
             "what can you do",
             "supported",
@@ -326,14 +421,48 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "features",
             "list capabilities",
         ],
+        _call("help", topic="capabilities"),
+    ),
+    _entry(
+        "Diagnose why Inkscape or an export is not working",
+        "inspect",
+        ["help:diagnose"],
+        "help(topic='diagnose') re-probes the runtime (Inkscape binary, versions, flags).",
+        [
+            "diagnose",
+            "not working",
+            "doesn't work",
+            "does not work",
+            "troubleshoot",
+            "inkscape not found",
+            "engine unavailable",
+        ],
+        _call("help", topic="diagnose"),
+    ),
+    _entry(
+        "Look at the current result (preview image)",
+        "inspect",
+        ["render:page", "render:object"],
+        "render(doc_id) returns an inline PNG; target='object' + object_id zooms to one object. "
+        "edit(..., render='inline') already returns one.",
+        [
+            "preview",
+            "look at",
+            "show me the",
+            "see the result",
+            "screenshot",
+            "what does it look like",
+            "view the",
+        ],
+        _doc_call("render", width_px=800),
     ),
     # --- edit / style ---
-    IntentEntry(
-        goal_pattern="Change an object's fill color",
-        tools=["set_fill"],
-        how_to="Call set_fill with the object id and a paint value (find_objects gets the id).",
-        group="edit",
-        keywords=[
+    _entry(
+        "Change an object's fill color",
+        "edit",
+        ["edit:fill"],
+        "edit(ops=[{op:'fill', ids:[...] | select:{...}, color}]).",
+        [
             "fill",
             "fill color",
             "color it",
@@ -343,33 +472,34 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "recolor object",
         ],
     ),
-    IntentEntry(
-        goal_pattern="Change an object's stroke / outline",
-        tools=["set_stroke"],
-        how_to="Call set_stroke with the object id and stroke paint/width.",
-        group="edit",
-        keywords=["stroke", "outline color", "border", "stroke width", "line color", "edge"],
+    _entry(
+        "Change an object's stroke / outline",
+        "edit",
+        ["edit:stroke"],
+        "edit(ops=[{op:'stroke', ids:[...] | select:{...}, color, width}]).",
+        ["stroke", "outline color", "border", "stroke width", "line color", "edge"],
     ),
-    IntentEntry(
-        goal_pattern="Change opacity / transparency",
-        tools=["set_opacity"],
-        how_to="Call set_opacity with the object id and a 0..1 opacity.",
-        group="edit",
-        keywords=["opacity", "transparent", "transparency", "fade", "alpha", "see through"],
+    _entry(
+        "Change opacity / transparency",
+        "edit",
+        ["edit:opacity"],
+        "edit(ops=[{op:'opacity', ids:[...], opacity: 0..1}]).",
+        ["opacity", "transparent", "transparency", "fade", "alpha", "see through"],
     ),
-    IntentEntry(
-        goal_pattern="Change the font of text",
-        tools=["set_font"],
-        how_to="Call set_font with the text object id and font-family/size.",
-        group="edit",
-        keywords=["font", "typeface", "font family", "font size", "change font"],
+    _entry(
+        "Change the font of text",
+        "edit",
+        ["edit:font"],
+        "edit(ops=[{op:'font', select:{tag:'text'}, family, size}]); "
+        "glyph gaps come back as warnings.",
+        ["font", "typeface", "font family", "font size", "change font"],
     ),
-    IntentEntry(
-        goal_pattern="Replace text content",
-        tools=["replace_text"],
-        how_to="Call replace_text with the text object id and the new string.",
-        group="edit",
-        keywords=[
+    _entry(
+        "Replace text content",
+        "edit",
+        ["edit:replace_text"],
+        "edit(ops=[{op:'replace_text', ids:['<text id>'], text}]).",
+        [
             "replace text",
             "replace the text",
             "change text",
@@ -380,12 +510,12 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "text content",
         ],
     ),
-    IntentEntry(
-        goal_pattern="Replace one color with another across the document",
-        tools=["replace_color"],
-        how_to="Call replace_color with the from/to paint values to swap a color document-wide.",
-        group="edit",
-        keywords=[
+    _entry(
+        "Replace one color with another across the document",
+        "edit",
+        ["edit:replace_color"],
+        "edit(ops=[{op:'replace_color', from_color, to_color}]) swaps a color document-wide.",
+        [
             "replace color",
             "swap color",
             "swap all",
@@ -394,19 +524,19 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "color swap",
         ],
     ),
-    IntentEntry(
-        goal_pattern="Apply a color palette / theme to the document",
-        tools=["apply_palette"],
-        how_to="Call apply_palette with a palette mapping to recolor the document to a theme.",
-        group="edit",
-        keywords=["palette", "theme", "color scheme", "apply palette", "rebrand colors", "retheme"],
+    _entry(
+        "Apply a color palette / theme to the document",
+        "edit",
+        ["edit:palette"],
+        "edit(ops=[{op:'palette', mapping:{'#old':'#new', ...}}]) recolors to a theme.",
+        ["palette", "theme", "color scheme", "apply palette", "rebrand colors", "retheme"],
     ),
-    IntentEntry(
-        goal_pattern="Move / scale / rotate an object",
-        tools=["move_object", "scale_object", "rotate_object"],
-        how_to="Use move_object, scale_object, or rotate_object with the id and the transform.",
-        group="edit",
-        keywords=[
+    _entry(
+        "Move / scale / rotate an object",
+        "edit",
+        ["edit:move", "edit:scale", "edit:rotate"],
+        "move (dx, dy), scale (sx[, sy]) or rotate (degrees) on ids or a select.",
+        [
             "move",
             "scale",
             "resize object",
@@ -417,20 +547,28 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "enlarge",
         ],
     ),
-    IntentEntry(
-        goal_pattern="Duplicate or rename an object",
-        tools=["duplicate_object", "rename_object"],
-        how_to="Use duplicate_object to copy an object; rename_object to change its id.",
-        group="edit",
-        keywords=["duplicate", "copy object", "rename object", "change id", "clone object"],
+    _entry(
+        "Duplicate or rename an object",
+        "edit",
+        ["edit:duplicate", "edit:rename"],
+        "duplicate copies an object (new_id); rename changes its id or label.",
+        ["duplicate", "copy object", "rename object", "change id", "clone object"],
+    ),
+    _entry(
+        "Delete an object",
+        "edit",
+        ["edit:delete"],
+        "edit(ops=[{op:'delete', ids:[...]}], approval_token) — HIGH risk, dry_run=true shows what "
+        "would go.",
+        ["delete", "remove object", "remove the shape", "erase", "get rid of"],
     ),
     # --- canvas / layout ---
-    IntentEntry(
-        goal_pattern="Resize the canvas or fit it to the content",
-        tools=["resize_canvas", "fit_to_content", "normalize_viewbox"],
-        how_to="resize_canvas sets size; fit_to_content crops to art; normalize_viewbox tidies.",
-        group="canvas",
-        keywords=[
+    _entry(
+        "Resize the canvas or fit it to the content",
+        "canvas",
+        ["edit:resize_canvas", "edit:fit_to_content", "edit:normalize_viewbox"],
+        "resize_canvas sets the size; fit_to_content crops to the art; normalize_viewbox tidies.",
+        [
             "resize canvas",
             "canvas size",
             "fit to content",
@@ -440,20 +578,20 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "trim",
         ],
     ),
-    IntentEntry(
-        goal_pattern="Tile or repeat objects across the canvas",
-        tools=["tile"],
-        how_to="Call tile to repeat object(s) in a grid across the canvas.",
-        group="canvas",
-        keywords=["tile", "repeat", "grid of", "pattern of objects", "array"],
+    _entry(
+        "Tile or repeat objects across the canvas",
+        "canvas",
+        ["edit:tile"],
+        "edit(ops=[{op:'tile', ids:[...], rows, cols, dx, dy}]) repeats objects in a grid.",
+        ["tile", "repeat", "grid of", "pattern of objects", "array"],
     ),
-    # --- paths / geometry ---
-    IntentEntry(
-        goal_pattern="Simplify / clean up paths",
-        tools=["simplify_path", "cleanup_paths"],
-        how_to="simplify_path reduces nodes; cleanup_paths tidies data (HIGH risk, dry-run first).",
-        group="paths",
-        keywords=[
+    # --- paths / geometry (HIGH risk; need raw_action_enabled) ---
+    _entry(
+        "Simplify / clean up paths",
+        "paths",
+        ["edit:simplify", "edit:cleanup"],
+        "simplify reduces nodes; cleanup tidies path data (HIGH risk: dry_run first).",
+        [
             "simplify",
             "reduce nodes",
             "cleanup path",
@@ -462,12 +600,12 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "fewer points",
         ],
     ),
-    IntentEntry(
-        goal_pattern="Combine paths or do boolean union / difference",
-        tools=["combine_paths", "boolean_union", "boolean_difference"],
-        how_to="combine_paths merges; boolean_union/boolean_difference do shape math (HIGH risk).",
-        group="paths",
-        keywords=[
+    _entry(
+        "Combine paths or do boolean union / difference",
+        "paths",
+        ["edit:combine", "edit:union", "edit:difference"],
+        "combine merges; union/difference do shape math on ids (HIGH risk).",
+        [
             "combine paths",
             "merge paths",
             "boolean",
@@ -477,27 +615,27 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "intersect",
         ],
     ),
-    IntentEntry(
-        goal_pattern="Convert a stroke into a filled path / outline",
-        tools=["stroke_to_path"],
-        how_to="Call stroke_to_path to outline strokes into fills (HIGH risk, dry-run first).",
-        group="paths",
-        keywords=["stroke to path", "outline stroke", "convert stroke", "expand stroke"],
+    _entry(
+        "Convert a stroke into a filled path / outline",
+        "paths",
+        ["edit:stroke_to_path"],
+        "edit(ops=[{op:'stroke_to_path', ids:[...]}]) outlines strokes into fills (HIGH risk).",
+        ["stroke to path", "outline stroke", "convert stroke", "expand stroke"],
     ),
-    IntentEntry(
-        goal_pattern="Break a compound path apart",
-        tools=["break_apart"],
-        how_to="Call break_apart to split a compound path into separate subpaths (HIGH risk).",
-        group="paths",
-        keywords=["break apart", "split path", "separate subpaths", "ungroup path"],
+    _entry(
+        "Break a compound path apart",
+        "paths",
+        ["edit:break_apart"],
+        "edit(ops=[{op:'break_apart', ids:[...]}]) splits a compound path (HIGH risk).",
+        ["break apart", "split path", "separate subpaths", "ungroup path"],
     ),
-    # --- export / render ---
-    IntentEntry(
-        goal_pattern="Export a PNG (or other raster/PDF) of the document",
-        tools=["export_document", "render_preview"],
-        how_to="export_document writes a PNG/PDF/etc; render_preview gives a quick preview.",
-        group="export",
-        keywords=[
+    # --- export ---
+    _entry(
+        "Export a PNG (or other raster/PDF) of the document",
+        "export",
+        ["export:file"],
+        "export(doc_id, targets=[{kind:'file', format:'png|pdf|svg', width_px}]).",
+        [
             "export png",
             "export a png",
             "export pdf",
@@ -507,26 +645,28 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "rasterize",
             "make a png",
         ],
+        _doc_call("export", targets=[{"kind": "file", "format": "png", "width_px": 1024}]),
     ),
-    IntentEntry(
-        goal_pattern="Export just one object",
-        tools=["export_object"],
-        how_to="Call export_object with the doc_id and object id to export that object alone.",
-        group="export",
-        keywords=[
+    _entry(
+        "Export just one object",
+        "export",
+        ["export:file"],
+        "export(doc_id, targets=[{kind:'file', format:'png', object_id:'<id>'}]).",
+        [
             "export object",
             "export just",
             "export one shape",
             "export selection",
             "crop export",
         ],
+        _doc_call("export", targets=[{"kind": "file", "format": "png", "object_id": "logo"}]),
     ),
-    IntentEntry(
-        goal_pattern="Export many sizes/formats at once (batch)",
-        tools=["export_batch", "create_icon_set"],
-        how_to="export_batch takes a list of specs; create_icon_set makes a standard icon set.",
-        group="export",
-        keywords=[
+    _entry(
+        "Export many sizes/formats at once (batch / icon set)",
+        "export",
+        ["export:file", "export:profile"],
+        "Put several targets in ONE export call; profile name='icons' makes a standard icon set.",
+        [
             "batch export",
             "export a batch",
             "batch of",
@@ -536,13 +676,21 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "icons",
             "export all sizes",
         ],
+        _doc_call(
+            "export",
+            targets=[
+                {"kind": "file", "format": "png", "width_px": 512},
+                {"kind": "file", "format": "svg"},
+                {"kind": "profile", "name": "icons"},
+            ],
+        ),
     ),
-    IntentEntry(
-        goal_pattern="Make the SVG smaller / optimized for the web",
-        tools=["svg_web_optimize"],
-        how_to="Call svg_web_optimize to losslessly shrink the SVG (reversible).",
-        group="export",
-        keywords=[
+    _entry(
+        "Make the SVG smaller / optimized for the web",
+        "export",
+        ["edit:optimize_web"],
+        "edit(ops=[{op:'optimize_web'}]) shrinks the SVG (reversible); then export a web profile.",
+        [
             "smaller",
             "optimize",
             "web optimize",
@@ -553,12 +701,13 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "for web",
         ],
     ),
-    IntentEntry(
-        goal_pattern="Export with a web or print profile",
-        tools=["export_web_profile", "export_print_profile"],
-        how_to="export_web_profile gives web-ready output; export_print_profile prints (CMYK/DPI).",
-        group="export",
-        keywords=[
+    _entry(
+        "Export with a web or print profile",
+        "export",
+        ["export:profile"],
+        "export(doc_id, targets=[{kind:'profile', name:'web|print'}]); "
+        "dry_run=true projects sizes.",
+        [
             "web profile",
             "print profile",
             "for print",
@@ -567,22 +716,24 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "print ready",
             "web ready",
         ],
+        _doc_call("export", targets=[{"kind": "profile", "name": "web"}]),
     ),
-    # --- save ---
-    IntentEntry(
-        goal_pattern="Save the document to a new file",
-        tools=["save_document_as"],
-        how_to="Call save_document_as with the doc_id and a new workspace path.",
-        group="save",
-        keywords=["save", "save as", "write file", "save document", "export svg", "save to disk"],
+    _entry(
+        "Save the document to a new file",
+        "save",
+        ["export:save_as"],
+        "export(doc_id, targets=[{kind:'save_as', dest_path:'out.svg'}]); "
+        "overwrite needs approval.",
+        ["save", "save as", "write file", "save document", "export svg", "save to disk"],
+        _doc_call("export", targets=[{"kind": "save_as", "dest_path": "out.svg"}]),
     ),
-    # --- snapshots / undo ---
-    IntentEntry(
-        goal_pattern="Snapshot, undo, or restore the document state",
-        tools=["create_snapshot", "restore_snapshot", "list_snapshots"],
-        how_to="create_snapshot checkpoints; list_snapshots browses; restore_snapshot rolls back.",
-        group="snapshots",
-        keywords=[
+    # --- history / undo ---
+    _entry(
+        "Snapshot, undo, or restore the document state",
+        "history",
+        ["history:list", "history:create", "history:restore"],
+        "history(doc_id, action='list|create|restore'); restore is itself reversible.",
+        [
             "snapshot",
             "undo",
             "revert",
@@ -592,14 +743,16 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "history",
             "previous state",
         ],
+        _doc_call("history", action="restore", snapshot_id="snap-0003"),
     ),
     # --- live mode ---
-    IntentEntry(
-        goal_pattern="Connect to a running Inkscape (live mode) and work on the open canvas",
-        tools=["live_connect", "live_get_scene", "live_apply_to_selection"],
-        how_to="live_connect attaches; live_get_scene reads canvas; live_apply_to_selection edits.",
-        group="live",
-        keywords=[
+    _entry(
+        "Connect to a running Inkscape (live mode) and work on the open canvas",
+        "live",
+        ["live:observe", "live_edit:apply"],
+        "live(action='observe', include=['selection','inspect','view']) connects automatically; "
+        "live_edit(action='apply', style={...}) changes the selection.",
+        [
             "live",
             "running inkscape",
             "open canvas",
@@ -607,8 +760,50 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
             "connect to inkscape",
             "current selection in inkscape",
         ],
+        _call("live", action="observe", include=["selection", "inspect", "view"]),
+    ),
+    # --- advanced ---
+    _entry(
+        "Run an allow-listed Inkscape Action chain (advanced)",
+        "advanced",
+        ["actions:validate", "actions:run"],
+        "actions(action='list') shows what is exposed; 'validate' checks steps; 'run' needs "
+        "approval_token and raw_action_enabled. Prefer edit ops when one exists.",
+        [
+            "inkscape action",
+            "action chain",
+            "run an action",
+            "run actions",
+            "raw action",
+            "arbitrary action",
+            "arbitrary inkscape action",
+        ],
+        _call("actions", action="validate", steps=[{"action": "select-all"}]),
     ),
 )
+
+
+def _example_for(entry: IntentEntry) -> IntentCall | None:
+    """The explicit example, else the first `edit` op's validated example from `op_docs`."""
+    if entry.example is not None:
+        return entry.example
+    first = entry.targets[0] if entry.targets else None
+    if first is None or first.tool != "edit" or first.op is None:
+        return None
+    from inkscape_mcp.edit.op_docs import OP_EXAMPLES  # local: op_docs pulls in the edit engine
+
+    op = OP_EXAMPLES.get(first.op)
+    return None if op is None else _doc_call("edit", ops=[op])
+
+
+def _match(entry: IntentEntry) -> IntentMatch:
+    return IntentMatch(
+        goal_pattern=entry.goal_pattern,
+        targets=entry.targets,
+        how_to=entry.how_to,
+        group=entry.group,
+        example=_example_for(entry),
+    )
 
 
 def _score_entry(entry: IntentEntry, goal_lc: str) -> int:
@@ -624,8 +819,8 @@ def detect_out_of_scope(goal: str) -> OutOfScopeRule | None:
     """Return the first matching out-of-scope rule for `goal`, or None if none apply.
 
     Out-of-scope is checked before the in-scope matcher so a clearly unsupported goal (raster pixel
-    editing, arbitrary Actions/extensions/scripts, network fetch, code execution) returns an
-    explicit reason rather than being mis-mapped to a tool (ADR-003 / security sec.12).
+    editing, arbitrary extensions/scripts, network fetch, code execution) returns an explicit
+    reason rather than being mis-mapped to a tool (ADR-003 / security sec.12).
     """
     goal_lc = goal.lower()
     for rule in OUT_OF_SCOPE_RULES:
@@ -639,7 +834,7 @@ def match_intents(goal: str, limit: int = 3) -> list[IntentMatch]:
 
     Returns up to `limit` entries with a non-zero score, highest score first, ties broken by map
     order (deterministic). Returns an empty list when nothing matches (the caller then suggests
-    `list_capabilities` / `inspect_document`).
+    `help(topic='ops')`).
     """
     goal_lc = goal.lower()
     scored: list[tuple[int, int, IntentEntry]] = []
@@ -649,45 +844,24 @@ def match_intents(goal: str, limit: int = 3) -> list[IntentMatch]:
             scored.append((score, idx, entry))
     # Sort by score desc, then by original map index asc (stable, deterministic).
     scored.sort(key=lambda t: (-t[0], t[1]))
-    return [
-        IntentMatch(
-            goal_pattern=e.goal_pattern,
-            tools=e.tools,
-            how_to=e.how_to,
-            group=e.group,
-        )
-        for _, _, e in scored[: max(0, limit)]
-    ]
+    return [_match(e) for _, _, e in scored[: max(0, limit)]]
 
 
 def intents_summary() -> list[IntentMatch]:
     """The full curated map as guidance entries (no keywords), for the capabilities `intents` field.
 
-    Surfaced by `list_capabilities`/`diagnose_runtime` so an agent can browse the whole map without
-    calling `how_do_i` per goal. Same data `how_do_i` matches against, minus the keywords.
-
     This is the single in-memory source the `inkscape://runtime/intents` resource, the capabilities
-    `intents` section, and `how_do_i` all derive from, so they cannot drift.
+    `intents` section and `help(goal=...)` all derive from, so they cannot drift.
     """
-    return [
-        IntentMatch(
-            goal_pattern=e.goal_pattern,
-            tools=e.tools,
-            how_to=e.how_to,
-            group=e.group,
-        )
-        for e in INTENT_MAP
-    ]
+    return [_match(e) for e in INTENT_MAP]
 
 
 def intents_summary_json() -> str:
     """Serialize `intents_summary()` to a JSON object string for the runtime intents resource.
 
-    Shape: ``{"intents": [{goal_pattern, tools, how_to, group}, ...]}`` — the SAME curated map
-    `list_capabilities` exposes in its `intents` section and `how_do_i` matches against, minus the
-    matcher keywords. The resource and the capabilities tool share this one accessor so the
-    `inkscape://runtime/intents` payload can never diverge from the rest of the discovery surface.
+    Shape: ``{"intents": [{goal_pattern, targets, how_to, group, example}, ...]}`` — the same map
+    `help(goal=...)` matches against, minus the matcher keywords.
     """
     entries = intents_summary()
-    body = ", ".join(m.model_dump_json() for m in entries)
+    body = ", ".join(m.model_dump_json(exclude_none=True) for m in entries)
     return f'{{"intents": [{body}]}}'

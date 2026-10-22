@@ -1,33 +1,31 @@
 """Tool-usability eval harness test.
 
 Runs the deterministic eval harness (``evals/run_eval.py``) over the shipped scenarios dataset and
-asserts the server's OWN discovery surface (``how_do_i`` / :mod:`inkscape_mcp.intents`) stays
-agent-friendly:
+asserts the server's OWN discovery surface (``help(goal=...)`` / :mod:`inkscape_mcp.intents`)
+stays agent-friendly:
 
 * in-scope tool-selection accuracy >= the threshold (regression guard on the intent map / matcher),
 * every out-of-scope ask is flagged (never mis-mapped to a tool),
-* the dataset is non-trivial and every ``expected_tools`` name is a REAL registered MCP tool.
+* the dataset is non-trivial and every ``expected_tools`` entry is a REAL ``tool:op`` on the
+  registered MCP surface.
 
-This both EXERCISES the harness and GUARDS ``intents.py`` / ``how_do_i`` against regressions, per
-the intent of feeding eval failures back into the intent map and discovery surface.
+This both EXERCISES the harness and GUARDS ``intents.py`` / ``help(goal=...)`` against regressions,
+per the intent of feeding eval failures back into the intent map and discovery surface.
 """
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
-
-import pytest
 
 # The harness lives under evals/ (ruff-checked, not in mypy `files` — mirrors scripts/). Add it to
 # the path so the test can import it directly.
 _EVALS_DIR = Path(__file__).resolve().parent.parent / "evals"
 sys.path.insert(0, str(_EVALS_DIR))
 
-from run_eval import DEFAULT_THRESHOLD, load_scenarios, run_eval  # noqa: E402
+from run_eval import DEFAULT_THRESHOLD, _covers, load_scenarios, run_eval  # noqa: E402
 
-from inkscape_mcp.server import mcp, register_tools  # noqa: E402
+from tests.tool_support import target_ops, tool_schemas  # noqa: E402
 
 #: The bar the discovery surface must clear. Realistic per the epic (>= 0.8); the harness currently
 #: scores 1.0 in-scope, so this leaves headroom while still catching real regressions.
@@ -62,17 +60,21 @@ def test_all_out_of_scope_scenarios_flagged() -> None:
     )
 
 
-@pytest.mark.xfail(
-    reason="P6: tool_selection_scenarios.json still names the pre-rework tools; it moves to "
-    "'tool:op' entries (rework-plan P6)",
-    strict=True,
-)
-def test_every_expected_tool_is_a_real_registered_tool() -> None:
-    """Guard the dataset against drift: each expected tool must exist on the live MCP surface."""
-    register_tools()
-    tool_names = {t.name for t in asyncio.run(mcp.list_tools())}
-    referenced: set[str] = set()
+def test_every_expected_tool_is_a_real_tool_and_op(tool_app) -> None:
+    """Guard the dataset against drift: each expected `tool:op` must exist on the live surface."""
+    schemas = tool_schemas(tool_app)
+    bad: list[str] = []
     for scenario in load_scenarios():
-        referenced.update(scenario["expected_tools"])
-    missing = sorted(referenced - tool_names)
-    assert not missing, f"scenarios reference non-existent tools: {missing}"
+        for expected in scenario["expected_tools"]:
+            tool, _, op = expected.partition(":")
+            if tool not in schemas:
+                bad.append(f"{expected}: unknown tool")
+            elif op and op not in target_ops(tool, schemas[tool]):
+                bad.append(f"{expected}: unknown op")
+    assert not bad, f"scenarios reference non-existent tools/ops: {bad}"
+
+
+def test_bare_tool_names_cover_any_op_but_ops_match_exactly() -> None:
+    assert _covers("edit", ["edit:fill"]) and _covers("edit:fill", ["edit:fill"])
+    assert not _covers("edit:fill", ["edit:stroke"]) and not _covers("edit", ["editor:fill"])
+    assert not _covers("export", [])

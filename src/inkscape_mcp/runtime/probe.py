@@ -56,7 +56,7 @@ class Capabilities(BaseModel):
 
     Produced by `probe_capabilities`. Every field is detected at runtime; absent backends
     surface as null/false plus an entry in `notes`, not an exception. Becomes the
-    `outputSchema` of the `diagnose_runtime` / `list_capabilities` tools and the
+    payload of `help(topic='capabilities'|'diagnose')` and of the
     `inkscape://runtime/capabilities` resource.
 
     The `tool_count` + `tools` fields are NOT probed from Inkscape: they are the
@@ -152,10 +152,10 @@ class Capabilities(BaseModel):
     intents: list[IntentMatch] = Field(
         default_factory=intents_summary,
         description=(
-            "Curated natural-language goal → tool(s) map: each entry is "
-            "{goal_pattern, tools, how_to, group}. The same data the read-only `how_do_i` tool "
+            "Curated natural-language goal → (tool, op) map: each entry is "
+            "{goal_pattern, targets, how_to, group, example}. The same data `help(goal=...)` "
             "matches against; surfaced here so an agent can browse the whole map. Guidance only — "
-            "executes nothing, no raw-action hatch (ADR-003). Host-independent (not probed)."
+            "executes nothing. Host-independent (not probed)."
         ),
     )
 

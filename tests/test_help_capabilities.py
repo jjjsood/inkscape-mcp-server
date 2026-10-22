@@ -116,14 +116,16 @@ def test_stat_rejects_paths_outside_the_workspace(tool_app, tool_ws, how: str) -
 def test_in_scope_goals_return_ranked_matches(tool_app) -> None:
     for goal in ("draw a rectangle", "export a png", "undo my last change / roll back"):
         matches = _help(tool_app, goal=goal)["goal"]["matches"]
-        assert matches and all(m["tools"] and m["how"] for m in matches)
+        assert matches and all(m["use"] and m["how"] for m in matches)
         assert len(matches) <= 3
+    top = _help(tool_app, goal="draw a rectangle")["goal"]["matches"][0]
+    assert top["use"] == ["edit:create_rect"] and top["example"]["tool"] == "edit"
 
 
 def test_matches_follow_the_engine_order_best_first(tool_app) -> None:
     goal = "export a png"
-    expected = [m.tools for m in match_intents(goal, limit=3)]
-    assert [m["tools"] for m in _help(tool_app, goal=goal)["goal"]["matches"]] == expected
+    expected = [m.keys for m in match_intents(goal, limit=3)]
+    assert [m["use"] for m in _help(tool_app, goal=goal)["goal"]["matches"]] == expected
 
 
 def test_match_limit_is_respected() -> None:
@@ -134,10 +136,9 @@ def test_match_limit_is_respected() -> None:
     ("goal", "why_contains"),
     [
         ("edit a jpeg photo", ("raster", "pixel")),
-        ("run an arbitrary extension", ("escape hatch", "ADR-003")),
+        ("run an arbitrary extension", ("allow-listed", "`actions`")),
         ("download an image from a url", ("network", "url")),
         ("execute code on the host", ()),
-        pytest.param("run an arbitrary inkscape action", (), id="beats-an-incidental-match"),
     ],
 )
 def test_out_of_scope_goals_say_why_and_return_no_tool(tool_app, goal, why_contains) -> None:
@@ -145,6 +146,12 @@ def test_out_of_scope_goals_say_why_and_return_no_tool(tool_app, goal, why_conta
     assert out["out_of_scope"] is True and "matches" not in out
     if why_contains:
         assert any(word in out["why"].lower() or word in out["why"] for word in why_contains)
+
+
+def test_inkscape_actions_are_guidance_not_a_refusal(tool_app) -> None:
+    out = _help(tool_app, goal="run an arbitrary inkscape action")["goal"]
+    assert "out_of_scope" not in out
+    assert out["matches"][0]["use"][0].startswith("actions:")
 
 
 def test_unmatched_goal_points_at_the_op_list(tool_app) -> None:
@@ -160,9 +167,9 @@ def test_capabilities_carry_the_curated_intents() -> None:
     caps = get_cached_capabilities()
     assert len(caps.intents) == len(intents_summary()) == len(INTENT_MAP)
     entry = caps.intents[0]
-    assert entry.goal_pattern and entry.tools and entry.how_to and entry.group
+    assert entry.goal_pattern and entry.targets and entry.how_to and entry.group
     restored = Capabilities.model_validate_json(caps.model_dump_json())
-    assert [m.tools for m in restored.intents] == [m.tools for m in caps.intents]
+    assert [m.keys for m in restored.intents] == [m.keys for m in caps.intents]
 
 
 def test_runtime_intents_resource_is_the_shared_accessor() -> None:
@@ -174,11 +181,9 @@ def test_runtime_intents_resource_is_the_shared_accessor() -> None:
     text = _read("inkscape://runtime/intents")
     assert text == intents_summary_json()
     from_resource = [
-        (e["goal_pattern"], e["tools"], e["how_to"], e["group"])
+        (e["goal_pattern"], [f"{t['tool']}:{t['op']}" for t in e["targets"]], e["how_to"])
         for e in json.loads(text)["intents"]
     ]
-    assert from_resource == [
-        (m.goal_pattern, m.tools, m.how_to, m.group) for m in intents_summary()
-    ]
+    assert from_resource == [(m.goal_pattern, m.keys, m.how_to) for m in intents_summary()]
     caps = get_cached_capabilities()
-    assert from_resource == [(m.goal_pattern, m.tools, m.how_to, m.group) for m in caps.intents]
+    assert from_resource == [(m.goal_pattern, m.keys, m.how_to) for m in caps.intents]

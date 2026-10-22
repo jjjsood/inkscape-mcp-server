@@ -119,7 +119,7 @@ Description:
 Risk class: low
 Key params: goal: ['string', 'null'], op: ['string', 'null'], topic: ['string', 'null'], stat_paths: ['array', 'null']
 Description:
-    Ask for guidance. goal='make the svg smaller' -> matching tools; op='fill' -> that edit op's fields, risk and a valid example; topic='ops' lists every op, 'capabilities' shows what this runtime supports, 'diagnose' re-probes it; stat_paths=[...] returns size + sha256 of workspace files. No arguments: the short workflow. Example: help(op='create_rect')
+    Ask for guidance. goal='make the svg smaller' -> the tool:op to use + an example call; op='fill' -> that edit op's fields, risk and a valid example; topic='ops' lists every op, 'capabilities' shows what this runtime supports, 'diagnose' re-probes it; stat_paths=[...] returns size + sha256 of workspace files. No arguments: the short workflow. Example: help(op='create_rect')
 
 ## Prompts
 
@@ -252,20 +252,20 @@ Risk class: low (read-only resource).
 #### inkscape://runtime/capabilities
 Description: Probed Inkscape/runtime capability matrix (version, actions, export formats, fonts, live).
 
-Returns the same cached matrix as the `list_capabilities` tool, including the authoritative
-MCP tool surface (`tool_count` + `tools`, from the live registry). Use the
-`diagnose_runtime` tool to force a fresh probe.
+Returns the same cached matrix as `help(topic='capabilities')`, including the authoritative
+MCP tool surface (`tool_count` + `tools`, from the live registry). Use
+`help(topic='diagnose')` to force a fresh probe.
 
 Risk class: low (read-only).
 
 #### inkscape://runtime/intents
-Description: Curated natural-language goal → tool(s) intent map, WITHOUT the full capabilities payload.
+Description: Curated natural-language goal → (tool, op) intent map, WITHOUT the full capabilities payload.
 
-Shape: ``{"intents": [{goal_pattern, tools, how_to, group}, ...]}``. This is the exact same
-curated map the `how_do_i` tool matches against and the `list_capabilities` `intents` section
-exposes — all three derive from `inkscape_mcp.intents.intents_summary`, so they cannot drift.
-Guidance only: it names which tool(s) achieve a goal, executes nothing, and offers no raw-action
-escape hatch (ADR-003). Host-independent (not probed), so it needs no Inkscape binary.
+Shape: ``{"intents": [{goal_pattern, targets: [{tool, op}], how_to, group, example}, ...]}``.
+This is the exact same curated map `help(goal=...)` matches against and the capabilities
+`intents` section exposes — all derive from `inkscape_mcp.intents.intents_summary`, so they
+cannot drift. Guidance only: it names which call achieves a goal and shows an example, and
+executes nothing. Host-independent (not probed), so it needs no Inkscape binary.
 
 Use this when you want just the discovery map without the heavier runtime probe matrix.
 

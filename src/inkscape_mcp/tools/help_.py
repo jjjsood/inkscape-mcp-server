@@ -19,7 +19,8 @@ _logger = get_logger("tools.help")
 Topic = Literal["capabilities", "diagnose", "ops"]
 
 DESCRIPTION = (
-    "Ask for guidance. goal='make the svg smaller' -> matching tools; op='fill' -> that edit op's "
+    "Ask for guidance. goal='make the svg smaller' -> the tool:op to use + an example call; "
+    "op='fill' -> that edit op's "
     "fields, risk and a valid example; topic='ops' lists every op, 'capabilities' shows what this "
     "runtime supports, 'diagnose' re-probes it; stat_paths=[...] returns size + sha256 of "
     "workspace files. No arguments: the short workflow. Example: help(op='create_rect')"
@@ -77,7 +78,14 @@ def help_(
         else:
             matches = match_intents(goal, limit=3)
             payload["goal"] = {
-                "matches": [{"tools": m.tools, "how": m.how_to} for m in matches]
+                "matches": [
+                    {
+                        "use": m.keys,
+                        "how": m.how_to,
+                        "example": m.example.model_dump() if m.example else None,
+                    }
+                    for m in matches
+                ]
                 or "no confident match; try help(topic='ops') or help()"
             }
     if op is not None:

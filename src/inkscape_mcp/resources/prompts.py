@@ -8,7 +8,7 @@ MCP capability from resources — so it would have to read the server source to 
 
 This static (no-placeholder) `inkscape://prompts` resource closes that gap: it indexes every
 registered prompt (name + one-line purpose + its arguments) from the LIVE FastMCP registry
-(`mcp.list_prompts()` — the same async accessor `list_capabilities`/`gen_llms_txt.py` use for
+(`mcp.list_prompts()` — the same async accessor `gen_llms_txt.py` uses for
 tools), so the prompt library is DISCOVERABLE through `ListMcpResourcesTool` without reading source.
 The index names each prompt so the agent can then fetch its full text over the MCP prompts API
 (`prompts/get`). Host-path-free: only prompt names, one-line purposes, and argument descriptors are

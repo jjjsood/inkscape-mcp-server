@@ -86,3 +86,48 @@ def fake_render(calls: list[str]) -> Any:
         )
 
     return render
+
+
+def tool_schemas(app: FastMCP) -> dict[str, dict[str, Any]]:
+    """`{tool name: input JSON schema}` for every registered tool."""
+    return {t.name: t.parameters for t in asyncio.run(app.list_tools())}
+
+
+def _enums(node: Any) -> set[str]:
+    """Every string `enum` value anywhere inside a JSON-schema fragment."""
+    found: set[str] = set()
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "enum":
+                found |= {v for v in value if isinstance(v, str)}
+            else:
+                found |= _enums(value)
+    elif isinstance(node, list):
+        for item in node:
+            found |= _enums(item)
+    return found
+
+
+_OPEN_MODES = {"path", "svg", "canvas", "from_live"}
+_EXPORT_KINDS = {"file", "profile", "save_as"}
+
+
+def target_ops(tool: str, schema: dict[str, Any]) -> set[str]:
+    """The `op` values a `(tool, op)` intent target may carry for `tool`.
+
+    `edit`: the op names; `open`: the source mode; `export`: the target kind; everything else the
+    enum of its `action` / `topic` / `target` / `include` parameter.
+    """
+    from inkscape_mcp.edit.op_docs import op_models
+
+    props = schema.get("properties", {})
+    if tool == "edit":
+        return set(op_models())
+    if tool == "open":
+        return _OPEN_MODES & set(props)
+    if tool == "export":
+        return set(_EXPORT_KINDS)
+    ops: set[str] = set()
+    for name in ("action", "topic", "target", "include"):
+        ops |= _enums(props.get(name, {}))
+    return ops

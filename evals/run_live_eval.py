@@ -2,9 +2,9 @@
 """OPTIONAL live-agent eval runner for inkscape-mcp (E15-06a).
 
 Companion to the deterministic harness (:mod:`run_eval`). Where ``run_eval.py`` scores the server's
-OWN discovery surface (``how_do_i`` / :mod:`inkscape_mcp.intents`) with NO model, this runner drives
-a REAL agent over the MCP server and records the tools it ACTUALLY called per scenario, plus the
-turn count and whether the task succeeded.
+OWN discovery surface (``help(goal=...)`` / :mod:`inkscape_mcp.intents`) with NO model, this runner
+drives a REAL agent over the MCP server and records the ``tool:op`` targets it ACTUALLY called per
+scenario, plus the turn count and whether the task succeeded.
 
 It consumes the SAME dataset and the SAME scoring + reporting helpers as ``run_eval.py`` — there is
 no second copy of ``tool_selection_scenarios.json`` and no forked scorer. The only thing that
@@ -77,7 +77,8 @@ REPLAY_FILE_ENV_VAR = "INKSCAPE_MCP_EVAL_REPLAY"
 class AgentTrace:
     """One agent's observable behaviour on a single scenario.
 
-    * ``tools`` — the ordered list of tool names the agent actually CALLED (may contain repeats).
+    * ``tools`` — the ordered list of targets the agent actually CALLED (may contain repeats), as
+      ``"tool:op"`` (``"edit:create_rect"``; ``"export:file"``) or a bare ``"tool"``.
     * ``turns`` — number of agent turns / model round-trips it took.
     * ``success`` — whether the agent (or driver) judged the task complete. ``None`` means "let the
       scorer decide from the trace vs ``expected_tools``" (the usual case for the FAKE driver).

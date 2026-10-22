@@ -118,7 +118,7 @@ def with_registry_tools(caps: Capabilities) -> Capabilities:
 def get_cached_capabilities() -> Capabilities:
     """Return the cached capability matrix, probing once on first use.
 
-    Shared by `list_capabilities` and the `inkscape://runtime/capabilities` resource so they
+    Shared by `help(topic=...)` and the `inkscape://runtime/capabilities` resource so they
     return identical data for the same probe. The live MCP tool surface is overlaid on
     every read, so a tool registered after the probe is still reflected.
     """

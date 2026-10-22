@@ -3,27 +3,30 @@
 
 Makes "agent-friendly" MEASURABLE without a live LLM. For every scenario in
 ``tool_selection_scenarios.json`` it drives the server's OWN deterministic discovery layer — the
-same out-of-scope detector + keyword matcher that backs the ``how_do_i`` tool
-(:mod:`inkscape_mcp.intents`) — and scores whether the surfaced tool(s) include the expected
-tool(s). It then reports per-group and overall tool-selection accuracy plus how many out-of-scope
-asks were correctly flagged.
+same out-of-scope detector + keyword matcher that backs ``help(goal=...)``
+(:mod:`inkscape_mcp.intents`) — and scores whether the surfaced ``tool:op`` target(s) include the
+expected one(s). It then reports per-group and overall tool-selection accuracy plus how many
+out-of-scope asks were correctly flagged.
 
 Why no LLM: the thing under test is the server's discoverability surface (the curated intent map +
-matcher that E14-08 shipped and E15-03 catalogued), not a model. Evaluating it deterministically
+matcher), not a model. Evaluating it deterministically
 makes the harness CI-runnable and a regression guard (``tests/test_eval_harness.py``) — a
 best-practice delta over the survey: none of the §6 compared repos evaluate their tool surface.
 
 Scoring per scenario:
-  * in-scope  → HIT when at least one ``expected_tools`` entry appears among the tools the matcher
-    returned (matcher returns up to N entries; we union their tool lists), AND the ask was not
-    wrongly flagged out-of-scope.
+  * in-scope  → HIT when at least one ``expected_tools`` entry is covered by the targets the
+    matcher returned (matcher returns up to N entries; we union their targets), AND the ask was not
+    wrongly flagged out-of-scope. An entry is ``"tool:op"`` (``"edit:create_rect"``,
+    ``"open:canvas"``, ``"export:profile"``) and must match exactly; a bare ``"tool"`` is covered
+    by any op of it.
   * out-of-scope (``out_of_scope: true``) → HIT when the detector flags it out-of-scope (so the
     server refuses to map it to a tool). Tracked separately as out-of-scope precision/recall too.
 
 Swapping in a real agent later: keep the JSON schema (``task`` / ``expected_tools`` / ``group`` /
 ``out_of_scope``); replace :func:`_discover` with a function that drives a live MCP agent and
-returns the tools it actually CALLED (and, optionally, an out-of-scope refusal). The scoring +
-reporting below are runner-agnostic — only :func:`_discover` couples to the deterministic surface.
+returns the ``tool:op`` targets it actually CALLED (and, optionally, an out-of-scope refusal). The
+scoring + reporting below are runner-agnostic — only :func:`_discover` couples to the
+deterministic surface.
 
 Usage (run inside ``inkscape-mcp-server/``)::
 
@@ -44,15 +47,16 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-# Import the SAME deterministic discovery layer that backs the `how_do_i` tool. Pure module — no MCP
+# Import the SAME deterministic discovery layer that backs `help(goal=...)`. Pure module — no MCP
 # decorators, no LLM, no side effects on import — so the harness needs no server boot.
 from inkscape_mcp.intents import detect_out_of_scope, match_intents
 
-#: A discovery callable: maps a task string to ``(surfaced_tools, flagged_out_of_scope)``. The
+#: A discovery callable: maps a task string to ``(surfaced_targets, flagged_out_of_scope)``. The
 #: deterministic harness passes :func:`_discover`; the live-agent runner (``run_live_eval.py``)
-#: passes a function that drives a real agent and returns the tools it actually CALLED. Keeping the
-#: scorer parametrised over this boundary lets both runners SHARE the scoring + reporting below
-#: without duplicating them — exactly the "runner-agnostic" split promised in the module docstring.
+#: passes a function that drives a real agent and returns the ``tool:op`` targets it actually
+#: CALLED. Keeping the scorer parametrised over this boundary lets both runners SHARE the scoring
+#: + reporting below without duplicating them — exactly the "runner-agnostic" split promised in
+#: the module docstring.
 DiscoverFn = Callable[[str], tuple[list[str], bool]]
 
 #: Default accuracy bar for the in-scope tool-selection score. The pytest guard asserts the same.
@@ -83,27 +87,35 @@ def load_scenarios(path: Path = SCENARIOS_PATH) -> list[dict[str, Any]]:
     return out
 
 
+def _covers(expected: str, surfaced: list[str]) -> bool:
+    """Whether the expected ``tool:op`` (or bare ``tool``) is among the surfaced targets."""
+    if ":" in expected:
+        return expected in surfaced
+    return any(s == expected or s.startswith(f"{expected}:") for s in surfaced)
+
+
 def _discover(task: str) -> tuple[list[str], bool]:
     """Drive the deterministic discovery surface for one task.
 
-    Mirrors ``how_do_i``: out-of-scope is detected FIRST; otherwise the keyword matcher returns up
-    to a few guidance entries and we union their tool lists. Returns ``(tools, out_of_scope)``.
+    Mirrors ``help(goal=...)``: out-of-scope is detected FIRST; otherwise the keyword matcher
+    returns up to a few guidance entries and we union their ``tool:op`` targets. Returns
+    ``(targets, out_of_scope)``.
     """
     if detect_out_of_scope(task) is not None:
         return [], True
-    tools: list[str] = []
+    targets: list[str] = []
     for match in match_intents(task):
-        for tool in match.tools:
-            if tool not in tools:
-                tools.append(tool)
-    return tools, False
+        for key in match.keys:
+            if key not in targets:
+                targets.append(key)
+    return targets, False
 
 
 def score_scenario(scenario: dict[str, Any], discover: DiscoverFn = _discover) -> dict[str, Any]:
     """Run one scenario through a discovery callable and decide HIT/MISS.
 
-    ``discover`` defaults to the deterministic :func:`_discover` (the ``how_do_i`` surface), so the
-    existing harness behaves identically. The live-agent runner passes its own callable — the
+    ``discover`` defaults to the deterministic :func:`_discover` (the ``help(goal=...)`` surface),
+    so the existing harness behaves identically. The live-agent runner passes its own callable — the
     scoring rule is the same either way, which is what keeps the two runners directly comparable.
 
     Returns a per-scenario record with the surfaced tools, the verdict, and (for in-scope asks)
@@ -115,9 +127,9 @@ def score_scenario(scenario: dict[str, Any], discover: DiscoverFn = _discover) -
     if scenario["out_of_scope"]:
         hit = flagged_oos and not surfaced
     else:
-        # HIT iff at least one expected tool is among the surfaced tools, and we did NOT wrongly
-        # flag an in-scope ask as out-of-scope.
-        hit = (not flagged_oos) and any(tool in surfaced for tool in expected)
+        # HIT iff at least one expected target is covered by the surfaced targets, and we did NOT
+        # wrongly flag an in-scope ask as out-of-scope.
+        hit = (not flagged_oos) and any(_covers(tool, surfaced) for tool in expected)
 
     return {
         "task": scenario["task"],
@@ -127,7 +139,7 @@ def score_scenario(scenario: dict[str, Any], discover: DiscoverFn = _discover) -
         "surfaced_tools": surfaced,
         "flagged_out_of_scope": flagged_oos,
         "hit": hit,
-        "missing_tools": [t for t in expected if t not in surfaced],
+        "missing_tools": [t for t in expected if not _covers(t, surfaced)],
     }
 
 
