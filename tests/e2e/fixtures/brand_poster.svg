@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+<svg
+   width="400"
+   height="300"
+   viewBox="0 0 400 300"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4.3 (0d15f75042, 2025-12-25)"
+   sodipodi:docname="brand_poster.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="px"
+     inkscape:zoom="1.5"
+     inkscape:cx="200"
+     inkscape:cy="150"
+     inkscape:current-layer="layer-content" />
+  <defs
+     id="defs1">
+    <style
+       id="style1">.accent { fill: #e63946; }
+.ink { fill: #1d3557; }</style>
+    <linearGradient
+       id="grad-hero"
+       x1="0"
+       y1="0"
+       x2="1"
+       y2="1">
+      <stop
+         offset="0"
+         style="stop-color:#1d3557;stop-opacity:1"
+         id="stop1" />
+      <stop
+         offset="1"
+         style="stop-color:#457b9d;stop-opacity:1"
+         id="stop2" />
+    </linearGradient>
+    <symbol
+       id="logo-mark"
+       viewBox="0 0 40 40">
+      <circle
+         cx="20"
+         cy="20"
+         r="18"
+         style="fill:#e63946;stroke:#1d3557;stroke-width:2"
+         id="logo-ring" />
+      <path
+         d="M 12,20 L 20,10 L 28,20 L 20,30 Z"
+         style="fill:#f1faee"
+         id="logo-diamond" />
+    </symbol>
+  </defs>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>Brand poster</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <g
+     inkscape:groupmode="layer"
+     inkscape:label="Background"
+     id="layer-bg"
+     sodipodi:insensitive="true">
+    <rect
+       id="hero"
+       x="0"
+       y="0"
+       width="400"
+       height="300"
+       style="fill:url(#grad-hero);stroke:none" />
+    <rect
+       id="band"
+       x="0"
+       y="230"
+       width="400"
+       height="70"
+       class="accent" />
+  </g>
+  <g
+     inkscape:groupmode="layer"
+     inkscape:label="Content"
+     id="layer-content">
+    <g
+       id="header"
+       transform="translate(24,24)">
+      <use
+         xlink:href="#logo-mark"
+         x="0"
+         y="0"
+         width="40"
+         height="40"
+         id="logo" />
+      <text
+         x="52"
+         y="28"
+         style="font-size:20px;font-family:sans-serif;fill:#f1faee"
+         id="brand-name"><tspan
+           sodipodi:role="line"
+           x="52"
+           y="28"
+           id="brand-name-line">Acme Studio</tspan></text>
+    </g>
+    <text
+       x="24"
+       y="150"
+       style="font-size:36px;font-weight:bold;font-family:sans-serif;fill:#f1faee"
+       id="headline"><tspan
+         sodipodi:role="line"
+         x="24"
+         y="150"
+         id="headline-line">Spring Sale</tspan></text>
+    <rect
+       id="cta"
+       x="24"
+       y="180"
+       width="140"
+       height="36"
+       rx="8"
+       class="accent"
+       style="stroke:#f1faee;stroke-width:2" />
+    <text
+       x="94"
+       y="204"
+       style="font-size:16px;font-family:sans-serif;fill:#f1faee;text-anchor:middle"
+       id="cta-label"><tspan
+         sodipodi:role="line"
+         x="94"
+         y="204"
+         id="cta-label-line">Shop now</tspan></text>
+    <path
+       id="burst"
+       d="M 0,-30 L 8,-8 L 30,0 L 8,8 L 0,30 L -8,8 L -30,0 L -8,-8 Z"
+       transform="translate(330,90) rotate(15)"
+       class="accent" />
+  </g>
+  <g
+     inkscape:groupmode="layer"
+     inkscape:label="Footer"
+     id="layer-footer">
+    <text
+       x="200"
+       y="270"
+       style="font-size:14px;font-family:sans-serif;fill:#1d3557;text-anchor:middle"
+       id="footer-text"><tspan
+         sodipodi:role="line"
+         x="200"
+         y="270"
+         id="footer-text-line">acme.example · 2026</tspan></text>
+  </g>
+</svg>

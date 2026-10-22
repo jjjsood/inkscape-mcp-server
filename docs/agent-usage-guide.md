@@ -75,8 +75,10 @@ All writes land on a **working copy**, never the original file.
      `duplicate`, `rename`, `delete`), **transform** (`move`, `scale`, `rotate`, `tile`,
      `resize_canvas`, `normalize_viewbox`, `fit_to_content`), **compose** (`set_svg`, `insert_svg`,
      `place`, `grid`), **path** (HIGH, advanced mode) and **optimize** (`optimize_web`).
-     `help(topic="ops")` lists them; `help(op="fill")` shows the fields and a valid example; the
-     `inkscape://ops` resource has the full reference.
+     The `edit` `ops` field lists every op with its fields (`?` = optional), so no lookup is
+     needed first; `help(op="fill")` adds a valid example and `help(topic="ops")` / the
+     `inkscape://ops` resource the full reference. `open(path, render="inline")` returns a picture
+     of the page right away; a HIGH edit's result carries the `undo` call to restore.
 
 3. **Look before you trust the edit (a loud default).** `render="inline"` returns the PNG as an MCP
    image block, so the agent *sees* what it made and decides the next edit — no file, no extra
@@ -96,7 +98,9 @@ All writes land on a **working copy**, never the original file.
    (print-ready PDF); `save_as {dest_path, overwrite}` writes the working copy to a workspace file.
    `dry_run=true` projects sizes without writing and `byte_budget` caps the total. A list of
    `doc_id`s exports a set (files are prefixed with each id). To shrink first:
-   `edit(doc_id, ops=[{"op": "optimize_web"}])`.
+   `edit(doc_id, ops=[{"op": "optimize_web"}])` (keeps ids and layers, so you can keep editing;
+   add `"aggressive": true` as the very last step to also drop unreferenced ids and layers; that
+   pass is HIGH risk and needs an `approval_token`).
 
 Every artifact comes back as a workspace-relative path — **never an absolute host path** (sec.12).
 

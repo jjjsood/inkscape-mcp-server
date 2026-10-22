@@ -36,6 +36,7 @@ from inkscape_mcp.document.inspect import DocumentNotFound, InspectionError, _lo
 from inkscape_mcp.edit.dom import (
     EditError,
     all_ids,
+    content_bbox,
     deep_copy_with_new_ids,
     find_by_id,
     fmt_num,
@@ -87,58 +88,6 @@ def _require_finite(name: str, value: float) -> None:
     """Reject a non-finite numeric input with a stable, host-path-free :class:`EditError`."""
     if not math.isfinite(value):
         raise EditError(f"{name} must be finite")
-
-
-def _content_bbox(elem: etree._Element) -> tuple[float, float, float, float] | None:
-    """Best-effort axis-aligned bbox of a subtree from its OWN geometry attributes (no engine).
-
-    Walks the element + descendants and unions the naive bounding boxes of the primitive shapes it
-    can read directly from attributes (``rect``/``image``/``use`` x/y/width/height, ``circle`` /
-    ``ellipse`` centre+radius, ``line`` endpoints). Transforms on descendants are NOT applied (a
-    direct-DOM heuristic, ADR-005 — exact geometry needs the engine), so this is used ONLY to derive
-    a scale-to-fit factor; it returns ``None`` when nothing measurable is found (then no scaling is
-    applied). Bounds are finite-checked.
-    """
-    xs: list[float] = []
-    ys: list[float] = []
-
-    def _add_box(x: float, y: float, w: float, h: float) -> None:
-        if all(math.isfinite(v) for v in (x, y, w, h)) and w >= 0 and h >= 0:
-            xs.extend((x, x + w))
-            ys.extend((y, y + h))
-
-    for node in elem.iter():
-        if not isinstance(node.tag, str):
-            continue
-        local = etree.QName(node.tag).localname
-        try:
-            if local in ("rect", "image", "use"):
-                _add_box(
-                    _num(node.get("x")),
-                    _num(node.get("y")),
-                    _num(node.get("width")),
-                    _num(node.get("height")),
-                )
-            elif local == "circle":
-                cx, cy, r = _num(node.get("cx")), _num(node.get("cy")), _num(node.get("r"))
-                _add_box(cx - r, cy - r, 2 * r, 2 * r)
-            elif local == "ellipse":
-                cx, cy = _num(node.get("cx")), _num(node.get("cy"))
-                rx, ry = _num(node.get("rx")), _num(node.get("ry"))
-                _add_box(cx - rx, cy - ry, 2 * rx, 2 * ry)
-            elif local == "line":
-                x1, y1 = _num(node.get("x1")), _num(node.get("y1"))
-                x2, y2 = _num(node.get("x2")), _num(node.get("y2"))
-                _add_box(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
-        except (TypeError, ValueError):
-            continue
-
-    if not xs or not ys:
-        return None
-    x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
-    if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
-        return None
-    return x0, y0, x1 - x0, y1 - y0
 
 
 def _num(raw: str | None) -> float:
@@ -225,7 +174,7 @@ def make_compose_grid(
             # Optional uniform scale-to-fit, applied INSIDE the translate (so the asset scales about
             # the cell origin, then is moved into place). Downscale only by default.
             if scale_to_fit:
-                bbox = _content_bbox(clone)
+                bbox = content_bbox(clone)
                 if bbox is not None:
                     _x, _y, bw, bh = bbox
                     longest = max(bw, bh)

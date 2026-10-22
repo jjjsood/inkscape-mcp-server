@@ -132,6 +132,18 @@ def test_text_is_stored_as_a_text_node_never_as_markup(tool_ws, doc) -> None:
     assert len(text) == 0
 
 
+@pytest.mark.parametrize("anchor", ["start", "middle", "end"])
+def test_text_anchor_sets_text_anchor(tool_ws, doc, anchor) -> None:
+    op = {"op": "create_text", "x": 50, "y": 5, "text": "hi", "anchor": anchor}
+    _, text = _created(tool_ws, doc, op)
+    assert text.get("text-anchor") == anchor
+
+
+def test_text_without_anchor_sets_no_text_anchor(tool_ws, doc) -> None:
+    _, text = _created(tool_ws, doc, {"op": "create_text", "x": 5, "y": 5, "text": "hi"})
+    assert text.get("text-anchor") is None
+
+
 # --- inline paint on create ----------------------------------------------------
 
 

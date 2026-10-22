@@ -87,7 +87,8 @@ _GENERIC_FONTS = frozenset(
 _OPPORTUNITY_MESSAGES = {
     "editor_metadata": "editor-only metadata/attributes/comments can be stripped",
     "unused_defs": "unreferenced <defs> templates can be removed",
-    "unreferenced_ids": "id attributes nothing references can be dropped",
+    "unreferenced_ids": "id attributes nothing references can be dropped "
+    "(optimize_web aggressive=true)",
     "empty_groups": "empty groups can be removed",
     "reducible_coords": "coordinate precision can be reduced",
 }

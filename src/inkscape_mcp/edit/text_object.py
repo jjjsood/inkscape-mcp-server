@@ -161,12 +161,13 @@ def make_replace_text(object_id: str, text: str) -> MutateFn:
     raised. ``text`` is bounded to ``_MAX_TEXT_LEN`` characters and may not contain control
     characters other than tab / newline / carriage return.
 
-    tspan handling: when the target ``<text>`` contains ``<tspan>`` children, the content is
-    COLLAPSED to a single text run — all children are dropped and the new string is assigned as
-    the element's ``.text``. This is the clear, predictable behaviour for a content-replacement
-    tool (the caller asked to replace the text, not to preserve per-span styling); callers who
-    need per-span control should target the specific ``<tspan>`` by its id instead. Assigning via
-    lxml ``.text`` means the value is stored as a text node, so no markup injection is possible.
+    tspan handling: a ``<text>`` whose only content is ONE plain ``<tspan>`` (Inkscape's one-line
+    text) keeps that tspan and only its content changes. Otherwise, when the target contains
+    ``<tspan>`` children, the content is COLLAPSED to a single text run: all children are
+    dropped and the new string is assigned as the element's ``.text`` (the caller asked to
+    replace the text, not to preserve per-span styling); callers who need per-span control
+    should target the specific ``<tspan>`` by its id instead. Assigning via lxml ``.text``
+    means the value is stored as a text node, so no markup injection is possible.
     """
     if len(text) > _MAX_TEXT_LEN:
         raise EditError(f"text too long: {len(text)} > {_MAX_TEXT_LEN} characters")
@@ -178,6 +179,18 @@ def make_replace_text(object_id: str, text: str) -> MutateFn:
         elem = require_target(root, object_id)
         if _local_name(elem) not in _TEXT_TAGS:
             raise EditError(f"object {object_id!r} is not a text element")
+
+        # Inkscape writes a one-line text as <text><tspan sodipodi:role="line">..</tspan></text>;
+        # keep that single run (its position, style and id) and replace only its content.
+        children = [c for c in elem if isinstance(c.tag, str)]
+        if (
+            len(children) == 1
+            and _local_name(children[0]) == "tspan"
+            and len(children[0]) == 0
+            and not (elem.text or "").strip()
+        ):
+            children[0].text = text
+            return f"replaced text content of {object_id!r}"
 
         # Collapse any child runs to a single text node, then assign the new content. Dropping
         # children removes nested tspans/markup so the result is exactly the requested string.

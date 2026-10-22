@@ -86,6 +86,7 @@ def test_open_with_failing_ops_keeps_the_document_and_names_it(tool_app) -> None
         )
 
 
-def test_render_inline_without_ops_is_an_error(tool_app) -> None:
-    with pytest.raises(ToolError, match="needs ops"):
-        call(tool_app, "open", {"canvas": {"width": 10, "height": 10}, "render": "inline"})
+def test_render_inline_without_ops_shows_the_opened_page(tool_app, tool_renders) -> None:
+    res = call(tool_app, "open", {"canvas": {"width": 10, "height": 10}, "render": "inline"})
+    assert len(res.images) == 1 and tool_renders == [res.data["doc_id"]]
+    assert "changed" not in res.data

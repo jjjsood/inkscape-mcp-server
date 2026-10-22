@@ -233,6 +233,9 @@ def test_delete_through_the_tool_needs_approval(tool_app, doc, tool_ws) -> None:
         tool_app, "edit", {"doc_id": doc, "ops": [_delete(["seed1"])], "approval_token": TOKEN}
     ).data
     assert done["changed"] is True and done["risk"] == "high"
+    assert done["undo"] == (
+        f"history(doc_id, action='restore', snapshot_id='{done['snapshot_id']}')"
+    )
     assert "seed1" not in _ids(tool_ws, doc)
 
 

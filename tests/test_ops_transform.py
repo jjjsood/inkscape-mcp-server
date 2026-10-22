@@ -91,10 +91,12 @@ def _assert_noop(root: Path, doc_id: str, result: Any, before: bytes, counts: An
     ("op", "expected"),
     [
         ({"op": "move", "dx": 5, "dy": -3}, "translate(5,-3)"),
-        ({"op": "scale", "sx": 2}, "scale(2,2)"),
-        ({"op": "scale", "sx": 2, "sy": 3}, "scale(2,3)"),
+        ({"op": "move", "dx": 5}, "translate(5,0)"),
+        # r1 is the 10x10 square at the origin: scale/rotate pivot on its centre (5,5).
+        ({"op": "scale", "sx": 2}, "matrix(2,0,0,2,-5,-5)"),
+        ({"op": "scale", "sx": 2, "sy": 3}, "matrix(2,0,0,3,-5,-10)"),
         ({"op": "rotate", "degrees": 45, "cx": 50, "cy": 50}, "rotate(45,50,50)"),
-        ({"op": "rotate", "degrees": 90}, "rotate(90)"),
+        ({"op": "rotate", "degrees": 90}, "rotate(90,5,5)"),
     ],
 )
 def test_transform_string_written_to_the_target(tool_ws, doc, op, expected) -> None:
@@ -104,7 +106,57 @@ def test_transform_string_written_to_the_target(tool_ws, doc, op, expected) -> N
     assert (tool_ws / "logo.svg").read_bytes() == SVG
 
 
-@pytest.mark.parametrize("bad", [0.0, -1.0, float("inf"), float("nan")])
+def test_scale_and_rotate_keep_an_already_transformed_object_in_place(tool_ws, doc) -> None:
+    run_ops(doc, {"op": "move", "ids": ["r1"], "dx": 40, "dy": 0})
+    run_ops(doc, {"op": "rotate", "ids": ["r1"], "degrees": 30})
+    run_ops(doc, {"op": "scale", "ids": ["r1"], "sx": 0.5})
+    # Own-space pivots are appended, so the earlier move still applies last.
+    assert _transform(tool_ws, doc) == "translate(40,0) rotate(30,5,5) matrix(0.5,0,0,0.5,2.5,2.5)"
+
+
+def test_curved_relative_path_pivots_on_its_control_point_box(tool_ws) -> None:
+    svg = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">'
+        b'<path id="p" d="M10 10 c 5 5 10 10 20 0"/></svg>'
+    )
+    doc_id = open_doc(tool_ws, "curve.svg", svg)
+    result = run_ops(doc_id, {"op": "rotate", "ids": ["p"], "degrees": 15})
+    assert "about its centre" in result.outcomes[0].summary
+    # points (10,10) (15,15) (20,20) (30,10) -> box 10..30 x 10..20 -> centre (20,15)
+    assert _svg(tool_ws, doc_id).find(f".//{NS}path").get("transform") == "rotate(15,20,15)"
+
+
+def test_unmeasurable_geometry_falls_back_to_the_origin(tool_ws) -> None:
+    svg = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">'
+        b'<g id="g"><text>no position</text></g></svg>'
+    )
+    doc_id = open_doc(tool_ws, "text.svg", svg)
+    ops = [{"op": "rotate", "ids": ["g"], "degrees": 15}, {"op": "scale", "ids": ["g"], "sx": 2}]
+    result = run_ops(doc_id, *ops)
+    assert "about the origin" in result.outcomes[0].summary
+    assert _svg(tool_ws, doc_id).find(f".//{NS}g").get("transform") == "scale(2,2) rotate(15)"
+
+
+@pytest.mark.parametrize(
+    ("d", "box"),
+    [
+        ("M 0,-30 L 8,-8 L 30,0 Z", (0, -30, 30, 30)),
+        ("m 10 10 h 20 v 5 l -5 5 z", (10, 10, 20, 10)),
+        ("M0 0 Q 10 20 20 0 T 40 0", (0, 0, 40, 20)),
+        ("M0 0 A 5 5 0 0 1 10 0", (0, -5, 10, 10)),
+        ("M1e1 0L20 0", (10, 0, 10, 0)),
+    ],
+)
+def test_path_points_box(d, box) -> None:
+    from inkscape_mcp.edit.dom import path_points
+
+    pts = path_points(d)
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    assert (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)) == pytest.approx(box)
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, 1e-9, float("inf"), float("nan")])
 def test_scale_rejects_invalid_factor(tool_ws, doc, bad) -> None:
     _rejected(tool_ws, doc, {"op": "scale", "ids": ["r1"], "sx": bad}, match=r"ops\[0\] scale")
 
@@ -115,7 +167,7 @@ def test_move_accepts_a_selector_and_several_ops_stack_on_one_snapshot(tool_ws, 
         {"op": "move", "select": {"tag": "rect"}, "dx": 1, "dy": 2},
         {"op": "rotate", "ids": ["r1"], "degrees": 10},
     )
-    assert _transform(tool_ws, doc) == "rotate(10) translate(1,2)"
+    assert _transform(tool_ws, doc) == "translate(1,2) rotate(10,5,5)"
     assert _counts(tool_ws, doc) == (1, 1)
 
 
@@ -318,3 +370,17 @@ def test_fit_to_content_with_the_real_engine(tool_ws, offset_doc) -> None:
     _assert_noop(tool_ws, offset_doc, run_ops(offset_doc, {"op": "fit_to_content"}), after, counts)
     restore_snapshot(offset_doc, result.snapshot_id)
     assert _working(tool_ws, offset_doc) == before
+
+
+@pytest.mark.parametrize(
+    "bbox", [[0, 0, -5, 5], [0, 0, float("nan"), 5], {"x": 0, "y": 0, "width": 5, "height": 5e999}]
+)
+def test_selector_bbox_rejects_negative_or_non_finite_sizes(tool_ws, doc, bbox) -> None:
+    _rejected(tool_ws, doc, {"op": "move", "select": {"bbox": bbox}, "dx": 1})
+
+
+def test_selector_bbox_accepts_the_list_form_inspect_reports(tool_ws, doc) -> None:
+    result = run_ops(
+        doc, {"op": "move", "select": {"tag": "rect", "bbox": [0, 0, 15, 15]}, "dx": 1}
+    )
+    assert result.outcomes[0].matched == ["r1"]

@@ -349,6 +349,131 @@ def prepend_transform(elem: etree._Element, transform: str) -> None:
     elem.set("transform", f"{transform} {existing}".strip() if existing else transform)
 
 
+_NUMBER_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+
+
+def _attr_num(raw: str | None) -> float:
+    """An attribute as a float (``None``/blank is 0.0); raises ``ValueError`` on garbage."""
+    text = (raw or "").strip()
+    return float(text) if text else 0.0
+
+
+def _point_pairs(raw: str) -> list[tuple[float, float]]:
+    nums = [float(n) for n in _NUMBER_RE.findall(raw)]
+    return list(zip(nums[0::2], nums[1::2], strict=False))
+
+
+#: Path data longer than this is not measured (bounds memory on untrusted documents).
+_MAX_PATH_CHARS = 1 << 20
+
+#: Numbers each path command consumes per repetition.
+_PATH_ARITY = {"M": 2, "L": 2, "H": 1, "V": 1, "C": 6, "S": 4, "Q": 4, "T": 2, "A": 7, "Z": 0}
+_PATH_TOKEN_RE = re.compile(r"[MmLlHhVvCcSsQqTtAaZz]|" + _NUMBER_RE.pattern)
+
+
+def path_points(d: str) -> list[tuple[float, float]]:
+    """End and control points of a path ``d`` in absolute coordinates (all commands, rel/abs).
+
+    The hull of these points contains the curve, so their box is a safe, slightly loose bbox.
+    An arc adds its end point and the box of a radius-sized ellipse around its chord midpoint.
+    Raises ``ValueError`` on malformed data or data over ``_MAX_PATH_CHARS``.
+    """
+    if len(d) > _MAX_PATH_CHARS:
+        raise ValueError("path data too large to measure")
+    tokens = _PATH_TOKEN_RE.findall(d)
+    points: list[tuple[float, float]] = []
+    x = y = start_x = start_y = 0.0
+    i, cmd = 0, ""
+    while i < len(tokens):
+        if tokens[i].isalpha():
+            cmd = tokens[i]
+            i += 1
+            if cmd in "Zz":
+                x, y = start_x, start_y
+                continue
+        if not cmd or cmd in "Zz":
+            raise ValueError("path data without a command")
+        upper = cmd.upper()
+        n = _PATH_ARITY[upper]
+        args = [float(t) for t in tokens[i : i + n]]
+        if len(args) != n:
+            raise ValueError("truncated path data")
+        i += n
+        rel = cmd.islower()
+        if upper == "H":
+            x = args[0] + (x if rel else 0)
+        elif upper == "V":
+            y = args[0] + (y if rel else 0)
+        elif upper == "A":
+            rx, ry = abs(args[0]), abs(args[1])
+            ex, ey = args[5] + (x if rel else 0), args[6] + (y if rel else 0)
+            mx, my = (x + ex) / 2, (y + ey) / 2
+            points += [(mx - rx, my - ry), (mx + rx, my + ry)]
+            x, y = ex, ey
+        else:
+            pairs = list(zip(args[0::2], args[1::2], strict=True))
+            pts = [(px + (x if rel else 0), py + (y if rel else 0)) for px, py in pairs]
+            points += pts[:-1]
+            x, y = pts[-1]
+            if upper == "M":
+                start_x, start_y = x, y
+                cmd = "l" if rel else "L"  # further pairs after M are implicit line-tos
+        points.append((x, y))
+    return points
+
+
+def content_bbox(elem: etree._Element) -> tuple[float, float, float, float] | None:
+    """Best-effort ``(x, y, w, h)`` of a subtree in its OWN coordinate space (no engine).
+
+    Unions the boxes readable straight from attributes: ``rect``/``image``/``use``, ``circle`` /
+    ``ellipse``, ``line``, ``polygon`` / ``polyline`` points, a ``path`` (end + control points,
+    see :func:`path_points`), and a ``text`` anchor
+    ``x``/``y``. Descendant transforms are NOT applied (direct DOM, ADR-005), so this is a
+    heuristic for pivots and scale-to-fit, not exact geometry. ``None`` when nothing is measurable.
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+
+    def add(points: list[tuple[float, float]]) -> None:
+        for x, y in points:
+            if math.isfinite(x) and math.isfinite(y):
+                xs.append(x)
+                ys.append(y)
+
+    for node in elem.iter():
+        if not isinstance(node.tag, str):
+            continue
+        local = etree.QName(node.tag).localname
+        try:
+            if local in ("rect", "image", "use"):
+                x, y = _attr_num(node.get("x")), _attr_num(node.get("y"))
+                w, h = _attr_num(node.get("width")), _attr_num(node.get("height"))
+                if w >= 0 and h >= 0:
+                    add([(x, y), (x + w, y + h)])
+            elif local in ("circle", "ellipse"):
+                cx, cy = _attr_num(node.get("cx")), _attr_num(node.get("cy"))
+                r = _attr_num(node.get("r"))
+                rx = _attr_num(node.get("rx")) if local == "ellipse" else r
+                ry = _attr_num(node.get("ry")) if local == "ellipse" else r
+                add([(cx - rx, cy - ry), (cx + rx, cy + ry)])
+            elif local == "line":
+                add([(_attr_num(node.get(f"x{i}")), _attr_num(node.get(f"y{i}"))) for i in (1, 2)])
+            elif local in ("polygon", "polyline"):
+                add(_point_pairs(node.get("points") or ""))
+            elif local == "path":
+                add(path_points(node.get("d") or ""))
+            elif local == "text" and node.get("x") is not None and node.get("y") is not None:
+                add([(_attr_num(node.get("x")), _attr_num(node.get("y")))])
+        except ValueError:
+            continue
+
+    if not xs:
+        return None
+    x0, y0 = min(xs), min(ys)
+    w, h = max(xs) - x0, max(ys) - y0
+    return (x0, y0, w, h) if math.isfinite(w) and math.isfinite(h) else None
+
+
 # --- Reference remapping (rename / duplicate) -------------------------------
 
 
@@ -461,6 +586,7 @@ __all__ = [
     "TargetNotFound",
     "all_ids",
     "color_key",
+    "content_bbox",
     "deep_copy_with_new_ids",
     "find_by_id",
     "fmt_num",
@@ -473,6 +599,7 @@ __all__ = [
     "normalize_paint",
     "parse_style",
     "parse_viewbox",
+    "path_points",
     "prepend_transform",
     "require_target",
     "require_targets",

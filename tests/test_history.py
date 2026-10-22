@@ -19,12 +19,13 @@ def _recolor(app, doc, color):
 def test_list_create_and_restore_roundtrip(tool_app, tool_ws) -> None:
     doc = open_doc(tool_ws)
     original = working_svg(doc)
-    assert "snapshots" not in _hist(tool_app, doc, "list")
+    empty = _hist(tool_app, doc, "list")
+    assert empty["count"] == 0 and "snapshots" not in empty
     _recolor(tool_app, doc, "#0000ff")
     edited = working_svg(doc)
     assert edited != original
     snaps = _hist(tool_app, doc, "list")["snapshots"]
-    assert len(snaps) == 1
+    assert len(snaps) == 1 and _hist(tool_app, doc, "list")["count"] == 1
     restored = _hist(tool_app, doc, "restore", snapshot_id=snaps[0]["id"])
     assert restored["restored_from"] == snaps[0]["id"]
     assert restored["pre_restore_snapshot_id"]

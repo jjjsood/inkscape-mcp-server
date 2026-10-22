@@ -279,3 +279,40 @@ def test_missing_and_empty_targets_are_rejected(tool_ws, doc) -> None:
 def test_unknown_document(doc) -> None:
     with pytest.raises(EditApplyError, match="document id not found"):
         run_ops("d_nope", _fill(["r1"], "#000000"))
+
+
+# --- colours inside <style> CSS rules ------------------------------------------------------
+
+CSS_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><style id="css">'
+    b".a { fill: #E63946 ; stroke:#e63946!important } .b{fill:#000}<!--c-->.c{color:#e63946}"
+    b'</style><rect id="r" class="a" width="5" height="5"/></svg>'
+)
+
+
+def test_palette_rewrites_css_rules_including_text_after_a_comment(tool_ws) -> None:
+    doc_id = open_doc(tool_ws, "css.svg", CSS_SVG)
+    run_ops(doc_id, {"op": "palette", "mapping": {"#e63946": "#2a9d8f"}})
+    css = "".join(_elem(tool_ws, doc_id, "css").itertext())
+    assert "#e63946" not in css.lower() and css.count("#2a9d8f") == 3
+    assert "fill: #2a9d8f ;" in css and "!important" in css and "fill:#000" in css
+
+
+def test_scoped_replace_color_leaves_shared_css_alone(tool_ws) -> None:
+    doc_id = open_doc(tool_ws, "css.svg", CSS_SVG)
+    run_ops(
+        doc_id,
+        {"op": "replace_color", "from_color": "#e63946", "to_color": "#000000", "ids": ["r"]},
+    )
+    assert "#E63946" in "".join(_elem(tool_ws, doc_id, "css").itertext())
+
+
+def test_css_scan_is_linear_on_hostile_whitespace() -> None:
+    import time
+
+    from inkscape_mcp.edit.style import _rewrite_css
+
+    hostile = ("fill:" + " " * 20000 + "{") * 5
+    start = time.perf_counter()
+    _rewrite_css(hostile, "#e63946", "#000000")
+    assert time.perf_counter() - start < 1.0

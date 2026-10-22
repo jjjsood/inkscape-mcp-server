@@ -39,7 +39,7 @@ from collections.abc import Callable
 from lxml import etree
 from pydantic import BaseModel
 
-from inkscape_mcp.document.inspect import INKSCAPE_NS, SODIPODI_NS, XLINK_NS
+from inkscape_mcp.document.inspect import INKSCAPE_NS, SODIPODI_NS
 from inkscape_mcp.edit.dom import EditError
 
 #: The ``mutate`` callback type re-declared locally to avoid importing from the pipeline (which
@@ -47,10 +47,23 @@ from inkscape_mcp.edit.dom import EditError
 #: :data:`inkscape_mcp.edit.pipeline.MutateFn`.
 MutateFn = Callable[[etree._ElementTree], str]
 
-_XLINK_HREF = f"{{{XLINK_NS}}}href"
-
 #: Editor-only namespaces whose attributes are stripped wholesale (editor metadata, not rendering).
 _EDITOR_NS = frozenset({INKSCAPE_NS, SODIPODI_NS})
+
+#: Inkscape attributes that carry document STRUCTURE (layers and their names), not editor state.
+#: Kept unless ``aggressive``: an agent keeps editing after optimizing, and layers cost a few bytes.
+_LAYER_ATTRS = frozenset(
+    {
+        f"{{{INKSCAPE_NS}}}groupmode",
+        f"{{{INKSCAPE_NS}}}label",
+        f"{{{SODIPODI_NS}}}insensitive",
+        f"{{{INKSCAPE_NS}}}current-layer",
+    }
+)
+
+#: Kept (with only its ``current-layer``) unless ``aggressive``, so new objects still land in the
+#: layer the document was being edited in.
+_NAMEDVIEW = "namedview"
 
 #: Editor-only elements removed entirely: the sodipodi namedview and the (RDF) metadata block.
 _EDITOR_ELEMENT_LOCALS = frozenset({"namedview", "metadata"})
@@ -91,20 +104,6 @@ _COORD_ATTRS = frozenset(
         "fx",
         "fy",
     }
-)
-
-#: Attributes that may carry a ``#id`` / ``url(#id)`` reference to another element (mirrors the
-#: validate + style engines so optimization preserves exactly the ids those tools consider live).
-_REF_ATTRS = (
-    "fill",
-    "stroke",
-    "mask",
-    "clip-path",
-    "filter",
-    "style",
-    "marker-start",
-    "marker-mid",
-    "marker-end",
 )
 
 #: ``url(#id)`` reference inside an attribute/style value.
@@ -213,6 +212,27 @@ def _attr_local(name: str) -> str:
     return etree.QName(name).localname if name.startswith("{") else name
 
 
+def _is_editor_attr(node: etree._Element, name: object, aggressive: bool) -> bool:
+    """An attribute this pass strips: editor-namespaced ones (layer markers survive unless
+    aggressive), and on a kept namedview everything but its id and current layer."""
+    if not isinstance(name, str):
+        return False
+    if _local(node) == _NAMEDVIEW:
+        return name not in ("id", f"{{{INKSCAPE_NS}}}current-layer")
+    if _attr_namespace(name) not in _EDITOR_NS:
+        return False
+    return aggressive or name not in _LAYER_ATTRS
+
+
+def _is_removed_editor_element(
+    node: etree._Element, root: etree._Element, aggressive: bool
+) -> bool:
+    local = _local(node)
+    if node is root or local not in _EDITOR_ELEMENT_LOCALS:
+        return False
+    return aggressive or local != _NAMEDVIEW
+
+
 def _check_precision(precision: int) -> int:
     """Validate `precision` is an int within ``[PRECISION_MIN, PRECISION_MAX]``."""
     if isinstance(precision, bool) or not isinstance(precision, int):
@@ -238,32 +258,42 @@ def _round_numbers(value: str, precision: int) -> str:
     return _NUM_RE.sub(repl, value)
 
 
+#: `#id` selector in CSS (an id-styled element must keep its id).
+_CSS_ID_SELECTOR_RE = re.compile(r"#([A-Za-z_][\w-]*)")
+
+
 def collect_referenced_ids(root: etree._Element) -> set[str]:
-    """Every local id referenced via ``#id`` (href) or ``url(#id)`` anywhere in the document."""
+    """Every local id referenced anywhere: ``url(#id)`` in ANY attribute or ``<style>`` text,
+    ``#id`` hrefs (``href`` and ``xlink:href``) and SMIL timing values, and ``#id`` CSS selectors.
+
+    Over-collecting is the safe direction: a falsely "referenced" id is merely kept.
+    """
     refs: set[str] = set()
     for elem in root.iter():
         if not _is_element(elem):
             continue
-        href = elem.get(_XLINK_HREF) or elem.get("href")
-        if href and href.startswith("#"):
-            frag = href[1:].strip()
-            if frag:
-                refs.add(frag)
-        for attr in _REF_ATTRS:
-            val = elem.get(attr)
-            if not val:
+        if _local(elem) == "style":
+            css = "".join(t for t in elem.itertext() if isinstance(t, str))
+            refs.update(m.group(1).strip() for m in _URL_REF_RE.finditer(css))
+            refs.update(_CSS_ID_SELECTOR_RE.findall(css))
+            continue
+        for name, val in elem.attrib.items():
+            if not isinstance(val, str) or not val:
                 continue
-            for match in _URL_REF_RE.finditer(val):
-                frag = match.group(1).strip()
-                if frag:
-                    refs.add(frag)
+            refs.update(m.group(1).strip() for m in _URL_REF_RE.finditer(val))
+            local = _attr_local(name) if isinstance(name, str) else ""
+            if local == "href" and val.startswith("#"):
+                refs.add(val[1:].strip())
+            elif local in ("begin", "end"):  # SMIL: `other.click`, `other.end+1s`
+                refs.update(t.split(".")[0].strip() for t in val.split(";") if "." in t)
+    refs.discard("")
     return refs
 
 
 # --- mutation steps ---------------------------------------------------------
 
 
-def _strip_editor(root: etree._Element) -> int:
+def _strip_editor(root: etree._Element, aggressive: bool) -> int:
     """Remove editor-only elements, editor-namespaced attrs, and comments. Returns the count."""
     removed = 0
     for node in list(root.iter()):
@@ -275,14 +305,14 @@ def _strip_editor(root: etree._Element) -> int:
             continue
         if not _is_element(node):
             continue
-        if node is not root and _local(node) in _EDITOR_ELEMENT_LOCALS:
+        if _is_removed_editor_element(node, root, aggressive):
             parent = node.getparent()
             if parent is not None:
                 parent.remove(node)
                 removed += 1
                 continue
         for name in list(node.attrib):
-            if isinstance(name, str) and _attr_namespace(name) in _EDITOR_NS:
+            if _is_editor_attr(node, name, aggressive):
                 del node.attrib[name]
                 removed += 1
     return removed
@@ -370,6 +400,7 @@ def analyze_optimizations(
     root: etree._Element,
     precision: int = DEFAULT_PRECISION,
     keep_ids: list[str] | None = None,
+    aggressive: bool = True,
 ) -> OptimizationCounts:
     """Count (without mutating) what :func:`optimize_web_mutate` would remove/rewrite.
 
@@ -379,6 +410,8 @@ def analyze_optimizations(
     allowlist: listed ids are treated as live, so a kept id is NOT counted as an unreferenced-id /
     unused-defs / empty-group opportunity (keeps the count cross-joinable with an optimize run that
     used the same allowlist). ``quality_report`` calls without it, counting the default.
+    ``aggressive`` mirrors the optimizer flag; the default (True) counts every opportunity, which
+    is what ``quality_report`` reports.
     """
     precision = max(PRECISION_MIN, min(PRECISION_MAX, precision))
     referenced = collect_referenced_ids(root) | {kid for kid in (keep_ids or []) if kid}
@@ -390,14 +423,10 @@ def analyze_optimizations(
             continue
         if not _is_element(node):
             continue
-        if node is not root and _local(node) in _EDITOR_ELEMENT_LOCALS:
+        if _is_removed_editor_element(node, root, aggressive):
             editor += 1
             continue
-        editor += sum(
-            1
-            for name in node.attrib
-            if isinstance(name, str) and _attr_namespace(name) in _EDITOR_NS
-        )
+        editor += sum(1 for name in node.attrib if _is_editor_attr(node, name, aggressive))
 
     unused_defs = 0
     for defs in root.iter():
@@ -409,11 +438,13 @@ def analyze_optimizations(
             if child.get("id") is None or child.get("id") not in referenced:
                 unused_defs += 1
 
-    unreferenced_ids = sum(
-        1
-        for elem in root.iter()
-        if _is_element(elem) and elem.get("id") is not None and elem.get("id") not in referenced
-    )
+    unreferenced_ids = 0
+    if aggressive:
+        unreferenced_ids = sum(
+            1
+            for elem in root.iter()
+            if _is_element(elem) and elem.get("id") is not None and elem.get("id") not in referenced
+        )
 
     empty_groups = 0
     for elem in root.iter():
@@ -450,6 +481,7 @@ def optimize_web_mutate(
     precision: int = DEFAULT_PRECISION,
     keep_ids: list[str] | None = None,
     deltas_holder: list[WebOptimizeDeltas] | None = None,
+    aggressive: bool = False,
 ) -> MutateFn:
     """Build a mutate that web-optimizes the working tree (strip cruft, drop dead structure, round).
 
@@ -462,6 +494,10 @@ def optimize_web_mutate(
     the document references it (O3). Listed ids are added to the live-reference set,
     so the elements/defs/groups carrying them are preserved too. Unknown ids in the list are
     harmless no-ops.
+
+    By default the document stays EDITABLE: every ``id`` and the layer markers
+    (``inkscape:groupmode`` / ``inkscape:label``) survive, so later ops can still target objects by
+    id. ``aggressive=True`` also drops unreferenced ids and layer markers (a final ship-only pass).
 
     When ``deltas_holder`` is supplied, the closure writes a single :class:`WebOptimizeDeltas`
     (``bytes_before``/``bytes_after`` around the mutation + a ``{code: count}`` ``removed`` map
@@ -482,7 +518,7 @@ def optimize_web_mutate(
         # — independent-per-category, not the order-dependent removal tallies (where an
         # earlier step would otherwise consume what a later step counts).
         reported = (
-            analyze_optimizations(root, precision, keep_ids=keep_list)
+            analyze_optimizations(root, precision, keep_ids=keep_list, aggressive=aggressive)
             if deltas_holder is not None
             else None
         )
@@ -491,9 +527,9 @@ def optimize_web_mutate(
         # still-referenced id look dead (the safe direction — keep, never break a reference). The
         # caller's keep_ids allowlist is folded in so a deliberately-set id is treated as live.
         referenced = collect_referenced_ids(root) | keep
-        editor = _strip_editor(root)
+        editor = _strip_editor(root, aggressive)
         defs_removed = _prune_unused_defs(root, referenced)
-        ids_removed = _strip_unreferenced_ids(root, referenced)
+        ids_removed = _strip_unreferenced_ids(root, referenced) if aggressive else 0
         empties = _remove_empty_containers(root)
         rounded = _reduce_precision(root, precision)
         etree.cleanup_namespaces(root)

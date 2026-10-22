@@ -45,7 +45,14 @@ OP_EXAMPLES: dict[str, dict[str, Any]] = {
         "stroke": "#000000",
     },
     "create_path": {"op": "create_path", "d": "M10 10 L90 10 L50 80 Z", "fill": "#228833"},
-    "create_text": {"op": "create_text", "x": 20, "y": 60, "text": "Hello", "fill": "#222222"},
+    "create_text": {
+        "op": "create_text",
+        "x": 100,
+        "y": 60,
+        "text": "Hello",
+        "fill": "#222222",
+        "anchor": "middle",
+    },
     "create_group": {"op": "create_group", "id": "logo"},
     "create_use": {"op": "create_use", "href": "bg", "x": 10, "y": 10},
     "linear_gradient": {
@@ -180,6 +187,27 @@ def op_reference(name: str) -> dict[str, Any]:
         "example": OP_EXAMPLES[name],
         "note": "fields ending in ? are optional; 'ids' can be replaced by 'select'",
     }
+
+
+def op_signatures() -> str:
+    """Every op as `name(field field? ...)` in group order, for the `edit`/`open` ops schema.
+
+    Lets an agent write a call without a `help(op=...)` round trip. `?` marks optional fields;
+    `ids|select` stands for the two ways to target existing objects.
+    """
+    models = op_models()
+    sigs = []
+    for names in OP_GROUPS.values():
+        for name in names:
+            fields = models[name].model_fields
+            args = ["ids|select"] if "ids" in fields else []
+            args += [
+                f if field.is_required() else f"{f}?"
+                for f, field in fields.items()
+                if f not in ("op", "ids", "select")
+            ]
+            sigs.append(f"{name}({' '.join(args)})")
+    return "; ".join(sigs)
 
 
 def ops_index() -> dict[str, Any]:

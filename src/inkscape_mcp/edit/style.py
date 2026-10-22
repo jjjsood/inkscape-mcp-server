@@ -16,6 +16,7 @@ on the working copy via the pipeline.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 
 from lxml import etree
@@ -388,6 +389,46 @@ def _replace_color_in_element(elem: etree._Element, from_key: str, to_color: str
     return replacements
 
 
+#: One colour declaration inside a `<style>` body: `fill: #e63946` (group 1 = prefix, 2 = value).
+#: Possessive quantifiers only: the value is taken in one pass, so the scan is linear on any input
+#: (a lazy value + lookahead backtracked cubically on whitespace — a ReDoS on untrusted CSS).
+_CSS_COLOR_DECL_RE = re.compile(
+    r"((?<![\w-])(?:" + "|".join(_COLOR_PROPERTIES) + r")\s*+:\s*+)([^;{}!]*+)"
+)
+
+#: `<style>` text larger than this is left alone (bounds the work on untrusted documents).
+_MAX_CSS_CHARS = 1 << 20
+
+
+def _rewrite_css(text: str, from_key: str, to_color: str) -> tuple[str, int]:
+    count = 0
+
+    def sub(match: re.Match[str]) -> str:
+        nonlocal count
+        raw = match.group(2)
+        value = raw.rstrip()
+        # `fill:hover {` style selectors are not declarations.
+        if match.string[match.end() : match.end() + 1] == "{" or color_key(value) != from_key:
+            return match.group(0)
+        count += 1
+        return match.group(1) + to_color + raw[len(value) :]
+
+    return _CSS_COLOR_DECL_RE.sub(sub, text), count
+
+
+def _replace_color_in_css(elem: etree._Element, from_key: str, to_color: str) -> int:
+    """Rewrite matching colour declarations in one `<style>` element (its text and child tails)."""
+    total = 0
+    if elem.text and len(elem.text) <= _MAX_CSS_CHARS:
+        elem.text, n = _rewrite_css(elem.text, from_key, to_color)
+        total += n
+    for child in elem:
+        if child.tail and len(child.tail) <= _MAX_CSS_CHARS:
+            child.tail, n = _rewrite_css(child.tail, from_key, to_color)
+            total += n
+    return total
+
+
 def _replace_color_in_tree(
     root: etree._Element,
     from_color: str,
@@ -403,6 +444,10 @@ def _replace_color_in_tree(
     total = 0
     for elem in _scope_elements(root, scope_ids):
         total += _replace_color_in_element(elem, from_key, to_color)
+        # `<style>` rules paint objects anywhere in the document, so they are rewritten only for
+        # a document-wide replacement, never for a scoped one.
+        if scope_ids is None and etree.QName(elem).localname == "style":
+            total += _replace_color_in_css(elem, from_key, to_color)
     return total
 
 

@@ -61,6 +61,15 @@ def test_every_tool_has_annotations_and_a_tag() -> None:
     assert open_world == LIVE | ADVANCED
 
 
+def test_edit_ops_field_lists_every_op_with_its_fields() -> None:
+    ops_field = _tools()["edit"].parameters["properties"]["ops"]["description"]
+    for name, cls in op_models().items():
+        assert f"{name}(" in ops_field, name
+        for field in cls.model_fields:
+            if field not in ("op", "ids", "select"):
+                assert field in ops_field, (name, field)
+
+
 def test_schemas_are_compact() -> None:
     for name, tool in _tools().items():
         text = json.dumps(tool.parameters)

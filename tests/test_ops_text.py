@@ -98,6 +98,19 @@ def test_replace_text_collapses_tspans_to_one_run(tool_ws) -> None:
     assert text.text == "<b>x</b>" and len(text) == 0
 
 
+def test_replace_text_keeps_an_inkscape_single_line_tspan(tool_ws) -> None:
+    svg = (
+        b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+        b'<text id="t" x="1" y="5"><tspan id="line" x="1" y="5" style="font-weight:bold">old'
+        b"</tspan></text></svg>"
+    )
+    doc_id = open_doc(tool_ws, "line.svg", svg)
+    run_ops(doc_id, {"op": "replace_text", "ids": ["t"], "text": "new"})
+    line = _elem(tool_ws, doc_id, "line")
+    assert line.text == "new" and line.get("style") == "font-weight:bold"
+    assert not (_elem(tool_ws, doc_id, "t").text or "").strip()
+
+
 def test_replace_text_accepts_a_selector(tool_ws, doc) -> None:
     run_ops(doc, {"op": "replace_text", "select": {"tag": "text"}, "text": "all"})
     assert _elem(tool_ws, doc, "t1").text == "all"

@@ -162,8 +162,9 @@ validation leaves the document byte-identical, and an edit that changes nothing 
 
 ## Edit ops
 
-An op is `{"op": NAME, ...fields}`. Use `help(op=NAME)` for fields and a validated example, or
-`help(topic='ops')` / the `inkscape://ops` resource for the full list.
+An op is `{"op": NAME, ...fields}`. The `edit` tool's `ops` field lists every op with its fields;
+`help(op=NAME)` adds a validated example, `help(topic='ops')` / the `inkscape://ops` resource the
+full list.
 
 | Group | Ops |
 |---|---|
@@ -375,7 +376,7 @@ docs/             Installation guides and agent usage guide
 evals/            Tool-usability evaluation harness
 examples/         MCP host configurations
 scripts/          Live-helper installers, llms.txt generator, CI helpers
-tests/            pytest suite
+tests/            pytest suite (tests/e2e/: long real-Inkscape agent workflows)
 ```
 
 </details>

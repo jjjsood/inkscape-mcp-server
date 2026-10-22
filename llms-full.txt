@@ -59,7 +59,7 @@ Description:
 Risk class: medium
 Key params: path: ['string', 'null'], svg: ['string', 'null'], canvas: object | null, from_live: object | null, ops: ['array', 'null'], render: string, detail: string, approval_token: ['string', 'null']
 Description:
-    Start working: returns a doc_id. Give exactly ONE source: path (existing SVG in the workspace), svg (SVG text), canvas {width,height,viewBox?,background?} (blank page) or from_live {dest_path} (save the live Inkscape canvas into the workspace). Optional `ops` run the first edit in the same call (same format as edit; render='inline' returns a PNG). Example: open(canvas={'width':800,'height':600,'background':'#fff'}, ops=[{'op':'create_circle','cx':400,'cy':300,'r':100,'fill':'#f63'}], render='inline')
+    Start working: returns a doc_id. Give exactly ONE source: path (existing SVG in the workspace), svg (SVG text), canvas {width,height,viewBox?,background?} (blank page) or from_live {dest_path} (save the live Inkscape canvas into the workspace). Optional `ops` run the first edit in the same call (same format as edit); render='inline' returns a PNG (of the opened page when there are no ops). Example: open(canvas={'width':800,'height':600,'background':'#fff'}, ops=[{'op':'create_circle','cx':400,'cy':300,'r':100,'fill':'#f63'}], render='inline')
 
 ### Inspect
 
@@ -172,9 +172,9 @@ Example: {"op":"create_path","d":"M10 10 L90 10 L50 80 Z","fill":"#228833"}
 
 #### create_text
 Risk: medium · creates an id
-Does: Create a `<text>` at `(x, y)`.
-Fields: id: str | None?, parent: str | None?, x: float, y: float, text: str, fill: str | None?, stroke: str | None?, stroke_width: str | None?
-Example: {"op":"create_text","x":20,"y":60,"text":"Hello","fill":"#222222"}
+Does: Create a `<text>` at `(x, y)`; `anchor='middle'` centres it on `x`.
+Fields: id: str | None?, parent: str | None?, x: float, y: float, text: str, fill: str | None?, stroke: str | None?, stroke_width: str | None?, anchor: Optional[Literal['start', 'middle', 'end']]?
+Example: {"op":"create_text","x":100,"y":60,"text":"Hello","fill":"#222222","anchor":"middle"}
 
 #### create_group
 Risk: medium · creates an id
@@ -280,19 +280,19 @@ Example: {"op":"delete","ids":["bg"]}
 
 #### move
 Risk: medium
-Does: Translate each target by `(dx, dy)`.
-Fields: ids: list[str] | None?, select: Selector | None?, dx: float, dy: float
+Does: Translate each target by `(dx, dy)` (each defaults to 0).
+Fields: ids: list[str] | None?, select: Selector | None?, dx: float?, dy: float?
 Example: {"op":"move","ids":["bg"],"dx":10,"dy":-5}
 
 #### scale
 Risk: medium
-Does: Scale each target by `sx` (and `sy`, default `sx`) about the parent origin.
+Does: Scale each target by `sx` (and `sy`, default `sx`) about its own centre.
 Fields: ids: list[str] | None?, select: Selector | None?, sx: float, sy: float | None?
 Example: {"op":"scale","ids":["bg"],"sx":1.5}
 
 #### rotate
 Risk: medium
-Does: Rotate each target by `degrees` (about `(cx, cy)` when both are given).
+Does: Rotate each target by `degrees` about its centre (or about `(cx, cy)` when both given).
 Fields: ids: list[str] | None?, select: Selector | None?, degrees: float, cx: float | None?, cy: float | None?
 Example: {"op":"rotate","ids":["bg"],"degrees":45}
 
@@ -394,8 +394,8 @@ Example: {"op":"cleanup","ids":["p1"]}
 
 #### optimize_web
 Risk: medium
-Does: Web-optimize: strip editor data / unused defs, drop empty groups, round numbers.
-Fields: precision: int?, keep_ids: list[str] | None?
+Does: Web-optimize: strip editor data / unused defs, drop empty groups, round numbers. Ids, layers and layer locks are kept so the document stays editable; `aggressive=true` (HIGH risk, needs approval_token) also drops unreferenced ids, layers and namedview (the last step before shipping). Not a sanitizer: scripts and event attributes are left as they are.
+Fields: precision: int?, keep_ids: list[str] | None?, aggressive: bool?
 Example: {"op":"optimize_web","precision":3}
 
 

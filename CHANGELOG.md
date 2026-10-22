@@ -42,6 +42,44 @@ agent-ready over STDIO.
   arg-list subprocess (never shell strings), safe XML parsing (no entity expansion), no network,
   no arbitrary extension execution, and risk-classed calls.
 
+### Changed (realistic end-to-end workflows, `tests/e2e/`)
+- `palette` / `replace_color` also rewrite colours inside `<style>` CSS rules when run
+  document-wide (scoped runs leave shared CSS alone); `inspect(include=['styles'])` lists CSS-rule
+  colours. Objects painted through a CSS class used to keep their old colour.
+- `scale` and `rotate` (without `cx`/`cy`) pivot on the object's own centre instead of the parent
+  origin, so objects stay in place; geometry the DOM cannot measure (e.g. text without x/y) falls
+  back to the origin and the op summary says so.
+- New objects go into the document's current layer (`inkscape:current-layer`), else the topmost
+  layer, skipping locked and hidden layers (was: the first layer, often a locked background).
+- `replace_text` keeps Inkscape's single-line `<tspan sodipodi:role="line">` and changes only its
+  content.
+- `optimize_web` keeps ids, layers, layer locks and the current layer by default (the document
+  stays editable); `aggressive=true` is the final ship-only pass that also drops unreferenced ids,
+  layer markers and the namedview. It is HIGH risk and needs an `approval_token`.
+- `scale`/`rotate` pivots also work for curved and relative paths (all path commands are parsed).
+- `move` defaults `dx`/`dy` to 0; a selector `bbox` also accepts `[x, y, width, height]`, the form
+  `inspect` reports.
+
+### Security
+- The CSS colour scan uses possessive quantifiers (linear time); the first version backtracked
+  cubically on whitespace in an untrusted `<style>` block. `<style>` text and path data over 1 MiB
+  are not scanned.
+- `optimize_web` finds references in every attribute, in `<style>` text (`url(#id)`, `#id`
+  selectors), in both `href` forms and in SMIL `begin`/`end`, so it no longer prunes a gradient,
+  marker or filter that is still in use.
+- `scale` rejects factors that round to 0 (a singular transform); a selector `bbox` rejects
+  negative or non-finite sizes.
+
+### Changed (agent scenario run, Weg B in `docs/test-scenarios.md`)
+- `open(..., render='inline')` without `ops` returns a picture of the opened page instead of an
+  error (6 of 19 agent runs tripped over the old error).
+- The `edit` `ops` field lists every op with its fields (`create_text(x y text fill? … anchor?)`),
+  so an agent can write a call without a `help(op=…)` round trip first (+≈1.3 KB on `edit`).
+- A HIGH-risk edit that changed the document returns `undo` with the exact
+  `history(action='restore', snapshot_id=…)` call.
+- `history(action='list')` returns `count` (also `0`, where the empty list used to vanish).
+- `create_text` takes `anchor` (`start` / `middle` / `end`) to centre or right-align text on `x`.
+
 ### Changed (breaking relative to the pre-release 99-tool surface)
 - The 99 single-purpose tools (`create_rect`, `set_fill`, `apply_edits`, `export_document`,
   `live_session_step`, …) are **gone**; there is no legacy profile and no compatibility layer. Their

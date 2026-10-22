@@ -82,8 +82,10 @@ _TRANSFORM_RE = re.compile(
     r"^\s*(?:(?:matrix|translate|scale|rotate|skewX|skewY)\s*\([\d\s,.+\-eE]*\)\s*)+$"
 )
 
-#: An inkscape:groupmode="layer" group is the conventional default insert parent when present.
+#: Inkscape layer markers used to pick the default insert parent (see :func:`_default_parent`).
 _INKSCAPE_GROUPMODE = "{http://www.inkscape.org/namespaces/inkscape}groupmode"
+_INKSCAPE_CURRENT_LAYER = "{http://www.inkscape.org/namespaces/inkscape}current-layer"
+_SODIPODI_INSENSITIVE = "{http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd}insensitive"
 
 
 def _is_element(elem: etree._Element) -> bool:
@@ -116,21 +118,34 @@ def _resolve_id(supplied: str | None, prefix: str, existing: set[str]) -> str:
     return supplied
 
 
-def _default_parent(root: etree._Element) -> etree._Element:
-    """The default insert parent: the first ``inkscape:label`` layer if any, else the document root.
+def _usable_layer(elem: etree._Element) -> bool:
+    """A top-level Inkscape layer that is neither locked nor hidden."""
+    return (
+        _is_element(elem)
+        and _local_name(elem) == "g"
+        and elem.get(_INKSCAPE_GROUPMODE) == "layer"
+        and elem.get(_SODIPODI_INSENSITIVE) != "true"
+        and "display:none" not in (elem.get("style") or "").replace(" ", "")
+    )
 
-    Inserting into the first layer matches how a user-authored document is structured (content lives
-    in a layer, not bare under ``<svg>``); a document with no layer falls back to the root so a
-    plain SVG still works.
+
+def _default_parent(root: etree._Element) -> etree._Element:
+    """The default insert parent, chosen the way Inkscape itself would draw.
+
+    1. The layer the document's ``sodipodi:namedview`` names as ``inkscape:current-layer``;
+    2. else the topmost (last) top-level layer — new content lands on top, not under a background;
+    3. else the document root, so a plain SVG without layers still works.
+
+    Locked (``sodipodi:insensitive``) and hidden layers are skipped at every step.
     """
     for child in root:
-        if (
-            _is_element(child)
-            and _local_name(child) == "g"
-            and child.get(_INKSCAPE_GROUPMODE) == "layer"
-        ):
-            return child
-    return root
+        if _is_element(child) and _local_name(child) == "namedview":
+            current = child.get(_INKSCAPE_CURRENT_LAYER)
+            for layer in root.iter():  # sub-layers too
+                if current and layer.get("id") == current and _usable_layer(layer):
+                    return layer
+    layers = [child for child in root if _usable_layer(child)]
+    return layers[-1] if layers else root
 
 
 def _resolve_parent(root: etree._Element, parent_id: str | None) -> etree._Element:
@@ -467,8 +482,12 @@ def make_create_text(
     fill: str | None = None,
     stroke: str | None = None,
     stroke_width: str | None = None,
+    anchor: str | None = None,
 ) -> MutateFn:
     """Build a ``mutate`` closure that inserts a ``<text>`` anchored at ``(x, y)``.
+
+    ``anchor`` (``start`` / ``middle`` / ``end``) sets ``text-anchor`` so ``x`` is the left edge,
+    the centre or the right edge of the text.
 
     ``text`` is length-bounded and may not contain control characters other than tab / newline /
     carriage return; it is assigned via lxml ``.text`` (stored as a text node) so no markup
@@ -481,12 +500,16 @@ def make_create_text(
     if _FORBIDDEN_CTRL_RE.search(text):
         raise EditError("text contains forbidden control characters")
     style = _canon_inline_style(fill, stroke, stroke_width)
+    if anchor not in (None, "start", "middle", "end"):
+        raise EditError("anchor must be 'start', 'middle' or 'end'")
 
     def mutate(tree: etree._ElementTree) -> str:
         root = tree.getroot()
         parent = _resolve_parent(root, parent_id)
         new_id = _resolve_id(object_id, "text", all_ids(root))
         elem = _append(parent, "text", {"id": new_id, "x": sx, "y": sy})
+        if anchor is not None:
+            elem.set("text-anchor", anchor)
         _apply_inline_style(elem, *style)
         elem.text = text
         return f"created <text> {new_id!r}"

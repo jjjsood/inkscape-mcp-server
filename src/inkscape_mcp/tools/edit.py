@@ -6,6 +6,7 @@ from fastmcp import FastMCP
 from fastmcp.tools import ToolResult
 from pydantic import Field
 
+from inkscape_mcp.edit.op_docs import op_signatures
 from inkscape_mcp.edit.ops import MAX_OPS, OpsResult, run_ops
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
 from inkscape_mcp.tools._result import guarded, inline_png, ok
@@ -26,13 +27,10 @@ DESCRIPTION = (
 )
 
 OPS_PARAM = (
-    f"1..{MAX_OPS} ops, each {{'op': NAME, ...fields}}. Names: "
-    "create_rect create_circle create_ellipse create_line create_polygon create_polyline "
-    "create_path create_text create_group create_use linear_gradient radial_gradient group "
-    "reparent fill stroke opacity replace_color palette font replace_text duplicate rename "
-    "delete move scale rotate tile resize_canvas normalize_viewbox fit_to_content set_svg "
-    "insert_svg place grid optimize_web; path ops (advanced mode): simplify union difference "
-    "combine break_apart stroke_to_path cleanup. Fields: help(op=NAME)."
+    f"1..{MAX_OPS} ops, each {{'op': NAME, ...fields}}; put every step of a task in ONE call. "
+    "Ops and fields (?=optional): "
+    + op_signatures()
+    + ". Path ops (simplify..cleanup) need advanced mode. Examples: help(op=NAME)."
 )
 
 
@@ -55,6 +53,8 @@ def ops_payload(res: OpsResult, detail: Detail) -> dict[str, Any]:
         ]
     elif res.needs_approval:
         out["needs_approval"] = True
+        if res.changed and res.snapshot_id:
+            out["undo"] = f"history(doc_id, action='restore', snapshot_id='{res.snapshot_id}')"
     if detail in ("summary", "full") and not res.dry_run:
         out["ops"] = [f"{o.op} {o.name}: {o.summary}" for o in res.outcomes]
     if detail == "full":

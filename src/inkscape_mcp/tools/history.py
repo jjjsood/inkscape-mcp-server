@@ -48,6 +48,7 @@ def history(
         snaps = snapshots_engine.list_snapshots(doc_id, registry=reg)
         payload = {
             "doc_id": doc_id,
+            "count": len(snaps),
             "snapshots": [
                 {
                     "id": s.snapshot_id,

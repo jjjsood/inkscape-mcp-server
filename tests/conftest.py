@@ -406,6 +406,7 @@ def tool_renders(monkeypatch: pytest.MonkeyPatch, tool_ws: Any) -> list[str]:
     monkeypatch.setattr("inkscape_mcp.edit.ops.render_preview", fake)
     monkeypatch.setattr("inkscape_mcp.edit.pipeline.render_preview", fake)
     monkeypatch.setattr("inkscape_mcp.tools.render.render_preview", fake)
+    monkeypatch.setattr("inkscape_mcp.tools.open_.render_preview", fake)
     return calls
 
 

@@ -2,19 +2,20 @@
 running the first ops in the same call.
 """
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.tools import ToolResult
 from lxml import etree
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from inkscape_mcp.edit.compose import build_blank_svg, parse_and_scrub
 from inkscape_mcp.edit.ops import run_ops
 from inkscape_mcp.live.sync import sync_live_to_workspace
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
 from inkscape_mcp.registry import get_registry
+from inkscape_mcp.render.cli import render_preview
 from inkscape_mcp.tools._live import ensure_connected
 from inkscape_mcp.tools._result import doc_summary, guarded, inline_png, ok, to_tool_error
 from inkscape_mcp.tools.edit import Detail, ops_payload
@@ -30,7 +31,8 @@ DESCRIPTION = (
     "Start working: returns a doc_id. Give exactly ONE source: path (existing SVG in the "
     "workspace), svg (SVG text), canvas {width,height,viewBox?,background?} (blank page) or "
     "from_live {dest_path} (save the live Inkscape canvas into the workspace). Optional `ops` run "
-    "the first edit in the same call (same format as edit; render='inline' returns a PNG). "
+    "the first edit in the same call (same format as edit); render='inline' returns a PNG "
+    "(of the opened page when there are no ops). "
     "Example: open(canvas={'width':800,'height':600,'background':'#fff'}, "
     "ops=[{'op':'create_circle','cx':400,'cy':300,'r':100,'fill':'#f63'}], render='inline')"
 )
@@ -68,7 +70,10 @@ def open_(
     svg: str | None = None,
     canvas: Canvas | None = None,
     from_live: FromLive | None = None,
-    ops: list[dict[str, Any]] | None = None,
+    ops: Annotated[
+        list[dict[str, Any]] | None,
+        Field(description="Same ops as edit (see its `ops` field); run as the first edit."),
+    ] = None,
     render: Literal["none", "inline"] = "none",
     detail: Detail = "ids",
     approval_token: str | None = None,
@@ -83,9 +88,6 @@ def open_(
             "give exactly one source: path, svg, canvas or from_live "
             f"(got {', '.join(given) if given else 'none'})"
         )
-    if render == "inline" and not ops:
-        raise ToolError("render='inline' needs ops; use render(doc_id) to look at the document")
-
     reg = get_registry()
     payload: dict[str, Any] = {}
     if path is not None:
@@ -106,6 +108,12 @@ def open_(
     payload.update(doc_id=doc_id, summary=doc_summary(doc_id), persist_hint=PERSIST_HINT)
     log_tool_call(_logger, tool="open", doc_id=doc_id, source=given[0], ops=len(ops or []))
     if not ops:
+        if render == "inline":
+            preview = render_preview(doc_id)
+            return ok(
+                payload,
+                inline_png(doc_id, preview.workspace_relative_path or preview.artifact_path),
+            )
         return ok(payload)
 
     try:

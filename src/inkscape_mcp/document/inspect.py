@@ -27,9 +27,10 @@ from __future__ import annotations
 import re
 import shutil
 from pathlib import Path
+from typing import Any
 
 from lxml import etree
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from inkscape_mcp.logging_setup import get_logger
 from inkscape_mcp.registry import DocEntry, get_registry
@@ -137,6 +138,22 @@ class BBox(BaseModel):
     y: float
     width: float
     height: float
+
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _non_negative(self) -> BBox:
+        if self.width < 0 or self.height < 0:
+            raise ValueError("bbox width and height must be >= 0")
+        return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_list(cls, value: Any) -> Any:
+        """Also accept `[x, y, width, height]`, the form `inspect` reports boxes in."""
+        if isinstance(value, list | tuple) and len(value) == 4:
+            return dict(zip(("x", "y", "width", "height"), value, strict=True))
+        return value
 
 
 class PaintInfo(BaseModel):
@@ -849,6 +866,9 @@ def inspect_styles(doc_id: str) -> DocStyles:
             continue
         if _local_name(elem) == "style":
             css_rule_count += _count_css_rules(elem.text or "")
+            for rule in _parse_css_rules(elem.text or ""):
+                add_color(rule.decls.get("fill"))
+                add_color(rule.decls.get("stroke"))
             continue
         style = elem.get("style")
         if style:

@@ -152,7 +152,9 @@ class Ctx:
 
     async def snapshot_count(self, doc_id: str) -> int:
         res = await self.call("history", {"doc_id": doc_id, "action": "list"})
-        return len(res.data.get("snapshots", []))
+        count = int(res.data.get("count", -1))
+        self.check(count == len(res.data.get("snapshots", [])), "history count matches the list")
+        return count
 
     async def objects(self, doc_id: str, select: dict[str, Any] | None = None) -> list[Any]:
         args: dict[str, Any] = {"doc_id": doc_id, "include": ["objects"], "detail": "full"}
@@ -199,7 +201,7 @@ async def k1_logo_from_scratch(c: Ctx) -> None:
                     "id": "bg",
                 },
                 {"op": "create_circle", "cx": 100, "cy": 60, "r": 30, "fill": "#ffffff"},
-                {"op": "create_text", "x": 20, "y": 100, "text": "Logo", "fill": "#222222"},
+                {"op": "create_text", "x": 100, "y": 100, "text": "Logo", "anchor": "middle"},
             ],
             "render": "inline",
         },
@@ -431,6 +433,8 @@ async def k9_render(c: Ctx) -> None:
     c.check(page.images == 1 and page.data.get("all_blank") is False, "page image, not blank")
     obj = await c.call("render", {"doc_id": doc_id, "target": "object", "object_id": "dot"})
     c.check(obj.images == 1, "object image")
+    opened = await c.call("open", {"path": str(c.fixture("k9b")), "render": "inline"})
+    c.check(opened.images == 1, "open(render='inline') without ops shows the page")
 
 
 async def k10_history(c: Ctx) -> None:
@@ -512,8 +516,8 @@ async def k11_export_variants(c: Ctx) -> None:
     names = [Path(str(a.get("path"))).name for a in both.data.get("artifacts", [])]
     c.check(len(names) == 2, f"one PNG per document: {names}")
     c.check(
-        any(n.startswith(doc_id) for n in names) and any(n.startswith(other) for n in names),
-        f"file names carry the doc_id prefix: {names}",
+        any(f"-{doc_id}-" in n for n in names) and any(f"-{other}-" in n for n in names),
+        f"file names carry the doc_id: {names}",
     )
 
 
@@ -540,7 +544,12 @@ async def k13_actionable_errors(c: Ctx) -> None:
     """Errors are one line, name the next call and never leak host paths."""
     doc_id = await c.open_fixture("k13")
     msg = await c.fail("inspect", {"doc_id": "d_gone"})
-    c.check(msg.startswith("document id not found; open ids: ") and doc_id in msg, msg)
+    # One server serves every scenario, so the list may be truncated before this doc_id.
+    c.check(
+        msg.startswith("document id not found; open ids: ")
+        and (doc_id in msg or msg.endswith(" more)")),
+        msg,
+    )
     msg = await c.fail("open", {"path": "../../etc/passwd"})
     c.check(msg.startswith("path rejected:") and str(c.ws) not in msg and "/etc" not in msg, msg)
     msg = await c.fail("open", {"path": str(REPO_ROOT / "README.md")})
@@ -551,8 +560,6 @@ async def k13_actionable_errors(c: Ctx) -> None:
     c.check(msg.startswith("invalid inspect arguments: ") and one_line(msg), msg)
     msg = await c.fail("edit", {"doc_id": doc_id, "ops": [{"op": "fill", "ids": ["bg"]}]})
     c.check("ops[0].fill.color: Field required" in msg, msg)
-    msg = await c.fail("open", {"canvas": {"width": 10, "height": 10}, "render": "inline"})
-    c.check("render='inline' needs ops" in msg, msg)
     msg = await c.fail(
         "open",
         {
@@ -580,6 +587,10 @@ async def r1_delete_needs_token(c: Ctx) -> None:
     c.check(await c.fingerprint(doc_id) == before, "dry_run changed nothing")
     done = await c.call("edit", {"doc_id": doc_id, "ops": delete, "approval_token": TOKEN})
     c.check(done.data.get("risk") == "high" and done.data.get("changed") is True, "deleted")
+    c.check(
+        f"snapshot_id='{done.data.get('snapshot_id')}'" in str(done.data.get("undo")),
+        "HIGH edit names its undo call",
+    )
     c.check("bg" not in ids_of(await c.objects(doc_id)), "bg is gone")
     msg = await c.fail("edit", {"doc_id": doc_id, "ops": delete, "approval_token": TOKEN})
     c.check("not found" in msg, f"deleting an unknown id is an error: {msg}")

@@ -58,7 +58,9 @@ SVG = (
     b"<g></g>"
     b"</svg>"
 )
-OPTIMIZE = {"op": "optimize_web"}
+#: the full ship-only pass; most cases check it, the editable default is checked separately
+OPTIMIZE = {"op": "optimize_web", "aggressive": True}
+TOKEN = "ok-ship"  # the aggressive pass deletes ids/layers: HIGH risk
 
 
 @pytest.fixture
@@ -79,7 +81,7 @@ def _locals(root: etree._Element) -> set[str]:
 
 
 def _optimized_ids(ws: Path, doc_id: str, **op: object) -> set[str]:
-    run_ops(doc_id, {**OPTIMIZE, **op})
+    run_ops(doc_id, {**OPTIMIZE, **op}, approval_token=TOKEN)
     return _ids(_working(ws, doc_id))
 
 
@@ -87,14 +89,14 @@ def _optimized_ids(ws: Path, doc_id: str, **op: object) -> set[str]:
 
 
 def test_strips_editor_cruft(doc: str, tool_ws: Path) -> None:
-    run_ops(doc, OPTIMIZE)
+    run_ops(doc, OPTIMIZE, approval_token=TOKEN)
     assert not {"namedview", "metadata"} & _locals(_working(tool_ws, doc))
     raw = sandbox.working_copy(tool_ws, doc).read_bytes()
     assert b"inkscape:label" not in raw and b"editor comment" not in raw
 
 
 def test_drops_dead_structure_but_preserves_references(doc: str, tool_ws: Path) -> None:
-    run_ops(doc, OPTIMIZE)
+    run_ops(doc, OPTIMIZE, approval_token=TOKEN)
     optimized = _working(tool_ws, doc)
     ids = _ids(optimized)
     assert not {"gradUnused", "unrefrect", "r1"} & ids  # unreferenced: dropped / id stripped
@@ -103,8 +105,72 @@ def test_drops_dead_structure_but_preserves_references(doc: str, tool_ws: Path) 
     assert len(list(optimized.iter(f"{{{SVG_NS}}}g"))) == 1  # the empty <g> is gone
 
 
+def test_default_pass_keeps_ids_and_layers_so_the_doc_stays_editable(
+    doc: str, tool_ws: Path
+) -> None:
+    run_ops(doc, {"op": "optimize_web"})
+    optimized = _working(tool_ws, doc)
+    assert {"r1", "unrefrect", "keepg", "gradUsed"} <= _ids(optimized)
+    assert "gradUnused" not in _ids(optimized)  # dead defs still go
+    raw = sandbox.working_copy(tool_ws, doc).read_bytes()
+    assert b'inkscape:label="Layer 1"' in raw and b"editor comment" not in raw
+    assert "metadata" not in _locals(optimized)
+    assert b"pagecolor" not in raw  # namedview stays, but only as the current-layer holder
+    # ...and an id-targeted op still works afterwards
+    assert run_ops(doc, {"op": "fill", "ids": ["r1"], "color": "#123456"}).changed
+
+
+def test_aggressive_pass_is_high_risk_and_needs_approval(doc: str, tool_ws: Path) -> None:
+    before = sandbox.working_copy(tool_ws, doc).read_bytes()
+    with pytest.raises(OpError, match="HIGH risk"):
+        run_ops(doc, OPTIMIZE)
+    assert sandbox.working_copy(tool_ws, doc).read_bytes() == before
+    assert run_ops(doc, {"op": "optimize_web"}).risk == "medium"
+
+
+def test_default_pass_keeps_layer_lock_and_current_layer(tool_ws: Path) -> None:
+    svg = (
+        b'<svg xmlns="http://www.w3.org/2000/svg"'
+        b' xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"'
+        b' xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd">'
+        b'<sodipodi:namedview id="nv" pagecolor="#fff" inkscape:current-layer="top"/>'
+        b'<g id="bg" inkscape:groupmode="layer" sodipodi:insensitive="true"><rect width="1"'
+        b' height="1"/></g><g id="top" inkscape:groupmode="layer"><rect width="1" height="1"/></g>'
+        b"</svg>"
+    )
+    doc_id = open_doc(tool_ws, "locked.svg", svg)
+    run_ops(doc_id, {"op": "optimize_web"})
+    raw = sandbox.working_copy(tool_ws, doc_id).read_bytes()
+    assert b'sodipodi:insensitive="true"' in raw and b'inkscape:current-layer="top"' in raw
+    created = run_ops(doc_id, {"op": "create_circle", "cx": 1, "cy": 1, "r": 1, "id": "c"})
+    assert created.changed
+    assert _working(tool_ws, doc_id).find(f".//{{{SVG_NS}}}circle").getparent().get("id") == "top"
+
+
+@pytest.mark.parametrize(
+    "use",
+    [
+        b"<style>rect{fill:url(#g)}</style>",
+        b'<path d="M0 0" marker="url(#g)"/>',
+        b'<rect width="1" height="1" href="#x" xmlns:xlink="http://www.w3.org/1999/xlink"'
+        b' xlink:href="#g"/>',
+        b"<style>#g{opacity:1}</style>",
+    ],
+)
+def test_defs_referenced_in_any_form_survive_both_passes(tool_ws: Path, use: bytes) -> None:
+    svg = (
+        b'<svg xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g"/></defs>'
+        + use
+        + b"</svg>"
+    )
+    for aggressive in (False, True):
+        doc_id = open_doc(tool_ws, f"refs{aggressive}.svg", svg)
+        run_ops(doc_id, {"op": "optimize_web", "aggressive": aggressive}, approval_token=TOKEN)
+        assert "g" in _ids(_working(tool_ws, doc_id))
+
+
 def test_global_style_and_script_in_defs_are_never_pruned(doc: str, tool_ws: Path) -> None:
-    run_ops(doc, OPTIMIZE)
+    run_ops(doc, OPTIMIZE, approval_token=TOKEN)
     optimized = _working(tool_ws, doc)
     assert len(list(optimized.iter(f"{{{SVG_NS}}}style"))) == 1
     assert len(list(optimized.iter(f"{{{SVG_NS}}}script"))) == 1
@@ -112,7 +178,7 @@ def test_global_style_and_script_in_defs_are_never_pruned(doc: str, tool_ws: Pat
 
 
 def test_reduces_coordinate_precision_but_not_the_viewbox(doc: str, tool_ws: Path) -> None:
-    run_ops(doc, {**OPTIMIZE, "precision": 2})
+    run_ops(doc, {**OPTIMIZE, "precision": 2}, approval_token=TOKEN)
     optimized = _working(tool_ws, doc)
     rect = next(e for e in optimized.iter(f"{{{SVG_NS}}}rect") if e.get("fill") == "url(#gradUsed)")
     assert (rect.get("x"), rect.get("y")) == ("10.12", "20.65")
@@ -120,7 +186,7 @@ def test_reduces_coordinate_precision_but_not_the_viewbox(doc: str, tool_ws: Pat
 
 
 def test_leaves_no_dangling_reference(doc: str) -> None:
-    run_ops(doc, OPTIMIZE)
+    run_ops(doc, OPTIMIZE, approval_token=TOKEN)
     assert not any(f.code == "missing_id" for f in validate_document(doc).findings)
 
 
@@ -131,7 +197,7 @@ def test_one_recorded_reversible_snapshot_and_the_original_is_untouched(
     doc: str, tool_ws: Path
 ) -> None:
     before = sandbox.working_copy(tool_ws, doc).read_bytes()
-    res = run_ops(doc, OPTIMIZE)
+    res = run_ops(doc, {"op": "optimize_web"})
     assert res.changed and res.risk == "medium" and not res.needs_approval
     assert res.operation_id.startswith("op_") and res.snapshot_id.startswith("snap_")
     assert sandbox.working_copy(tool_ws, doc).read_bytes() != before
@@ -148,7 +214,11 @@ def test_one_recorded_reversible_snapshot_and_the_original_is_untouched(
 
 def test_restoring_through_the_history_tool(tool_app, tool_ws: Path, doc: str) -> None:
     before = sandbox.working_copy(tool_ws, doc).read_bytes()
-    done = call(tool_app, "edit", {"doc_id": doc, "ops": [{**OPTIMIZE, "precision": 2}]}).data
+    done = call(
+        tool_app,
+        "edit",
+        {"doc_id": doc, "ops": [{**OPTIMIZE, "precision": 2}], "approval_token": TOKEN},
+    ).data
     assert done["changed"] is True and done["snapshot_id"].startswith("snap_")
     call(
         tool_app,
@@ -160,7 +230,9 @@ def test_restoring_through_the_history_tool(tool_app, tool_ws: Path, doc: str) -
 
 def test_dry_run_plans_and_writes_nothing(tool_app, tool_ws: Path, doc: str) -> None:
     before = sandbox.working_copy(tool_ws, doc).read_bytes()
-    plan = call(tool_app, "edit", {"doc_id": doc, "ops": [OPTIMIZE], "dry_run": True}).data
+    plan = call(
+        tool_app, "edit", {"doc_id": doc, "ops": [{"op": "optimize_web"}], "dry_run": True}
+    ).data
     assert plan["dry_run"] is True and plan["changed"] is False
     assert not plan.get("needs_approval")
     assert sandbox.working_copy(tool_ws, doc).read_bytes() == before
@@ -168,9 +240,9 @@ def test_dry_run_plans_and_writes_nothing(tool_app, tool_ws: Path, doc: str) -> 
 
 
 def test_second_pass_is_a_noop(doc: str, tool_ws: Path) -> None:
-    run_ops(doc, OPTIMIZE)
+    run_ops(doc, OPTIMIZE, approval_token=TOKEN)
     assert analyze_optimizations(_working(tool_ws, doc), precision=2).total == 0
-    again = run_ops(doc, OPTIMIZE)
+    again = run_ops(doc, OPTIMIZE, approval_token=TOKEN)
     assert again.changed is False and again.snapshot_id == ""
     assert len(list_snapshots(doc)) == 1
 
@@ -182,13 +254,13 @@ def test_second_pass_is_a_noop(doc: str, tool_ws: Path) -> None:
 def test_out_of_range_precision_is_refused(doc: str, tool_ws: Path, bad: int) -> None:
     before = sandbox.working_copy(tool_ws, doc).read_bytes()
     with pytest.raises(OpError, match=r"ops\[0\] optimize_web: precision must be between 0 and 8"):
-        run_ops(doc, {**OPTIMIZE, "precision": bad})
+        run_ops(doc, {**OPTIMIZE, "precision": bad}, approval_token=TOKEN)
     assert sandbox.working_copy(tool_ws, doc).read_bytes() == before
 
 
 def test_unknown_document(tool_ws: Path) -> None:
     with pytest.raises(EditApplyError, match="document id not found"):
-        run_ops("d_missing", OPTIMIZE)
+        run_ops("d_missing", OPTIMIZE, approval_token=TOKEN)
 
 
 # --- keep_ids allowlist -----------------------------------------------------------------
@@ -224,7 +296,7 @@ def test_an_unknown_keep_id_is_harmless(doc: str, tool_ws: Path) -> None:
 def _run_engine(**kw: object) -> tuple[WebOptimizeDeltas, etree._ElementTree]:
     tree = parse_svg_bytes(SVG)
     holder: list[WebOptimizeDeltas] = []
-    optimize_web_mutate(deltas_holder=holder, **kw)(tree)  # type: ignore[arg-type]
+    optimize_web_mutate(deltas_holder=holder, **{"aggressive": True, **kw})(tree)  # type: ignore[arg-type]
     return holder[0], tree
 
 
@@ -254,5 +326,5 @@ def test_removed_codes_cross_join_the_quality_report(doc: str) -> None:
 def test_a_second_engine_pass_removes_nothing() -> None:
     _, tree = _run_engine()
     holder: list[WebOptimizeDeltas] = []
-    optimize_web_mutate(deltas_holder=holder)(tree)
+    optimize_web_mutate(deltas_holder=holder, aggressive=True)(tree)
     assert holder[0].removed == {} and holder[0].bytes_before == holder[0].bytes_after

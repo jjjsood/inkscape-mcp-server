@@ -438,8 +438,13 @@ class _Op(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    #: Effective risk of this op (escalated to the call max by :func:`ops_risk`).
+    #: Risk of this op (escalated to the call max by :func:`ops_risk`).
     RISK: ClassVar[RiskClass] = RiskClass.MEDIUM
+
+    def effective_risk(self) -> RiskClass:
+        """This instance's risk; an op whose fields raise it overrides this."""
+        return self.RISK
+
     #: Fields holding ids of EXISTING objects (verified present; `$n` allowed).
     ID_FIELDS: ClassVar[tuple[str, ...]] = ()
     #: Fields holding a paint (`url(#$n)` allowed).
@@ -671,7 +676,7 @@ class CreatePath(_Create):
 
 
 class CreateText(_Create):
-    """Create a `<text>` at `(x, y)`."""
+    """Create a `<text>` at `(x, y)`; `anchor='middle'` centres it on `x`."""
 
     PAINT_FIELDS: ClassVar[tuple[str, ...]] = ("fill", "stroke")
 
@@ -682,6 +687,7 @@ class CreateText(_Create):
     fill: str | None = None
     stroke: str | None = None
     stroke_width: str | None = None
+    anchor: Literal["start", "middle", "end"] | None = None
 
     def apply(self, run: _Run) -> str:
         return create_engine.make_create_text(
@@ -693,6 +699,7 @@ class CreateText(_Create):
             fill=self.fill,
             stroke=self.stroke,
             stroke_width=self.stroke_width,
+            anchor=self.anchor,
         )(run.tree)
 
 
@@ -953,11 +960,11 @@ class Delete(_Targeted):
 
 
 class Move(_Targeted):
-    """Translate each target by `(dx, dy)`."""
+    """Translate each target by `(dx, dy)` (each defaults to 0)."""
 
     op: Literal["move"]
-    dx: float
-    dy: float
+    dx: float = 0.0
+    dy: float = 0.0
 
     def apply(self, run: _Run) -> str:
         dx, dy = self.dx, self.dy
@@ -965,7 +972,7 @@ class Move(_Targeted):
 
 
 class Scale(_Targeted):
-    """Scale each target by `sx` (and `sy`, default `sx`) about the parent origin."""
+    """Scale each target by `sx` (and `sy`, default `sx`) about its own centre."""
 
     op: Literal["scale"]
     sx: float
@@ -977,7 +984,7 @@ class Scale(_Targeted):
 
 
 class Rotate(_Targeted):
-    """Rotate each target by `degrees` (about `(cx, cy)` when both are given)."""
+    """Rotate each target by `degrees` about its centre (or about `(cx, cy)` when both given)."""
 
     op: Literal["rotate"]
     degrees: float
@@ -1247,14 +1254,25 @@ class Cleanup(_PathOp):
 
 
 class OptimizeWeb(_Op):
-    """Web-optimize: strip editor data / unused defs, drop empty groups, round numbers."""
+    """Web-optimize: strip editor data / unused defs, drop empty groups, round numbers.
+
+    Ids, layers and layer locks are kept so the document stays editable; `aggressive=true` (HIGH
+    risk, needs approval_token) also drops unreferenced ids, layers and namedview (the last step
+    before shipping). Not a sanitizer: scripts and event attributes are left as they are.
+    """
 
     op: Literal["optimize_web"]
     precision: int = optimize_engine.DEFAULT_PRECISION
     keep_ids: list[str] | None = None
+    aggressive: bool = False
+
+    def effective_risk(self) -> RiskClass:
+        return RiskClass.HIGH if self.aggressive else self.RISK
 
     def apply(self, run: _Run) -> str:
-        return optimize_engine.optimize_web_mutate(self.precision, self.keep_ids)(run.tree)
+        return optimize_engine.optimize_web_mutate(
+            self.precision, self.keep_ids, aggressive=self.aggressive
+        )(run.tree)
 
 
 #: The discriminated union of every typed op. pydantic selects the concrete model by the `op` tag,
@@ -1333,8 +1351,8 @@ def ops_risk(ops: list[Op]) -> RiskClass:
     """Effective risk of a call = the MAX over its ops, never below MEDIUM (every edit writes)."""
     risk = RiskClass.MEDIUM
     for op in ops:
-        if _RISK_ORDER[op.RISK] > _RISK_ORDER[risk]:
-            risk = op.RISK
+        if _RISK_ORDER[op.effective_risk()] > _RISK_ORDER[risk]:
+            risk = op.effective_risk()
     return risk
 
 
@@ -1382,7 +1400,7 @@ def check_ops(
             )
     risk = ops_risk(ops)
     if risk == RiskClass.HIGH and not dry_run and not (approval_token and approval_token.strip()):
-        first = next(i for i, op in enumerate(ops) if op.RISK == RiskClass.HIGH)
+        first = next(i for i, op in enumerate(ops) if op.effective_risk() == RiskClass.HIGH)
         raise OpError(
             f"ops[{first}] {ops[first].op} is HIGH risk; re-call with approval_token",
             op_index=first,

@@ -35,6 +35,7 @@ from inkscape_mcp.edit.dom import (
     SVG_NS,
     EditError,
     all_ids,
+    content_bbox,
     deep_copy_with_new_ids,
     fmt_num,
     normalize_color,
@@ -81,11 +82,27 @@ def move(tree: etree._ElementTree, object_id: str, dx: float, dy: float) -> str:
     return f"translated {object_id!r} by ({fmt_num(dx)},{fmt_num(dy)})"
 
 
+def _own_center(elem: etree._Element) -> tuple[float, float] | None:
+    """The centre of the element's own geometry (pre-transform), or None when not measurable."""
+    box = content_bbox(elem)
+    if box is None:
+        return None
+    x, y, w, h = box
+    return x + w / 2, y + h / 2
+
+
+def _append_transform(elem: etree._Element, transform: str) -> None:
+    """Append to the transform list, i.e. apply in the element's OWN space (before the rest)."""
+    existing = elem.get("transform")
+    elem.set("transform", f"{existing} {transform}".strip() if existing else transform)
+
+
 def scale(tree: etree._ElementTree, object_id: str, sx: float, sy: float | None = None) -> str:
     """Scale the target object by factor ``sx`` (and ``sy``, defaulting to ``sx`` for uniform).
 
-    Scaling is about the origin of the parent coordinate space (acceptable for simple
-    transforms; recentering would require baking geometry, which is high risk and out of scope).
+    Scales about the object's own centre (like Inkscape's selector tool), so it stays in place.
+    The centre is read from the object's geometry attributes (:func:`content_bbox`); when that is
+    not measurable (e.g. curved paths) it falls back to the parent origin and says so.
     Rejects a non-finite or non-positive factor with :class:`EditError`. Raises
     :class:`TargetNotFound` if the id is absent.
     """
@@ -94,9 +111,21 @@ def scale(tree: etree._ElementTree, object_id: str, sx: float, sy: float | None 
     _require_finite("sy", factor_y)
     if sx <= 0 or factor_y <= 0:
         raise EditError("scale factors must be positive")
+    if fmt_num(sx) == "0" or fmt_num(factor_y) == "0":
+        raise EditError("scale factors must be at least 0.000001")
     elem = require_target(tree.getroot(), object_id)
-    prepend_transform(elem, f"scale({fmt_num(sx)},{fmt_num(factor_y)})")
-    return f"scaled {object_id!r} by ({fmt_num(sx)},{fmt_num(factor_y)}) about the origin"
+    factors = f"{fmt_num(sx)},{fmt_num(factor_y)}"
+    center = _own_center(elem)
+    if center is None:
+        prepend_transform(elem, f"scale({factors})")
+        return f"scaled {object_id!r} by ({factors}) about the origin"
+    cx, cy = center
+    _append_transform(
+        elem,
+        f"matrix({fmt_num(sx)},0,0,{fmt_num(factor_y)},"
+        f"{fmt_num(cx - sx * cx)},{fmt_num(cy - factor_y * cy)})",
+    )
+    return f"scaled {object_id!r} by ({factors}) about its centre"
 
 
 def rotate(
@@ -108,22 +137,27 @@ def rotate(
 ) -> str:
     """Rotate the target object by ``degrees``.
 
-    Rotates about ``(cx, cy)`` when BOTH centre coordinates are supplied (``rotate(a,cx,cy)``),
-    otherwise about the origin (``rotate(a)``). Supplying only one of ``cx`` / ``cy`` is rejected
-    with :class:`EditError`. Raises :class:`TargetNotFound` if the id is absent and
-    :class:`EditError` on a non-finite value.
+    Rotates about ``(cx, cy)`` (parent space) when BOTH are supplied, otherwise about the object's
+    own centre (falling back to the origin when its geometry is not measurable, see
+    :func:`scale`). Supplying only one of ``cx`` / ``cy`` is rejected with :class:`EditError`.
+    Raises :class:`TargetNotFound` if the id is absent and :class:`EditError` on a non-finite value.
     """
     _require_finite("degrees", degrees)
     if (cx is None) != (cy is None):
         raise EditError("rotation centre requires both cx and cy")
     elem = require_target(tree.getroot(), object_id)
+    deg = fmt_num(degrees)
     if cx is not None and cy is not None:
         _require_finite("cx", cx)
         _require_finite("cy", cy)
-        prepend_transform(elem, f"rotate({fmt_num(degrees)},{fmt_num(cx)},{fmt_num(cy)})")
-        return f"rotated {object_id!r} by {fmt_num(degrees)}deg about ({fmt_num(cx)},{fmt_num(cy)})"
-    prepend_transform(elem, f"rotate({fmt_num(degrees)})")
-    return f"rotated {object_id!r} by {fmt_num(degrees)}deg about the origin"
+        prepend_transform(elem, f"rotate({deg},{fmt_num(cx)},{fmt_num(cy)})")
+        return f"rotated {object_id!r} by {deg}deg about ({fmt_num(cx)},{fmt_num(cy)})"
+    center = _own_center(elem)
+    if center is None:
+        prepend_transform(elem, f"rotate({deg})")
+        return f"rotated {object_id!r} by {deg}deg about the origin"
+    _append_transform(elem, f"rotate({deg},{fmt_num(center[0])},{fmt_num(center[1])})")
+    return f"rotated {object_id!r} by {deg}deg about its centre"
 
 
 def _gen_bg_id(root: etree._Element) -> str:
