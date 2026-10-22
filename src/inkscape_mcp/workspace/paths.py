@@ -91,7 +91,7 @@ def ensure_parent_within_sandbox(anchored: str | Path, settings: Settings | None
     when one or more leading components are missing they are created so a caller can write into a
     fresh subfolder without a manual `mkdir -p` first (mirrors `save_document_as`). The
     creation can NEVER escape the sandbox, proven BEFORE any side-effect (mirrors the audited
-    `render/cli.py::_resolve_out_dir`/`tools/save.py::_ensure_parent_dir` pattern):
+    `render/cli.py::_resolve_out_dir`/`document/save.py::_ensure_parent_dir` pattern):
 
     1. A literal `..` anywhere in the destination is refused outright (`path rejected: outside
        workspace`) — nothing is created.
@@ -158,7 +158,7 @@ def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
     is created with `os.mkdir(..., dir_fd=...)` and then descended with
     `O_RDONLY|O_DIRECTORY|O_NOFOLLOW`, so if any component is (or is raced into) a symlink the
     descend `open` fails with `ELOOP`/`ENOTDIR` and creation aborts — the side-effect can never
-    escape the base dir. Mirrors `render/cli.py::_safe_mkdir_chain`/`tools/save.py`.
+    escape the base dir. Mirrors `render/cli.py::_safe_mkdir_chain`/`document/save.py`.
     """
     dir_fd = os.open(base_real_dir, os.O_RDONLY | os.O_DIRECTORY)
     try:

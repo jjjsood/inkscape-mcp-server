@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from lxml import etree
 
-from inkscape_mcp.config import ENV_WORKSPACE_ROOTS, get_settings
+from inkscape_mcp.config import ENV_EDIT_PREVIEWS, ENV_WORKSPACE_ROOTS, get_settings
 from inkscape_mcp.edit import pipeline
 from inkscape_mcp.edit.dom import EditError
 from inkscape_mcp.registry import get_registry, reset_registry
@@ -43,6 +43,12 @@ def doc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, Path, Pat
     src.write_bytes(SVG)
     entry = get_registry().open_document(str(src))
     return entry.doc_id, ws, src
+
+
+def _set_previews(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    """Select the per-edit preview policy (`none` is the default; the others are opt-in)."""
+    monkeypatch.setenv(ENV_EDIT_PREVIEWS, mode)
+    get_settings.cache_clear()
 
 
 def _install_fake_render(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -102,6 +108,7 @@ def test_happy_path_applies_links_snapshot_and_previews(
 ) -> None:
     doc_id, root, src = doc
     _install_fake_render(monkeypatch)
+    _set_previews(monkeypatch, "before_after")
 
     working = sandbox.working_copy(root, doc_id)
 
@@ -138,8 +145,57 @@ def test_happy_path_applies_links_snapshot_and_previews(
     assert src.read_bytes() == SVG
 
 
+def test_default_renders_nothing_per_edit(
+    doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default policy (`none`): an edit spawns ZERO renders and records no previews."""
+    doc_id, root, _ = doc
+    calls: list[str] = []
+
+    def counting_render(*args: object, **kwargs: object) -> RenderResult:
+        calls.append("render")
+        raise AssertionError("render_preview must not run under edit_previews=none")
+
+    monkeypatch.setattr(pipeline, "render_preview", counting_render)
+
+    result = pipeline.apply_edit(doc_id, "set_fill", {"fill": "#ff0000"}, _mutate_set_fill)
+
+    assert result.changed is True
+    assert calls == []
+    assert result.preview_before is None
+    assert result.preview_after is None
+    assert _operation_record(root, doc_id, result.operation_id)["previews"] == {}
+
+
+def test_after_mode_renders_only_the_post_edit_frame(
+    doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    doc_id, root, _ = doc
+    _install_fake_render(monkeypatch)
+    _set_previews(monkeypatch, "after")
+
+    result = pipeline.apply_edit(doc_id, "set_fill", {"fill": "#ff0000"}, _mutate_set_fill)
+
+    assert result.preview_before is None
+    assert result.preview_after is not None
+    record = _operation_record(root, doc_id, result.operation_id)
+    assert set(record["previews"]) == {"after"}
+    preview_dir = sandbox.artifacts_dir(root, doc_id) / "preview"
+    assert not (preview_dir / f"op-{result.operation_id}-before.png").exists()
+    assert (preview_dir / f"op-{result.operation_id}-after.png").is_file()
+
+
+def test_stray_edit_previews_value_floors_to_none(
+    doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_previews(monkeypatch, "garbage")
+    assert get_settings().edit_previews == "none"
+
+
 @pytest.mark.inkscape
-def test_apply_edit_against_real_render_preview(doc: tuple[str, Path, Path]) -> None:
+def test_apply_edit_against_real_render_preview(
+    doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """End-to-end against the REAL `render_preview` engine — NO fake render.
 
     Guards the contract seam: `render_preview` returns an `artifact_path` relative to the
@@ -148,6 +204,7 @@ def test_apply_edit_against_real_render_preview(doc: tuple[str, Path, Path]) -> 
     join) makes EVERY mutating edit raise `FileNotFoundError` on any host with Inkscape — but the
     hermetic fakes hide it, so this real-engine test is the only thing that catches it.
     """
+    _set_previews(monkeypatch, "before_after")
     doc_id, root, _ = doc
 
     # No `_install_fake_render` — the real Inkscape-backed `render_preview` runs.
@@ -249,6 +306,7 @@ def test_render_degradation_still_applies_with_none_previews(
     doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     doc_id, root, _ = doc
+    _set_previews(monkeypatch, "before_after")
 
     def failing_render_preview(
         doc_id: str, width_px: int | None = None, settings: object | None = None

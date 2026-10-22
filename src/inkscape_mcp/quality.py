@@ -7,6 +7,11 @@ weight, font coverage, viewBox health) plus OPTIMIZATION OPPORTUNITIES sourced f
 optimizer (`inkscape_mcp.edit.optimize.analyze_optimizations`) so the opportunities it names are
 exactly what `svg_web_optimize` would strip.
 
+The `*_set` collection helpers at the bottom (`require_unique_doc_ids`, `collect_signals`,
+`build_set_verdict`) are the scaffolding shared by the set tools (export / optimize / quality): each
+composes its single-doc engine over a SET of documents and adds per-doc results, an aggregate and a
+cross-doc CONSISTENCY VERDICT.
+
 READ-ONLY by contract (sec.12): nothing here mutates the working copy or the original. No MCP
 decorators; the tool layer (`inkscape_mcp.tools.quality`) wraps `quality_report` and maps errors to
 `ToolError`. The returned `QualityReport` is a structured pydantic model — machine-readable, not
@@ -15,6 +20,7 @@ prose.
 
 from __future__ import annotations
 
+from fastmcp.exceptions import ToolError
 from lxml import etree
 from pydantic import BaseModel
 
@@ -24,6 +30,12 @@ from inkscape_mcp.document.inspect import (
     _load_tree,
     inspect_fonts,
     inspect_summary,
+)
+from inkscape_mcp.edit.collection import (
+    ConsistencySignals,
+    ConsistencyVerdict,
+    build_consistency_verdict,
+    consistency_signals,
 )
 from inkscape_mcp.edit.optimize import DEFAULT_PRECISION, analyze_optimizations
 from inkscape_mcp.logging_setup import get_logger
@@ -44,7 +56,10 @@ __all__ = [
     "QualityMetrics",
     "QualityReport",
     "ViewBoxHealth",
+    "build_set_verdict",
+    "collect_signals",
     "quality_report",
+    "require_unique_doc_ids",
 ]
 
 _logger = get_logger("quality")
@@ -291,4 +306,54 @@ def quality_report(
         warning_count=report.warning_count,
         metrics=metrics,
         opportunities=opportunities,
+    )
+
+
+# --- `*_set` collection scaffolding ---
+
+#: Stable message for an empty `doc_ids` list — every set tool requires at least one document.
+EMPTY_SET_MESSAGE = "doc_ids must contain at least one document id"
+
+
+def require_unique_doc_ids(doc_ids: list[str]) -> list[str]:
+    """Validate a `doc_ids` set: non-empty and free of duplicates; return it unchanged.
+
+    A duplicate id would double-count a document in the aggregate and emit two snapshots for one
+    mutating set op, so it is rejected with a stable, host-path-free message (sec.12).
+    """
+    if not doc_ids:
+        raise ToolError(EMPTY_SET_MESSAGE)
+    if len(set(doc_ids)) != len(doc_ids):
+        raise ToolError("doc_ids must not contain duplicate document ids")
+    return doc_ids
+
+
+def collect_signals(doc_ids: list[str]) -> dict[str, ConsistencySignals]:
+    """Parse each document's working copy once and return its consistency signals, keyed by doc_id.
+
+    Raises a stable `ToolError` for an unknown id or an unparseable working copy (sec.12).
+    """
+    signals: dict[str, ConsistencySignals] = {}
+    for doc_id in doc_ids:
+        try:
+            _entry, root = _load_tree(doc_id)
+        except DocumentNotFound as exc:
+            raise ToolError("document id not found") from exc
+        except InspectionError as exc:
+            raise ToolError("document could not be parsed safely") from exc
+        signals[doc_id] = consistency_signals(root)
+    return signals
+
+
+def build_set_verdict(doc_ids: list[str]) -> ConsistencyVerdict:
+    """Build the cross-doc :class:`ConsistencyVerdict` for a set of documents.
+
+    Convenience composing :func:`collect_signals` + :func:`build_consistency_verdict`; used by every
+    `*_set` tool so the verdict shape is IDENTICAL across export / optimize / quality sets.
+    """
+    signals = collect_signals(doc_ids)
+    return build_consistency_verdict(
+        viewboxes={d: s.viewbox for d, s in signals.items()},
+        stroke_widths={d: s.stroke_width for d, s in signals.items()},
+        id_namings={d: s.id_naming for d, s in signals.items()},
     )

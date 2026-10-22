@@ -368,10 +368,10 @@ def test_live_arm_socket_reuses_existing_session(
     workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """When a session already advertises a socket, arm reuses it (no new launch, no GUI needed)."""
+    from inkscape_mcp.live import admin as live_admin
     from inkscape_mcp.live import socket_backend
+    from inkscape_mcp.runtime import capabilities as system_tools
     from inkscape_mcp.runtime.probe import Capabilities
-    from inkscape_mcp.tools import live as live_tools
-    from inkscape_mcp.tools import system as system_tools
 
     monkeypatch.setenv(ENV_LIVE_ENABLED, "1")
     get_settings.cache_clear()
@@ -379,14 +379,14 @@ def test_live_arm_socket_reuses_existing_session(
     caps = Capabilities.model_construct(
         user_data_dir=str(workspace / "inkscape"), system_data_dir=None
     )
-    # `live_arm_socket` imports `get_cached_capabilities` lazily from `tools.system`.
+    # `live_arm_socket` imports `get_cached_capabilities` lazily from `runtime.capabilities`.
     monkeypatch.setattr(system_tools, "get_cached_capabilities", lambda: caps)
     # Pretend the helper is already installed and a rendezvous is already advertised.
-    monkeypatch.setattr(live_tools, "is_helper_installed", lambda dirs: True)
+    monkeypatch.setattr(live_admin, "is_helper_installed", lambda dirs: True)
     rv = socket_backend.Rendezvous(port=5000, token="tok")
     monkeypatch.setattr(socket_backend, "discover_rendezvous", lambda s: rv)
 
-    result = live_tools.live_arm_socket()
+    result = live_admin.live_arm_socket()
     assert result.armed is True
     assert result.launched is False
     assert result.helper_installed is True

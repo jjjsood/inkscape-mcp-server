@@ -284,7 +284,9 @@ def test_run_chain_refused_without_approval(doc: tuple[str, Path, Path]) -> None
     assert not list(sandbox.operations_dir(root, doc_id).glob("op_*.json"))
 
 
-def test_run_chain_applied_records_and_reversible(doc: tuple[str, Path, Path]) -> None:
+def test_run_chain_applied_records_and_reversible(
+    doc: tuple[str, Path, Path], before_after_previews: None
+) -> None:
     doc_id, root, src = doc
     original = src.read_bytes()
     before_working = sandbox.working_copy(root, doc_id).read_bytes()

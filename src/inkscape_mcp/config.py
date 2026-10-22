@@ -97,6 +97,19 @@ ENV_TOOL_DESC = "INKSCAPE_MCP_TOOL_DESC"
 TOOL_DESC_FULL = "full"
 TOOL_DESC_SHORT = "short"
 
+#: Per-edit PREVIEW policy for the shared edit pipeline (`edit.pipeline.apply_edit`). Every Inkscape
+#: render costs a process spawn, and the before/after PNGs an edit used to write were never shown to
+#: the agent, so the default is `none` (zero renders per edit; an explicit render call or an inline
+#: render on the edit itself is how an agent looks at the result). `after` renders only the
+#: post-edit frame; `before_after` restores the full pair on the Operation Record. Parsed via
+#: `_env_choice` so a stray value floors to `none`.
+ENV_EDIT_PREVIEWS = "INKSCAPE_MCP_EDIT_PREVIEWS"
+
+#: The valid `edit_previews` values. Anything else floors to `none` (no renders per edit).
+EDIT_PREVIEWS_NONE = "none"
+EDIT_PREVIEWS_AFTER = "after"
+EDIT_PREVIEWS_BEFORE_AFTER = "before_after"
+
 #: Advanced-mode gate for the optional raw-action tool (ADR-003 / sec.12). OFF by default —
 #: the `run_raw_action` escape hatch is refused entirely unless an operator sets this to a truthy
 #: value (`1`/`true`/`yes`/`on`). It is the explicit opt-in for the single, HIGH-risk,
@@ -207,6 +220,11 @@ class Settings(BaseModel):
     #: `tools/list` description; `short` serves a derived short form (summary + risk line) to cut
     #: per-turn token cost. Floored to `full` on any stray value. Orthogonal to `tool_profile`.
     tool_desc: str = TOOL_DESC_FULL
+
+    #: Per-edit preview policy (`none` | `after` | `before_after`). Default `none`: an edit renders
+    #: nothing; the Operation Record then carries no preview frames. Floored to `none` on any stray
+    #: value.
+    edit_previews: str = EDIT_PREVIEWS_NONE
 
     #: Advanced-mode gate for the optional raw-action tool (ADR-003). Default OFF — the
     #: `run_raw_action` escape hatch refuses entirely unless an operator opts in. Enabling it does
@@ -376,6 +394,11 @@ def get_settings() -> Settings:
             ENV_TOOL_PROFILE, TOOL_PROFILE_FULL, (TOOL_PROFILE_FULL, TOOL_PROFILE_CORE)
         ),
         tool_desc=_env_choice(ENV_TOOL_DESC, TOOL_DESC_FULL, (TOOL_DESC_FULL, TOOL_DESC_SHORT)),
+        edit_previews=_env_choice(
+            ENV_EDIT_PREVIEWS,
+            EDIT_PREVIEWS_NONE,
+            (EDIT_PREVIEWS_NONE, EDIT_PREVIEWS_AFTER, EDIT_PREVIEWS_BEFORE_AFTER),
+        ),
         raw_action_enabled=_env_bool(ENV_RAW_ACTION_ENABLED, False),
         action_allowlist=_env_token_set(ENV_ACTION_ALLOWLIST, DEFAULT_ACTION_ALLOWLIST),
         extension_allowlist=_env_token_set(ENV_EXTENSION_ALLOWLIST, DEFAULT_EXTENSION_ALLOWLIST),

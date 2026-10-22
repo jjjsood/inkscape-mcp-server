@@ -255,7 +255,7 @@ def _rendezvous_candidates(settings: Settings) -> list[Path]:
 
     # Inkscape user data dir, if a probe is cached (avoid importing the tools layer eagerly).
     with contextlib.suppress(Exception):  # discovery is best-effort; never block on the probe
-        from inkscape_mcp.tools.system import get_cached_capabilities
+        from inkscape_mcp.runtime.capabilities import get_cached_capabilities
 
         caps = get_cached_capabilities()
         if caps.user_data_dir:
@@ -544,7 +544,7 @@ class ExtensionSocketTransport(LiveTransport):
 
 def _data_dirs_from_cache() -> list[str]:
     try:
-        from inkscape_mcp.tools.system import get_cached_capabilities
+        from inkscape_mcp.runtime.capabilities import get_cached_capabilities
 
         caps = get_cached_capabilities()
         return [d for d in (caps.system_data_dir, caps.user_data_dir) if d]

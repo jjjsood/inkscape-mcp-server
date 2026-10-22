@@ -246,7 +246,9 @@ def test_real_run_refused_without_approval(enabled: tuple[str, Path, Path]) -> N
     assert not list(sandbox.operations_dir(root, doc_id).glob("op_*.json"))
 
 
-def test_real_run_applied_records_and_reversible(enabled: tuple[str, Path, Path]) -> None:
+def test_real_run_applied_records_and_reversible(
+    enabled: tuple[str, Path, Path], before_after_previews: None
+) -> None:
     doc_id, root, src = enabled
     original = src.read_bytes()
     before_working = sandbox.working_copy(root, doc_id).read_bytes()

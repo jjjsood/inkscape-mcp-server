@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from inkscape_mcp.edit.collection import ConsistencyVerdict
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
+from inkscape_mcp.quality import build_set_verdict, require_unique_doc_ids
 from inkscape_mcp.render.batch import (
     BatchError,
     BatchResult,
@@ -37,7 +38,6 @@ from inkscape_mcp.render.batch import (
 )
 from inkscape_mcp.render.cli import RenderError
 from inkscape_mcp.server import mcp
-from inkscape_mcp.tools.collection_set import build_set_verdict, require_unique_doc_ids
 from inkscape_mcp.workspace.limits import LimitExceeded
 from inkscape_mcp.workspace.paths import SandboxViolation
 from inkscape_mcp.workspace.subprocess_exec import ProcessError

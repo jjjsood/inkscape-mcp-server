@@ -116,7 +116,7 @@ def _find(root: etree._Element, object_id: str) -> etree._Element | None:
 
 
 def test_replace_text_changes_content_records_medium_op(
-    doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch
+    doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch, before_after_previews: None
 ) -> None:
     doc_id, root, src = doc
     _install_fake_render(monkeypatch)

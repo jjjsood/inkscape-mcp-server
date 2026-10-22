@@ -16,7 +16,8 @@ Design (ADR-002, project risk classes):
   explicit sets below. They are the ONLY hand-maintained surface; everything else is derived.
 
 The risk class is parsed with the SAME regex the capability map / `gen_llms_txt` use
-(`inkscape_mcp.tools.system._risk_class`) — there is exactly one risk vocabulary in the codebase.
+(`inkscape_mcp.runtime.capabilities._risk_class`) — there is exactly one risk vocabulary in the
+codebase.
 
 sec.12: titles are static human labels only. No host path, absolute path, or `/home/` ever
 appears in a title or any annotation field.
@@ -327,13 +328,13 @@ def apply_annotations(app: FastMCP) -> None:
     works whether or not an event loop is already running — `register_tools()` is also called from
     inside `asyncio.run` by `scripts/gen_llms_txt.py`, where a nested `asyncio.run` would raise.
 
-    Risk is parsed with the canonical `_risk_class` regex from `tools.system` — one risk
+    Risk is parsed with the canonical `_risk_class` regex from `runtime.capabilities` — one risk
     vocabulary, no second derivation. Imported lazily to avoid an import cycle (that module imports
     the shared app).
     """
     from fastmcp.tools import Tool
 
-    from inkscape_mcp.tools.system import _risk_class
+    from inkscape_mcp.runtime.capabilities import _risk_class
 
     for component in app._local_provider._components.values():
         if not isinstance(component, Tool):

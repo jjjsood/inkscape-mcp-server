@@ -9,12 +9,18 @@ calls so each change is uniformly reversible and audited (ADR-004). For one edit
    fingerprint,
 4. if the two fingerprints are identical the edit is a genuine NO-OP — the record is retracted
    and the call returns `changed=False` with NOTHING written (see below),
-5. otherwise renders a BEFORE preview from the still-pre-change working copy,
+5. otherwise (only under `edit_previews=before_after`) renders a BEFORE preview from the
+   still-pre-change working copy,
 6. takes a pre-mutation snapshot (the revert target),
 7. writes the mutated tree back over the working copy,
-8. renders an AFTER preview from the now-post-change working copy,
-9. links the snapshot and the before/after preview pair to the Operation Record and marks it
+8. (unless `edit_previews=none`, the default) renders an AFTER preview from the now-post-change
+   working copy,
+9. links the snapshot and whichever previews were rendered to the Operation Record and marks it
    `applied`.
+
+Previews are governed by `Settings.edit_previews` (env `INKSCAPE_MCP_EDIT_PREVIEWS`): `none`
+(default) renders NOTHING per edit — zero Inkscape spawns; `after` renders the post-edit frame
+only; `before_after` restores the full pair.
 
 No-op hygiene (the single source of truth for `changed`): the before/after content diff is
 computed HERE, in the pipeline, by canonical-serializing the parsed tree both before and after
@@ -52,6 +58,11 @@ from typing import Any
 from lxml import etree
 from pydantic import BaseModel
 
+from inkscape_mcp.config import (
+    EDIT_PREVIEWS_BEFORE_AFTER,
+    EDIT_PREVIEWS_NONE,
+    get_settings,
+)
 from inkscape_mcp.document.inspect import DocumentNotFound
 from inkscape_mcp.edit.dom import (
     EditError,
@@ -289,13 +300,19 @@ def apply_edit(
             preview_after=None,
         )
 
-    # 4. BEFORE preview: the on-disk working copy is still pre-change. Best-effort.
-    preview_before = _render_op_preview(
-        doc_id,
-        root=root,
-        workspace_dir=workspace_dir,
-        operation_id=record.operation_id,
-        phase="before",
+    # 4. BEFORE preview (only under `edit_previews=before_after`): the on-disk working copy is
+    #    still pre-change. Best-effort.
+    previews_mode = get_settings().edit_previews
+    preview_before = (
+        _render_op_preview(
+            doc_id,
+            root=root,
+            workspace_dir=workspace_dir,
+            operation_id=record.operation_id,
+            phase="before",
+        )
+        if previews_mode == EDIT_PREVIEWS_BEFORE_AFTER
+        else None
     )
 
     # 5. Pre-mutation snapshot: on-disk is still pre-change, so this is the correct revert target.
@@ -309,13 +326,18 @@ def apply_edit(
     # 6. Persist the mutation: the working copy is now post-change.
     write_working_tree(entry, tree)
 
-    # 7. AFTER preview: the on-disk working copy now reflects the mutation. Best-effort.
-    preview_after = _render_op_preview(
-        doc_id,
-        root=root,
-        workspace_dir=workspace_dir,
-        operation_id=record.operation_id,
-        phase="after",
+    # 7. AFTER preview (unless `edit_previews=none`): the on-disk working copy now reflects the
+    #    mutation. Best-effort.
+    preview_after = (
+        _render_op_preview(
+            doc_id,
+            root=root,
+            workspace_dir=workspace_dir,
+            operation_id=record.operation_id,
+            phase="after",
+        )
+        if previews_mode != EDIT_PREVIEWS_NONE
+        else None
     )
 
     # 8. Link the snapshot + the previews that succeeded, and mark the record `applied`.

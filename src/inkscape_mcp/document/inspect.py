@@ -1145,6 +1145,69 @@ def _engine_bboxes(working_path: str) -> dict[str, BBox]:
     return _parse_query_all(result.stdout)
 
 
+def find_in_root(
+    root: etree._Element,
+    *,
+    tag: str | None = None,
+    fill: str | None = None,
+    stroke: str | None = None,
+    text: str | None = None,
+    id_prefix: str | None = None,
+    bbox: BBox | None = None,
+    engine_boxes: dict[str, BBox] | None = None,
+) -> list[ObjectRef]:
+    """Filter the addressable objects under an in-memory `root` by ANY combination of criteria.
+
+    The tree-level core of :func:`find_objects` (same AND semantics and filter definitions), usable
+    on a tree that has not been written to disk yet — e.g. mid-batch, against the objects created by
+    earlier ops of the same call. `engine_boxes` optionally maps object id -> geometry-accurate
+    box (from ``inkscape --query-all``); where present it replaces the attribute box on the
+    returned refs and in the `bbox` filter.
+    """
+    from inkscape_mcp.edit.dom import color_key  # local import: edit.dom imports from this module
+
+    fill_key = color_key(fill) if fill is not None else None
+    stroke_key = color_key(stroke) if stroke is not None else None
+    text_needle = text.lower() if text is not None else None
+
+    # CSS-cascade paint resolution — built once per call; only needed when a paint filter
+    # is supplied (the reported tokens stay per-element, so no work otherwise).
+    css_rules: list[_CssRule] = []
+    parents: dict[etree._Element, etree._Element] = {}
+    if fill_key is not None or stroke_key is not None:
+        css_rules = _document_css_rules(root)
+        parents = _build_parent_map(root)
+
+    matched: list[ObjectRef] = []
+    for elem in _iter_objects(root):
+        ref = _object_ref(elem)
+        if ref is None:
+            continue
+        if engine_boxes:
+            engine_box = engine_boxes.get(ref.object_id)
+            if engine_box is not None:
+                ref.bbox = engine_box
+        if tag is not None and ref.tag != tag:
+            continue
+        if fill_key is not None:
+            eff = _effective_paint_for_match(elem, css_rules, parents, "fill")
+            if eff is None or color_key(eff) != fill_key:
+                continue
+        if stroke_key is not None:
+            eff = _effective_paint_for_match(elem, css_rules, parents, "stroke")
+            if eff is None or color_key(eff) != stroke_key:
+                continue
+        if text_needle is not None and (ref.text is None or text_needle not in ref.text.lower()):
+            continue
+        if id_prefix is not None and not ref.object_id.startswith(id_prefix):
+            continue
+        if bbox is not None and (ref.bbox is None or not _bbox_intersects(ref.bbox, bbox)):
+            continue
+        matched.append(ref)
+
+    return matched
+
+
 def find_objects(
     doc_id: str,
     *,
@@ -1189,52 +1252,18 @@ def find_objects(
     Raises `DocumentNotFound` (unknown id) / `InspectionError` (unsafe XML); both carry stable,
     host-path-free messages. Read-only — no snapshot / Operation Record (ADR-004 N/A).
     """
-    from inkscape_mcp.edit.dom import color_key  # local import: edit.dom imports from this module
-
     entry, root = _load_tree(doc_id)
-
-    fill_key = color_key(fill) if fill is not None else None
-    stroke_key = color_key(stroke) if stroke is not None else None
-    text_needle = text.lower() if text is not None else None
-
-    # CSS-cascade paint resolution — built once per call; only needed when a paint filter
-    # is supplied (the reported tokens stay per-element, so no work otherwise).
-    css_rules: list[_CssRule] = []
-    parents: dict[etree._Element, etree._Element] = {}
-    if fill_key is not None or stroke_key is not None:
-        css_rules = _document_css_rules(root)
-        parents = _build_parent_map(root)
-
     # Geometry-accurate boxes — one batched engine call, only when opted in. An empty map
     # (binary absent / engine fault) transparently falls back to the attribute box per element.
     engine_boxes = _engine_bboxes(entry.working_path) if accurate_bbox else {}
-
-    matched: list[ObjectRef] = []
-    for elem in _iter_objects(root):
-        ref = _object_ref(elem)
-        if ref is None:
-            continue
-        if accurate_bbox:
-            engine_box = engine_boxes.get(ref.object_id)
-            if engine_box is not None:
-                ref.bbox = engine_box
-
-        if tag is not None and ref.tag != tag:
-            continue
-        if fill_key is not None:
-            eff = _effective_paint_for_match(elem, css_rules, parents, "fill")
-            if eff is None or color_key(eff) != fill_key:
-                continue
-        if stroke_key is not None:
-            eff = _effective_paint_for_match(elem, css_rules, parents, "stroke")
-            if eff is None or color_key(eff) != stroke_key:
-                continue
-        if text_needle is not None and (ref.text is None or text_needle not in ref.text.lower()):
-            continue
-        if id_prefix is not None and not ref.object_id.startswith(id_prefix):
-            continue
-        if bbox is not None and (ref.bbox is None or not _bbox_intersects(ref.bbox, bbox)):
-            continue
-        matched.append(ref)
-
+    matched = find_in_root(
+        root,
+        tag=tag,
+        fill=fill,
+        stroke=stroke,
+        text=text,
+        id_prefix=id_prefix,
+        bbox=bbox,
+        engine_boxes=engine_boxes,
+    )
     return FindResult(doc_id=doc_id, objects=matched, count=len(matched))

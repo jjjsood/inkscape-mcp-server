@@ -29,8 +29,8 @@ from inkscape_mcp.edit.optimize import (
 )
 from inkscape_mcp.edit.pipeline import EditApplyError, EditResult, apply_edit
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
+from inkscape_mcp.quality import build_set_verdict, require_unique_doc_ids
 from inkscape_mcp.server import mcp
-from inkscape_mcp.tools.collection_set import build_set_verdict, require_unique_doc_ids
 
 _logger = get_logger("tools.optimize")
 

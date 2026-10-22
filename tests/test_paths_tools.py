@@ -161,7 +161,9 @@ TOKEN = "approved-by-operator"
 # --- happy path (applied) ---------------------------------------------------
 
 
-def test_boolean_union_applied_records_snapshot_and_previews(doc: tuple[str, Path, Path]) -> None:
+def test_boolean_union_applied_records_snapshot_and_previews(
+    doc: tuple[str, Path, Path], before_after_previews: None
+) -> None:
     doc_id, root, src = doc
     original = src.read_bytes()
 

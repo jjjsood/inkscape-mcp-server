@@ -106,7 +106,7 @@ def _style_props(elem: etree._Element) -> dict[str, str]:
 
 
 def test_set_fill_changes_working_copy_and_records_operation(
-    doc: tuple[str, Path, Path],
+    doc: tuple[str, Path, Path], before_after_previews: None
 ) -> None:
     doc_id, root, _ = doc
 

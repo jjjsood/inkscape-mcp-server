@@ -9,12 +9,12 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from inkscape_mcp.config import ENV_LIVE_ENABLED, ENV_WORKSPACE_ROOTS, get_settings
+from inkscape_mcp.live import admin as admin_mod
 from inkscape_mcp.live import session as session_mod
 from inkscape_mcp.live.session import LiveSession, reset_session_manager
 from inkscape_mcp.live.transport import LiveSelection, TransportProbe
 from inkscape_mcp.resources.live import live_selection, live_session
 from inkscape_mcp.server import mcp
-from inkscape_mcp.tools import live as live_tools
 from inkscape_mcp.tools.live import (
     LiveSupport,
     check_live_support,
@@ -82,9 +82,9 @@ def off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             TransportProbe(name="fake", available=True, rank=1, supported_commands=[], detail="")
         ],
     )
-    monkeypatch.setattr(live_tools, "probe_transports", lambda settings=None: [], raising=True)
-    monkeypatch.setattr(live_tools, "best_available", lambda s, required: None, raising=True)
-    monkeypatch.setattr(live_tools, "is_helper_installed", lambda data_dirs: False, raising=True)
+    monkeypatch.setattr(admin_mod, "probe_transports", lambda settings=None: [], raising=True)
+    monkeypatch.setattr(admin_mod, "best_available", lambda s, required: None, raising=True)
+    monkeypatch.setattr(admin_mod, "is_helper_installed", lambda data_dirs: False, raising=True)
 
 
 @pytest.fixture
@@ -164,7 +164,7 @@ def test_connect_then_read_surface(on: None) -> None:
 
 
 def test_present_extensions_dir_collapses_home_prefix() -> None:
-    from inkscape_mcp.tools.live import _present_extensions_dir
+    from inkscape_mcp.live.admin import _present_extensions_dir
 
     home = Path.home()
     presented = _present_extensions_dir(home / ".config" / "inkscape" / "extensions")
@@ -174,7 +174,7 @@ def test_present_extensions_dir_collapses_home_prefix() -> None:
 
 
 def test_present_extensions_dir_outside_home_uses_basename() -> None:
-    from inkscape_mcp.tools.live import _present_extensions_dir
+    from inkscape_mcp.live.admin import _present_extensions_dir
 
     presented = _present_extensions_dir(Path("/opt/inkscape/share/extensions"))
     assert not Path(presented).is_absolute()
@@ -187,8 +187,8 @@ def test_live_install_helper_returns_relative_extensions_dir(
 ) -> None:
     from types import SimpleNamespace
 
-    import inkscape_mcp.tools.live as live_mod
-    from inkscape_mcp.tools.live import HelperInstallResult, live_install_helper
+    from inkscape_mcp.live.admin import HelperInstallResult
+    from inkscape_mcp.tools.live import live_install_helper
 
     monkeypatch.setenv(ENV_LIVE_ENABLED, "1")
     monkeypatch.setenv(ENV_WORKSPACE_ROOTS, str(tmp_path))
@@ -197,11 +197,11 @@ def test_live_install_helper_returns_relative_extensions_dir(
     # Pretend the Inkscape user data dir lives under the (real) home so the result is `~`-relative.
     user_data = Path.home() / ".inkscape-mcp-test-data"
     monkeypatch.setattr(
-        live_mod,
+        admin_mod,
         "get_settings",
         lambda: SimpleNamespace(live_enabled=True),
     )
-    import inkscape_mcp.tools.system as system_mod
+    import inkscape_mcp.runtime.capabilities as system_mod
 
     monkeypatch.setattr(
         system_mod,
@@ -225,25 +225,25 @@ def test_live_install_helper_returns_relative_extensions_dir(
 
 
 def test_map_live_error_not_available_names_live_connect() -> None:
+    from inkscape_mcp.live.admin import map_live_error
     from inkscape_mcp.live.transport import LiveNotAvailable
-    from inkscape_mcp.tools.live import _map_live_error
 
-    msg = str(_map_live_error(LiveNotAvailable("none")))
+    msg = str(map_live_error(LiveNotAvailable("none")))
     assert "live_connect" in msg
     assert "check_live_support" in msg
 
 
 def test_map_live_error_disabled_names_check_live_support() -> None:
+    from inkscape_mcp.live.admin import map_live_error
     from inkscape_mcp.live.transport import LiveDisabled
-    from inkscape_mcp.tools.live import _map_live_error
 
-    msg = str(_map_live_error(LiveDisabled("off")))
+    msg = str(map_live_error(LiveDisabled("off")))
     assert "check_live_support" in msg
 
 
 def test_map_live_error_unsupported_capability_names_check_live_support() -> None:
+    from inkscape_mcp.live.admin import map_live_error
     from inkscape_mcp.live.transport import LiveCapabilityUnsupported
-    from inkscape_mcp.tools.live import _map_live_error
 
-    msg = str(_map_live_error(LiveCapabilityUnsupported("no")))
+    msg = str(map_live_error(LiveCapabilityUnsupported("no")))
     assert "check_live_support" in msg

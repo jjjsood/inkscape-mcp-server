@@ -75,7 +75,7 @@ def _extension_socket_installed() -> bool:
     and never raises into `status()`.
     """
     try:
-        from inkscape_mcp.tools.system import get_cached_capabilities
+        from inkscape_mcp.runtime.capabilities import get_cached_capabilities
 
         return bool(get_cached_capabilities().live_extension_socket_available)
     except Exception:  # pragma: no cover - probe best-effort; absence just means "unknown"

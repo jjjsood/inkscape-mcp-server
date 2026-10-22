@@ -7,9 +7,10 @@ from pathlib import Path
 
 import pytest
 from fastmcp.exceptions import ToolError
+from lxml import etree
 
 from inkscape_mcp.config import ENV_WORKSPACE_ROOTS, get_settings
-from inkscape_mcp.document.inspect import BBox, find_objects
+from inkscape_mcp.document.inspect import BBox, find_in_root, find_objects
 from inkscape_mcp.registry import get_registry, reset_registry
 from inkscape_mcp.tools.document import inspect_document, open_document
 from inkscape_mcp.tools.find import find_objects as find_objects_tool
@@ -289,3 +290,27 @@ def test_accurate_bbox_tool_passthrough(engine_doc_id: str) -> None:
     result = find_objects_tool(engine_doc_id, id_prefix="tri", accurate_bbox=True)
     [tri] = result.objects
     assert tri.bbox is not None
+
+
+def test_find_in_root_matches_an_in_memory_tree_not_yet_on_disk() -> None:
+    """`find_in_root` filters a parsed tree directly, so mid-batch objects are findable."""
+    root = etree.fromstring(
+        b'<svg xmlns="http://www.w3.org/2000/svg">'
+        b'<rect id="a" width="5" height="5" fill="#FF0000"/>'
+        b'<circle id="b" r="3" fill="blue"/></svg>'
+    )
+    reds = find_in_root(root, fill="#f00")
+    assert [o.object_id for o in reds] == ["a"]
+    assert [o.object_id for o in find_in_root(root, tag="circle")] == ["b"]
+    # Mutating the tree is visible to the next lookup (no disk round-trip involved).
+    root[1].set("id", "renamed")
+    assert [o.object_id for o in find_in_root(root, tag="circle")] == ["renamed"]
+
+
+def test_find_in_root_engine_boxes_override_attribute_boxes() -> None:
+    root = etree.fromstring(
+        b'<svg xmlns="http://www.w3.org/2000/svg"><rect id="a" width="5" height="5"/></svg>'
+    )
+    box = BBox(x=1.0, y=2.0, width=3.0, height=4.0)
+    (ref,) = find_in_root(root, engine_boxes={"a": box})
+    assert ref.bbox == box

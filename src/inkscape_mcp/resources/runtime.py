@@ -1,8 +1,8 @@
 """Runtime capability resource and curated intents resource.
 
 `runtime_capabilities` serves the same cached capability matrix as the `list_capabilities` tool via
-the shared cache in `inkscape_mcp.tools.system`, so the resource and the tool always agree for a
-given probe; `diagnose_runtime` is what forces a re-probe.
+the shared cache in `inkscape_mcp.runtime.capabilities`, so the resource and the tool always agree
+for a given probe; `diagnose_runtime` is what forces a re-probe.
 
 `runtime_intents` serves ONLY the curated goal → tool(s) map (no probe payload) via the shared
 `inkscape_mcp.intents.intents_summary_json` accessor — the same in-memory map `how_do_i` and the
@@ -12,8 +12,8 @@ capabilities `intents` section use — so the three discovery surfaces cannot dr
 from __future__ import annotations
 
 from inkscape_mcp.intents import intents_summary_json
+from inkscape_mcp.runtime.capabilities import get_cached_capabilities
 from inkscape_mcp.server import mcp
-from inkscape_mcp.tools.system import get_cached_capabilities
 
 
 @mcp.resource("inkscape://runtime/capabilities", mime_type="application/json")

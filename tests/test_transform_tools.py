@@ -151,7 +151,9 @@ def _snapshot_count(root: Path, doc_id: str) -> int:
 # --- move_object ------------------------------------------------------------
 
 
-def test_move_object_adds_translate_records_and_previews(doc: tuple[str, Path, Path]) -> None:
+def test_move_object_adds_translate_records_and_previews(
+    doc: tuple[str, Path, Path], before_after_previews: None
+) -> None:
     doc_id, root, src = doc
     original = src.read_bytes()
 

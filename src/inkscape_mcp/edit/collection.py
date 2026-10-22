@@ -28,13 +28,16 @@ from __future__ import annotations
 import math
 import re
 
+from fastmcp.exceptions import ToolError
 from lxml import etree
 from pydantic import BaseModel
 
+from inkscape_mcp.document.inspect import DocumentNotFound, InspectionError, _load_tree
 from inkscape_mcp.edit.dom import (
     EditError,
     all_ids,
     deep_copy_with_new_ids,
+    find_by_id,
     fmt_num,
     parse_viewbox,
     prepend_transform,
@@ -54,6 +57,7 @@ __all__ = [
     "id_naming_style",
     "make_compose_grid",
     "make_place_document",
+    "resolve_grid_assets",
     "viewbox_signature",
 ]
 
@@ -512,3 +516,58 @@ def build_consistency_verdict(
         consistent=all(p.agree for p in properties),
         properties=properties,
     )
+
+
+def resolve_grid_assets(
+    *,
+    doc_ids: list[str] | None,
+    object_ids: list[str] | None,
+    source_doc_id: str | None,
+) -> list[tuple[etree._Element, str]]:
+    """Resolve the ordered `(source_element, label)` pairs for `compose_grid` from one input mode.
+
+    EXACTLY ONE source mode is allowed (ADR-002 — a small, unambiguous tool, not a dispatcher):
+
+    - `doc_ids`: each whole document's ROOT element is the asset (one cell per document). The root
+      is grafted as-is; the placement engine deep-copies + re-ids it, so the source working copies
+      are never mutated.
+    - `object_ids` (+ `source_doc_id`): each named object in the ONE `source_doc_id` is an asset.
+
+    Reads each source through `_load_tree` (safe parse). Raises `ToolError` with a stable,
+    host-path-free message for a bad mode combination, an unknown id, or a missing object.
+    """
+    has_docs = bool(doc_ids)
+    has_objects = bool(object_ids)
+    if has_docs == has_objects:
+        raise ToolError(
+            "compose_grid requires EXACTLY ONE of doc_ids OR object_ids (with source_doc_id)"
+        )
+
+    pairs: list[tuple[etree._Element, str]] = []
+    if has_docs:
+        if source_doc_id is not None:
+            raise ToolError("source_doc_id is only valid with object_ids, not doc_ids")
+        for did in doc_ids or []:
+            try:
+                _entry, root = _load_tree(did)
+            except DocumentNotFound as exc:
+                raise ToolError("document id not found") from exc
+            except InspectionError as exc:
+                raise ToolError("document could not be parsed safely") from exc
+            pairs.append((root, did))
+        return pairs
+
+    if source_doc_id is None:
+        raise ToolError("object_ids requires source_doc_id (the document the objects live in)")
+    try:
+        _entry, root = _load_tree(source_doc_id)
+    except DocumentNotFound as exc:
+        raise ToolError("document id not found") from exc
+    except InspectionError as exc:
+        raise ToolError("document could not be parsed safely") from exc
+    for oid in object_ids or []:
+        elem = find_by_id(root, oid)
+        if elem is None:
+            raise ToolError("object id not found in document")
+        pairs.append((elem, oid))
+    return pairs

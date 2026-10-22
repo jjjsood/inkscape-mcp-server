@@ -11,8 +11,9 @@ Design (mirrors `tool_annotations.py`, ADR-002 / project risk classes):
   `actions` / `system` / `quality`. Derived from the tool's defining MODULE — one residual domain
   (`edit`) catches the structural-edit / document / discovery modules that have no dedicated bucket.
 - RISK tag (exactly one per tool): the SAME risk vocabulary uses, parsed from the docstring
-  `Risk class:` line via `tools.system._risk_class` (`low` / `medium` / `high` / `restricted`, or
-  `unknown` if absent). There is exactly ONE risk vocabulary in the codebase — no second source.
+  `Risk class:` line via `runtime.capabilities._risk_class` (`low` / `medium` / `high` /
+  `restricted`, or `unknown` if absent). There is exactly ONE risk vocabulary in the codebase — no
+  second source.
 
 Gating (security-critical, sec.12 / ADR-003):
 
@@ -131,7 +132,7 @@ def apply_tags(app: FastMCP) -> None:
     """
     from fastmcp.tools import Tool
 
-    from inkscape_mcp.tools.system import _risk_class
+    from inkscape_mcp.runtime.capabilities import _risk_class
 
     for component in app._local_provider._components.values():
         if not isinstance(component, Tool):

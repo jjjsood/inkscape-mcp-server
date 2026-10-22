@@ -18,6 +18,7 @@ import pytest
 from lxml import etree
 
 from inkscape_mcp.config import (
+    ENV_EDIT_PREVIEWS,
     ENV_LIVE_ENABLED,
     ENV_RAW_ACTION_ENABLED,
     Settings,
@@ -352,3 +353,12 @@ def mock_helper(token: str = "secret-token", handler: Handler | None = None) -> 
         yield server.port
     finally:
         server.close()
+
+
+@pytest.fixture
+def before_after_previews(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opt a test into the full before/after preview pair (the server default is `none`)."""
+    from inkscape_mcp.config import get_settings
+
+    monkeypatch.setenv(ENV_EDIT_PREVIEWS, "before_after")
+    get_settings.cache_clear()

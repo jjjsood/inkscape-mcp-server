@@ -17,12 +17,13 @@ from inkscape_mcp.quality import (
     DocumentNotFound,
     InspectionError,
     QualityReport,
+    build_set_verdict,
+    require_unique_doc_ids,
 )
 from inkscape_mcp.quality import (
     quality_report as _quality_report,
 )
 from inkscape_mcp.server import mcp
-from inkscape_mcp.tools.collection_set import build_set_verdict, require_unique_doc_ids
 
 _logger = get_logger("tools.quality")
 

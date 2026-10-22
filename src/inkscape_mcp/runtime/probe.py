@@ -63,8 +63,9 @@ class Capabilities(BaseModel):
 
     The `tool_count` + `tools` fields are NOT probed from Inkscape: they are the
     authoritative MCP tool surface, populated from the live FastMCP registry by the
-    `inkscape_mcp.tools.system` layer (`with_registry_tools`) before the matrix is served, so the
-    one count agrees with `mcp.list_tools()` and `llms.txt` and agents stop deriving it four ways.
+    `inkscape_mcp.runtime.capabilities` layer (`with_registry_tools`) before the matrix is served,
+    so the one count agrees with `mcp.list_tools()` and `llms.txt` and agents stop deriving it four
+    ways.
     """
 
     inkscape_available: bool = Field(description="Whether an Inkscape binary was found and ran.")
@@ -173,7 +174,8 @@ class Capabilities(BaseModel):
         description=(
             "The authoritative MCP tool surface: each entry is {name, purpose, risk}, "
             "sourced from the live FastMCP registry. Counts only `@mcp.tool`s (not resources or "
-            "prompts). Populated by the tools/system layer before serving; empty on a raw probe."
+            "prompts). Populated by the runtime/capabilities layer before serving; empty on a raw "
+            "probe."
         ),
     )
 
