@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import errno
 import os
+import sys
 from pathlib import Path
 
 from fastmcp.exceptions import ToolError
@@ -220,7 +221,9 @@ def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
     descend `open` fails with `ELOOP`/`ENOTDIR` and creation aborts — the side-effect can never
     escape the base dir. Mirrors `render/cli.py::_safe_mkdir_chain`.
     """
-    if not HAS_DIR_FD_MKDIR:
+    # The explicit platform test lets mypy (--platform win32) treat the fd-relative code below as
+    # unreachable there; HAS_DIR_FD_MKDIR covers any other platform lacking dir_fd support.
+    if sys.platform == "win32" or not HAS_DIR_FD_MKDIR:
         portable_mkdir_chain(base_real_dir, components, "dest")
         return
     dir_fd = os.open(base_real_dir, os.O_RDONLY | os.O_DIRECTORY)

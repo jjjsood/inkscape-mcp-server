@@ -72,3 +72,17 @@ def test_safe_mkdir_chain_uses_fallback_without_dir_fd(
     base = tmp_path.resolve()
     module._safe_mkdir_chain(base, ("x", "y"))  # type: ignore[attr-defined]
     assert (base / "x" / "y").is_dir()
+
+
+def test_mkdir_error_does_not_leak_host_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def deny(self: Path, *args: object, **kwargs: object) -> None:
+        raise PermissionError(13, "Access is denied", str(self))
+
+    monkeypatch.setattr(Path, "mkdir", deny)
+    with pytest.raises(SandboxViolation) as exc:
+        portable_mkdir_chain(tmp_path.resolve(), ("a",), "dest")
+    assert "could not resolve path" in str(exc.value)
+    assert str(tmp_path) not in str(exc.value)
+    assert exc.value.detail is not None and "could not be created" in exc.value.detail
