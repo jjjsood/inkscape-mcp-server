@@ -84,10 +84,10 @@ EDIT_PREVIEWS_NONE = "none"
 EDIT_PREVIEWS_AFTER = "after"
 EDIT_PREVIEWS_BEFORE_AFTER = "before_after"
 
-#: Advanced-mode gate for the optional raw-action tool (ADR-003 / sec.12). OFF by default —
-#: the `run_raw_action` escape hatch is refused entirely unless an operator sets this to a truthy
-#: value (`1`/`true`/`yes`/`on`). It is the explicit opt-in for the single, HIGH-risk,
-#: allowlist-and-map-gated raw Inkscape Action runner deferred from the MVP. Never client-supplied;
+#: Advanced-mode gate for the `actions` tool and the HIGH-risk path ops (ADR-003 / sec.12). OFF by
+#: default — `actions` is hidden and the path ops (`simplify`, `union`, ...) are refused entirely
+#: unless an operator sets this to a truthy value (`1`/`true`/`yes`/`on`). It is the explicit
+#: opt-in for the HIGH-risk, allowlist-and-map-gated Inkscape Action runner. Never client-supplied;
 #: the tool checks it BEFORE doing anything. Enabling it does NOT widen the allowlist — every Action
 #: still has to be allowlisted AND present in the version-keyed capability map AND charset-safe.
 ENV_RAW_ACTION_ENABLED = "INKSCAPE_MCP_RAW_ACTION_ENABLED"

@@ -10,27 +10,55 @@ First public release. A Model Context Protocol (MCP) server that makes Inkscape 
 agent-ready over STDIO.
 
 ### Added
-- **Headless document lifecycle** — `open_document` / `create_document` into tracked working copies
-  keyed by an opaque `doc_id`; originals are never mutated.
-- **Read & inspect** — `inspect_document`, `find_objects`, `validate_document`, `quality_report`
-  (+ set variants), plus MCP resources exposing document structure and the runtime capability matrix.
-- **Safe edits (medium risk, reversible)** — style (`set_fill` / `set_stroke` / `set_opacity` /
-  `replace_color` / `apply_palette`), text/object, transforms, element creation, defs/gradients,
-  grouping. Every mutation auto-snapshots and emits an Operation Record; `restore_snapshot` rolls back.
-- **Typed batch & bulk** — `apply_edits` (ordered typed edits, validate-all-first, atomic, one
-  snapshot) and `transform_objects` (selector → one typed op, `dry_run` default, `max_matches` cap).
-- **Render & export** — `render_preview`, `export_document` / `export_object`, web / icon / print
-  profiles, bounded dry-run-default batch export, with in-process content-truth verification.
-- **High-risk surfaces (approval-gated)** — path geometry, Action chains, overwrite-on-save, delete,
-  `set_document_svg` / `insert_svg_fragment`; each requires a per-operation approval token.
-- **Live mode** — read / write / view-loop control of a running Inkscape via a cross-platform
-  transport abstraction (extension-socket bridge on any OS; DBus fast-path on Linux), gated by
-  `INKSCAPE_MCP_LIVE_ENABLED`.
-- **Discoverability** — `how_do_i`, `list_capabilities`, generated `llms.txt` / `llms-full.txt`,
-  MCP tool annotations + tags, and an opt-in `core` tool profile / `short` description mode to trim
-  per-turn context cost.
+- **Ten result-oriented tools** — `open`, `inspect`, `edit`, `render`, `export`, `history`, `help`,
+  `live`, `live_edit` and (advanced mode) `actions`. A drawing is `open(canvas, ops,
+  render='inline')` → `export(targets)`: two calls instead of five to ten.
+- **Typed ops in one atomic call** — `edit` / `open` apply up to 64 ops (create, style, object,
+  transform, compose, path, optimize) as ONE all-or-nothing operation with one snapshot and one
+  Operation Record. `"$<n>"` references ids created earlier in the same call; ops with targets take
+  `ids` or a `select` ({tag, fill, stroke, text, id_prefix, bbox}); `dry_run` returns the plan; the
+  risk of a call is the maximum over its ops.
+- **Headless document lifecycle** — `open` (workspace file, SVG text, blank canvas or the live
+  canvas) into tracked working copies keyed by an opaque `doc_id`; originals are never mutated.
+- **Read & inspect** — `inspect` (summary, objects with selectors, tree, layers, styles, fonts,
+  assets, validate, quality, snapshots, frames; one or several documents), plus MCP resources
+  exposing document structure, the runtime capability matrix and the op reference (`inkscape://ops`).
+- **Safe edits (medium risk, reversible)** — every mutation auto-snapshots and emits an Operation
+  Record; `history(action='restore')` rolls back. Genuine no-ops write nothing (`changed: false`).
+- **Render & export** — `render` and `edit(render='inline')` return an inline PNG; `export` writes
+  files, web / icons / print profiles, `save_as`, for one document or a set, with dry-run size
+  projection, a byte budget and in-process content-truth verification.
+- **High-risk surfaces (approval-gated)** — path ops, overwrite-on-save, `delete`, `set_svg` /
+  `insert_svg`, `live_edit` and Action chains; each requires a per-operation approval token.
+- **Live mode** — `live` (observe selection / inspect / scene / view in one call, wait, viewport,
+  diff, setup actions with auto-connect) and `live_edit` (apply / insert_svg / set_text) for a running
+  Inkscape via a cross-platform transport abstraction (extension-socket bridge on any OS; DBus
+  fast-path on Linux), gated by `INKSCAPE_MCP_LIVE_ENABLED`.
+- **Discoverability** — `help(goal=…)` returns the `tool:op` to use plus an example call;
+  `help(op=…)` / `help(topic='ops')` document every op; generated `llms.txt` / `llms-full.txt`
+  (including the op reference); MCP tool annotations; a ≈15 KB `tools/list`; one-line, actionable
+  error messages; a deterministic eval harness scoring `tool:op` targets.
 - **Security model** — workspace sandbox with path + symlink guard, size / export / timeout limits,
   arg-list subprocess (never shell strings), safe XML parsing (no entity expansion), no network,
-  no arbitrary extension execution, and risk-classed tools.
+  no arbitrary extension execution, and risk-classed calls.
+
+### Changed (breaking relative to the pre-release 99-tool surface)
+- The 99 single-purpose tools (`create_rect`, `set_fill`, `apply_edits`, `export_document`,
+  `live_session_step`, …) are **gone**; there is no legacy profile and no compatibility layer. Their
+  behaviour lives on as ops of `edit` (`create_rect`, `fill`, …), actions of `history` / `live` /
+  `live_edit` / `actions`, sections of `inspect`, and targets of `export`. `tools/list` shrank from
+  ≈325 KB to ≈15 KB (87 → 10 tools).
+- `how_do_i`, `list_capabilities`, `diagnose_runtime` and `stat_artifact(s)` are folded into `help`
+  (`goal`, `topic='capabilities'|'diagnose'`, `stat_paths`).
+- Edits no longer render before/after PNGs by default (0 Inkscape renders per edit instead of 2);
+  ask for a picture with `render='inline'`, or opt in to preview frames on the Operation Record with
+  `INKSCAPE_MCP_EDIT_PREVIEWS=after|before_after`.
+- Tool results are one compact JSON text block (plus an inline image where asked) with no
+  `outputSchema`.
+- `delete` on an unknown id is an error (it no longer skips silently), and a call with any failing
+  op changes nothing.
+- The `core` tool profile and `short` description mode (`INKSCAPE_MCP_TOOL_PROFILE`,
+  `INKSCAPE_MCP_TOOL_DESC`) are removed; visibility is controlled only by `INKSCAPE_MCP_LIVE_ENABLED`
+  and `INKSCAPE_MCP_RAW_ACTION_ENABLED`. The `run_raw_action` tool is now `actions(action='raw')`.
 
 [0.1.0]: https://github.com/jjjsood/inkscape-mcp/releases/tag/v0.1.0

@@ -21,7 +21,7 @@ host launches.
 - **Python ≥ 3.12** (`requires-python = ">=3.12"`).
 - **Inkscape 1.4.x on `PATH`** for render / export / path-geometry / live tools. Read / edit /
   validate / snapshot tools work **without** Inkscape. (Minimum detected version floor is 1.3.0; the
-  server **detects at runtime and never assumes** a version — run `diagnose_runtime`.)
+  server **detects at runtime and never assumes** a version — run `help(topic='diagnose')`.)
 - At least one **workspace root** (`INKSCAPE_MCP_WORKSPACE_ROOTS`) — the sandbox refuses to touch
   anything outside it. See [host-configs.md](host-configs.md) for all env vars.
 

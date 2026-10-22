@@ -1,7 +1,7 @@
 # Troubleshooting
 
-Most failures are environment, not bugs. The fastest diagnosis is the **`diagnose_runtime`** tool
-(forces a fresh probe) or **`list_capabilities`** (cached) — both return the same
+Most failures are environment, not bugs. The fastest diagnosis is **`help(topic='diagnose')`**
+(forces a fresh probe) or **`help(topic='capabilities')`** (cached) — both return the same
 [`Capabilities`](../../src/inkscape_mcp/runtime/probe.py) shape, and the probe
 **degrades gracefully**: a missing backend becomes a `false`/`null` field plus a human-readable entry
 in `notes`, never a crash. Read `notes` first.
@@ -10,7 +10,7 @@ Every probe note below is the **exact string** the server emits, so you can grep
 
 ## Read the diagnostics
 
-`diagnose_runtime()` returns (key fields):
+`help(topic='diagnose')` returns (key fields):
 
 | Field | Meaning |
 |---|---|
@@ -94,7 +94,7 @@ raises when it has no usable root.
 
 ### Live mode disabled
 
-- **Symptom:** `live_connect` refuses cleanly; `live_status` shows `enabled=false`.
+- **Symptom:** the `live` / `live_edit` tools are hidden and refuse cleanly; `live(action='status')` shows `enabled=false`.
 - **Cause:** `INKSCAPE_MCP_LIVE_ENABLED` set to a falsy value (`0`/`false`/`no`/`off`).
 - **Fix:** unset it (defaults to on) or set a truthy value. Headless is unaffected either way.
 
@@ -107,10 +107,10 @@ raises when it has no usable root.
   `gdbus list-names timed out after <N>s`, `gdbus list-names exited <code>`.
 - **Cause:** no *running* Inkscape, the helper extension isn't installed (cross-platform path), or no
   DBus session bus / no Inkscape on the bus (Linux fast-path only).
-- **Fix:** start Inkscape, then install the helper via the `live_install_helper` tool or
+- **Fix:** start Inkscape, then install the helper via `live(action='install_helper')` or
   `scripts/install-live-helper.sh` / `install-live-helper.ps1`. DBus is an *optional* Linux fast-path;
   when it's absent the server uses the extension-socket transport — that is expected, not an error.
-  Use `check_live_support` to see every transport probed on your host.
+  Use `live(action='check')` to see every transport probed on your host.
 
 ### No DBus session bus (Linux)
 
@@ -151,5 +151,5 @@ raises when it has no usable root.
 
 ## Still stuck
 
-Re-run `diagnose_runtime` and read `notes` end to end. Cross-reference
+Re-run `help(topic='diagnose')` and read `notes` end to end. Cross-reference
 [compatibility.md](compatibility.md) for what your platform is expected to support.

@@ -1,8 +1,8 @@
 # Compatibility matrix — Inkscape version × OS × feature
 
 What works where. The server **detects at runtime and never assumes a version** — run
-`diagnose_runtime` / `list_capabilities` to get the ground truth for *your* host. This page is the
-operator-facing summary; `diagnose_runtime` is canonical for the exact probe result and the
+`help(topic='diagnose')` / `help(topic='capabilities')` to get the ground truth for *your* host. This page is the
+operator-facing summary; `help(topic='diagnose')` is canonical for the exact probe result and the
 per-action breakdown on your machine.
 
 **Verified vs expected.** ✅ = verified on the development host (Inkscape **1.4.3** on **Linux**) or in
@@ -64,13 +64,13 @@ architecture doc §4.4 "Concurrency model — the no-freeze reality".
   extension-socket transport, never errors.
 - **Export formats are per-host.** PNG / SVG (incl. plain SVG) are confirmed; PDF / PS / EPS are
   action-pipeline outputs that the probe verifies at runtime (they are **not** in the
-  `--export-type` list). Check `export_types` from `diagnose_runtime`.
+  `--export-type` list). Check `export_types` from `help(topic='diagnose')`.
 
 ## How to confirm on your host
 
 ```bash
 # Via the MCP tool (preferred — exact same probe the server uses):
-#   diagnose_runtime()  -> Capabilities { inkscape_version, meets_minimum, export_types,
+#   help(topic='diagnose')  -> capabilities { inkscape_version, meets_minimum, export_types,
 #                                         dbus_session_bus, live_extension_socket_available, ... }
 
 # Or directly:
@@ -80,5 +80,5 @@ inkscape --help | grep -- --export-type
 echo "$DBUS_SESSION_BUS_ADDRESS"          # non-empty => session bus present (DBus fast-path possible)
 ```
 
-Or just call the `diagnose_runtime` tool. Map any gap to a fix in
+Or just call `help(topic='diagnose')`. Map any gap to a fix in
 [troubleshooting.md](troubleshooting.md).

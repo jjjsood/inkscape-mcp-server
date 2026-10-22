@@ -9,7 +9,7 @@ platform, and fix the common failures. This is the operator-facing companion to 
   Code, and a generic STDIO host. Example files live in [`examples/`](../../examples/).
 - **[compatibility.md](compatibility.md)** — Inkscape version × OS × feature-availability matrix.
 - **[troubleshooting.md](troubleshooting.md)** — common failures → fixes, driven by the
-  `diagnose_runtime` / `list_capabilities` diagnostics.
+  `help(topic='diagnose')` / `help(topic='capabilities')` diagnostics.
 
 ## TL;DR
 
@@ -26,4 +26,4 @@ export INKSCAPE_MCP_WORKSPACE_ROOTS=/absolute/path/to/your/svgs
 
 The server speaks **MCP over STDIO only** (no HTTP). Read / edit / validate tools work with no
 Inkscape binary; render / export / path-geometry / live tools need Inkscape **1.4.x** on `PATH`.
-Run `diagnose_runtime` to see exactly what your host supports.
+Run `help(topic='diagnose')` to see exactly what your host supports.

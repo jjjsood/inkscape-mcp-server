@@ -126,9 +126,9 @@ Linux/macOS, `;` on Windows).
 | `INKSCAPE_MCP_ARTIFACT_KEEP_DAYS` | `14` | Artifact age retention. |
 | `INKSCAPE_MCP_ARTIFACT_MAX_BYTES` | `2147483648` (2 GiB) | Total artifact byte budget. |
 | `INKSCAPE_MCP_ARTIFACT_MAX_BYTES_PER_DOC` | `536870912` (512 MiB) | Per-document artifact byte budget. |
-| `INKSCAPE_MCP_LIVE_ENABLED` | `true` | Master gate for live mode (E3/E4). **On by default**; set a falsy value (`0`/`false`/`no`/`off`) to opt out (then `live_connect` refuses cleanly; headless is unaffected). |
+| `INKSCAPE_MCP_LIVE_ENABLED` | `true` | Master gate for live mode (E3/E4). **On by default**; set a falsy value (`0`/`false`/`no`/`off`) to opt out (then `live` / `live_edit` are hidden; headless is unaffected). |
 | `INKSCAPE_MCP_LIVE_RENDEZVOUS` | *(none)* | Optional explicit path to the live helper's rendezvous file (otherwise discovered under the Inkscape user data dir / temp dir). |
-| `INKSCAPE_MCP_RAW_ACTION_ENABLED` | `false` | Advanced-mode gate for the `run_raw_action` escape hatch (E6-03 / ADR-003). **Off by default**; set a truthy value to opt in. Enabling it does **not** widen the allowlist. |
+| `INKSCAPE_MCP_RAW_ACTION_ENABLED` | `false` | Advanced-mode gate for the `actions` tool and the HIGH-risk path ops (E6-03 / ADR-003). **Off by default**; set a truthy value to opt in. Enabling it does **not** widen the allowlist. |
 | `INKSCAPE_MCP_ENGINE_MODE` | `per_call` | Engine transport for render/export/path/boolean/action-chain (E12 / ADR-007). `per_call` spawns a fresh Inkscape per call (default, always correct); `shell` routes those ops through one warm, long-lived `inkscape --shell` worker per document with an **automatic per-call fallback** on any fault. Enable for faster multi-op batches; any value other than `shell` floors to `per_call`. A private headless worker, **not** a channel to your live GUI. |
 | `INKSCAPE_MCP_ENGINE_MAX_PROCESSES` | `2` | Max concurrent warm shell workers when `engine_mode=shell` (LRU-evicted). Floored at 1. |
 | `INKSCAPE_MCP_ENGINE_IDLE_TIMEOUT_S` | `300` | Seconds before an idle warm shell worker is reaped. Floored at 1. |
