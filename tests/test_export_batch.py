@@ -12,10 +12,12 @@ from pathlib import Path
 import pytest
 from fastmcp.exceptions import ToolError
 
-from inkscape_mcp.config import get_settings
+from inkscape_mcp.config import ENV_ARTIFACT_MAX_BYTES_PER_DOC, get_settings
 from inkscape_mcp.document.inspect import DocumentNotFound
 from inkscape_mcp.registry import get_registry
+from inkscape_mcp.render import cli as render_cli
 from inkscape_mcp.render.batch import MAX_BATCH_ITEMS, BatchError, ExportSpec, export_batch
+from inkscape_mcp.render.cli import RenderError
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.paths import SandboxViolation
 from tests.test_export_files import ART, FakeInkscape, install_fake
@@ -61,7 +63,7 @@ def test_engine_dry_run_is_the_default_and_writes_nothing(fake_inkscape, doc) ->
     assert [i.format for i in result.items] == ["png", "svg", "png"]
     assert result.items[0].projected_bytes == 64 * 51 * 4  # RGBA upper bound
     assert result.projected_total_bytes == sum(i.projected_bytes for i in result.items)
-    assert all(i.artifact_path is None for i in result.items)
+    assert all(i.workspace_relative_path is None for i in result.items)
     assert _written(doc) == [] and fake_inkscape.calls == []
 
 
@@ -77,7 +79,6 @@ def test_engine_real_run_exports_each_spec(fake_inkscape, doc) -> None:
     root = Path(get_registry().get(doc).root)
     for item in result.items:
         assert item.status == "exported"
-        assert item.artifact_path == item.workspace_relative_path
         assert item.workspace_relative_path.startswith(f".inkscape-mcp/documents/{doc}/")
         assert (root / item.workspace_relative_path).is_file()
     assert (root / result.items[0].workspace_relative_path).read_bytes()[:4] == PNG_MAGIC
@@ -183,12 +184,8 @@ def test_tool_dry_run_plans_and_projects_without_writing(tool_app, fake_inkscape
     assert data["plan"][2]["object_id"] == "dot"
     assert all(p["projected_bytes"] > 0 for p in data["plan"])
     assert data["projected_bytes"] == sum(p["projected_bytes"] for p in data["plan"])
+    assert "upper bound" in data["projected_note"]
     assert _written(doc) == [] and fake_inkscape.calls == []
-
-
-def test_tool_dry_run_reports_over_budget_instead_of_refusing(tool_app, fake_inkscape, doc) -> None:
-    data = _export(tool_app, doc, [{**PNG_64, "width_px": 256}], dry_run=True, byte_budget=16)
-    assert data["dry_run"] is True and data["within_budget"] is False
 
 
 def test_tool_dry_run_over_a_set_plans_per_document(tool_app, fake_inkscape, tool_ws) -> None:
@@ -205,14 +202,6 @@ def test_tool_over_the_item_cap_is_refused(tool_app, fake_inkscape, doc) -> None
     targets = [{"kind": "file", "format": "png", "width_px": 16}] * (MAX_BATCH_ITEMS + 1)
     with pytest.raises(ToolError, match=r"targets\[0\] \(file\): .*item cap"):
         _export(tool_app, doc, targets)
-    assert fake_inkscape.calls == [] and _written(doc) == []
-
-
-def test_tool_over_budget_real_run_is_refused_before_any_write(
-    tool_app, fake_inkscape, doc
-) -> None:
-    with pytest.raises(ToolError, match="budget"):
-        _export(tool_app, doc, [{**PNG_64, "width_px": 256}], byte_budget=16)
     assert fake_inkscape.calls == [] and _written(doc) == []
 
 
@@ -256,6 +245,159 @@ def test_tool_file_targets_are_batched_around_other_targets(tool_app, fake_inksc
     kinds = [a["kind"] for a in data["artifacts"]]
     # both file targets run together at the first file target, then the profile
     assert kinds == ["file", "file", "profile:icons"]
+
+
+# --- partial failure: no half result is left behind -----------------------------------------
+
+
+def _all_exports(tool_ws: Path) -> list[Path]:
+    return [p for p in tool_ws.rglob("*") if p.is_file() and p.suffix in {".png", ".pdf"}]
+
+
+def test_engine_failure_mid_batch_removes_the_items_already_written(
+    fake_inkscape, doc, tool_ws
+) -> None:
+    fake_inkscape.fail_on_call = 2
+    specs = [ExportSpec(format="png", width_px=16), ExportSpec(format="pdf")]
+    with pytest.raises(RenderError, match="render failed"):
+        export_batch(doc, specs, dry_run=False)
+    assert len(fake_inkscape.calls) == 2 and _written(doc) == []
+
+
+def test_engine_budget_overrun_mid_batch_removes_every_item(fake_inkscape, doc) -> None:
+    fake_inkscape.svg_body = b" " * 10_000
+    specs = [ExportSpec(format="png", width_px=16), ExportSpec(format="svg")]
+    with pytest.raises(BatchError, match="mid-run"):
+        export_batch(doc, specs, dry_run=False, byte_budget=6000)
+    assert _written(doc) == []
+
+
+@pytest.mark.parametrize(
+    ("targets", "failing"),
+    [
+        # both file targets run as one batch; the error must still name the second one
+        ([PNG_64, {"kind": "file", "format": "pdf"}], r"targets\[1\] \(file\)"),
+        (
+            [PNG_64, {"kind": "profile", "name": "icons", "sizes": [16]}],
+            r"targets\[1\] \(profile\)",
+        ),
+    ],
+)
+def test_tool_failing_second_target_names_it_and_keeps_no_artifact(
+    tool_app, fake_inkscape, doc, tool_ws, targets, failing
+) -> None:
+    fake_inkscape.fail_on_call = 2
+    # 2 real deletions: the finished PNG + the failing target's claimed (half-written) output.
+    with pytest.raises(
+        ToolError, match=rf"^{doc} {failing}: render/export failed.*2 partial"
+    ) as exc:
+        _export(tool_app, doc, targets)
+    assert "removed" in str(exc.value)
+    assert _all_exports(tool_ws) == []
+
+
+def test_tool_failing_second_document_removes_the_first_documents_files(
+    tool_app, fake_inkscape, tool_ws
+) -> None:
+    a, b = open_doc(tool_ws, "a.svg", ART), open_doc(tool_ws, "b.svg", ART)
+    fake_inkscape.fail_on_call = 2
+    # 2 real deletions: a's finished PNG + b's claimed (half-written) output.
+    with pytest.raises(ToolError, match=rf"^{b} targets\[0\] \(file\): .*2 partial"):
+        _export(tool_app, [a, b], [PNG_64])
+    assert _all_exports(tool_ws) == []
+
+
+# --- output ownership / budget backstops (security review) -----------------------------------
+
+
+def test_identical_targets_in_one_call_get_distinct_files(tool_app, fake_inkscape, doc) -> None:
+    out = _export(tool_app, doc, [PNG_64, PNG_64])
+    paths = [a["path"] for a in out["artifacts"]]
+    assert len(set(paths)) == 2 and len(_written(doc)) == 2
+
+
+def test_existing_output_is_never_overwritten_or_deleted(
+    fake_inkscape, doc, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = Path(get_registry().get(doc).root)
+    exports = sandbox.exports_dir(root, doc)
+    exports.mkdir(parents=True, exist_ok=True)
+    earlier = exports / "taken.png"
+    earlier.write_bytes(b"earlier artifact")
+    monkeypatch.setattr(render_cli, "_output_name", lambda *a, **k: "taken.png")
+    with pytest.raises(RenderError, match="already exists"):
+        export_batch(doc, [ExportSpec(format="png", width_px=16)], dry_run=False)
+    assert earlier.read_bytes() == b"earlier artifact" and fake_inkscape.calls == []
+
+
+def test_cancel_during_inkscape_removes_the_half_written_output(fake_inkscape, doc) -> None:
+    class Cancelled(BaseException):
+        pass
+
+    fake_inkscape.error = Cancelled()
+    with pytest.raises(Cancelled):
+        export_batch(doc, [ExportSpec(format="png", width_px=16)], dry_run=False)
+    assert _written(doc) == []
+
+
+def test_safe_unlink_refuses_a_parent_swapped_for_a_symlink(tmp_path: Path) -> None:
+    real, other = tmp_path / "real", tmp_path / "other"
+    real.mkdir(), other.mkdir()
+    tracked = render_cli._claim_output(real / "a.png")
+    victim = other / "a.png"
+    victim.write_bytes(b"not ours")
+    tracked.unlink()
+    real.rmdir()
+    real.symlink_to(other)
+    assert render_cli._safe_unlink(tracked) is False and victim.exists()
+
+
+@pytest.mark.parametrize("link", [False, True])
+def test_out_dir_into_existing_state_dir_is_refused(fake_inkscape, doc, tool_ws, link) -> None:
+    out_dir = ".inkscape-mcp/documents"
+    if link:
+        (tool_ws / "state-link").symlink_to(tool_ws / ".inkscape-mcp")
+        out_dir = "state-link/documents"
+    with pytest.raises(SandboxViolation, match=r"managed \.inkscape-mcp"):
+        export_batch(doc, [ExportSpec(format="png", width_px=16)], out_dir=out_dir)
+    assert fake_inkscape.calls == []
+
+
+def test_profile_output_over_budget_mid_run_aborts_and_discards(
+    tool_app, fake_inkscape, doc, tool_ws
+) -> None:
+    targets = [PNG_64, {"kind": "profile", "name": "web", "width_px": 32}]
+    projected = _export(tool_app, doc, targets, dry_run=True)["projected_bytes"]
+    fake_inkscape.svg_body = b" " * (projected + 1)  # the vector projection under-estimates
+    with pytest.raises(ToolError, match=r"targets\[1\] \(profile\): .*mid-run"):
+        _export(tool_app, doc, targets, byte_budget=projected)
+    assert _all_exports(tool_ws) == [] and not any(p.suffix == ".svg" for p in _written(doc))
+
+
+def test_budget_is_clamped_once_and_covers_files_plus_profiles(
+    tool_app, fake_inkscape, doc, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 64 px PNG = 13 056 projected bytes: the file alone fits a 20 000 cap, file + icon do not.
+    monkeypatch.setenv(ENV_ARTIFACT_MAX_BYTES_PER_DOC, "20000")
+    get_settings.cache_clear()
+    icon = {"kind": "profile", "name": "icons", "sizes": [64]}
+    assert _export(tool_app, doc, [PNG_64], dry_run=True, byte_budget=10**9)["within_budget"]
+    plan = _export(tool_app, doc, [PNG_64, icon], dry_run=True, byte_budget=10**9)
+    assert plan["within_budget"] is False
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="artifact_max_bytes_per_doc is enforced per export call only (batch budget clamp); "
+    "docs/design/workspace-model.md §6 promises a cumulative per-document artifact cap",
+)
+def test_per_document_artifact_cap_is_cumulative(fake_inkscape, doc, monkeypatch) -> None:
+    # one 64 px PNG projects to 13 056 bytes: each call fits alone, two together do not
+    monkeypatch.setenv(ENV_ARTIFACT_MAX_BYTES_PER_DOC, "20000")
+    get_settings.cache_clear()
+    export_batch(doc, [ExportSpec(format="png", width_px=64)], dry_run=False)
+    with pytest.raises(BatchError, match="byte budget"):
+        export_batch(doc, [ExportSpec(format="png", width_px=64)], dry_run=False)
 
 
 # --- real renderer ---------------------------------------------------------------------------

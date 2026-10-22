@@ -15,6 +15,7 @@ from inkscape_mcp.config import (
 from inkscape_mcp.workspace.limits import (
     LimitExceeded,
     check_export_dimensions,
+    check_input_bytes_size,
     check_input_size,
     check_output_size,
 )
@@ -55,3 +56,22 @@ def test_output_size_over_cap_rejected(tmp_path: Path, monkeypatch: pytest.Monke
     f.write_bytes(b"x" * 100)
     with pytest.raises(LimitExceeded):
         check_output_size(f, get_settings())
+
+
+def test_input_bytes_size_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ENV_MAX_INPUT_BYTES, "10")
+    get_settings.cache_clear()
+    assert check_input_bytes_size(b"x" * 10, get_settings()) == 10  # exactly at cap: allowed
+    with pytest.raises(LimitExceeded):
+        check_input_bytes_size(b"x" * 11, get_settings())
+
+
+def test_open_oversized_svg_text_refused(tool_app, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastmcp.exceptions import ToolError
+
+    from tests.tool_support import SVG, call
+
+    monkeypatch.setenv(ENV_MAX_INPUT_BYTES, "64")
+    get_settings.cache_clear()
+    with pytest.raises(ToolError, match="input exceeds the configured size limit"):
+        call(tool_app, "open", {"svg": SVG.decode()})

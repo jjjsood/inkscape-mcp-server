@@ -15,8 +15,8 @@ All exports delegate to `export_document` / `export_object`, which already enfor
 limits (pixel cap before invocation, output-size cap after), the per-process timeout, and
 arg-lists-only invocation (`shell=False`) per sec.12 — this module adds no new authority. Object ids
 are charset-validated and existence-checked here (fail-fast) before any spec runs. Returned artifact
-paths follow ONE LOCATION CONTRACT: `artifact_path` and `workspace_relative_path` carry the
-SAME value, always relative to the WORKSPACE ROOT; originals / working copies are never overwritten.
+paths (`workspace_relative_path`) are always relative to the WORKSPACE ROOT; originals / working
+copies are never overwritten.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from inkscape_mcp.config import Settings, get_settings
+from inkscape_mcp.config import Settings, resolve_settings
 from inkscape_mcp.document.inspect import (
     DocSummary,
     DocumentNotFound,
@@ -38,6 +38,7 @@ from inkscape_mcp.registry import Registry, get_registry
 from inkscape_mcp.render.cli import (
     _resolve_out_dir,
     _target_raster_dims,
+    discard_on_error,
     export_document,
     export_object,
     is_safe_object_id,
@@ -79,10 +80,8 @@ class ExportSpec(BaseModel):
 class BatchItem(BaseModel):
     """The plan/outcome for one spec.
 
-    ONE LOCATION CONTRACT: `artifact_path` and `workspace_relative_path` carry the SAME
-    value — the file relative to the WORKSPACE ROOT, openable by a single join to the root with no
-    `find`/`stat` — and are set only on a real (non-dry) run. `artifact_path` is kept only for
-    back-compat and now means exactly the same thing.
+    `workspace_relative_path` is the file relative to the WORKSPACE ROOT, openable by a single join
+    to the root with no `find`/`stat`; set only on a real (non-dry) run.
     """
 
     index: int
@@ -90,7 +89,6 @@ class BatchItem(BaseModel):
     width_px: int | None
     object_id: str | None
     projected_bytes: int
-    artifact_path: str | None = None
     workspace_relative_path: str | None = None
     status: str  # "planned" (dry run) | "exported" (real run)
 
@@ -111,10 +109,6 @@ class BatchResult(BaseModel):
     actual_total_bytes: int | None
     within_budget: bool
     items: list[BatchItem] = Field(default_factory=list)
-
-
-def _settings(settings: Settings | None) -> Settings:
-    return settings if settings is not None else get_settings()
 
 
 def _project_bytes(summary: DocSummary, fmt: str, width_px: int | None, working_size: int) -> int:
@@ -180,7 +174,7 @@ def export_batch(
     `SandboxViolation` for an out-of-workspace `out_dir`, and re-raises the engine's `RenderError` /
     `LimitExceeded` / `ProcessError` from a real export.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     reg = registry if registry is not None else get_registry()
 
     if not specs:
@@ -266,49 +260,58 @@ def export_batch(
     # sandbox); the same params are forwarded to every spec.
     items: list[BatchItem] = []
     actual_total = 0
-    for item in planned:
-        if item.object_id is None:
-            result = export_document(
-                doc_id,
-                item.format,
-                width_px=item.width_px,
-                out_dir=out_dir,
-                name_prefix=name_prefix,
-                settings=s,
-            )
-        else:
-            result = export_object(
-                doc_id,
-                item.object_id,
-                item.format,
-                width_px=item.width_px,
-                out_dir=out_dir,
-                name_prefix=name_prefix,
-                settings=s,
-            )
-        # Stat via the root-anchored resolvable path (works whether the artifact landed in the
-        # managed per-doc dir or a caller-chosen out_dir).
-        size = (Path(entry.root) / result.workspace_relative_path).stat().st_size
-        actual_total += size
-        # Backstop against a projection that under-estimated (e.g. a complex SVG export): abort the
-        # moment the real cumulative output crosses the budget, so a batch can never run unbounded.
-        if actual_total > budget:
-            raise BatchError(
-                f"export batch output exceeded the byte budget mid-run "
-                f"({actual_total} > {budget} bytes)"
-            )
-        items.append(
-            BatchItem(
-                index=item.index,
-                format=item.format,
-                width_px=item.width_px,
-                object_id=item.object_id,
-                projected_bytes=item.projected_bytes,
-                artifact_path=result.artifact_path,
-                workspace_relative_path=result.workspace_relative_path,
-                status="exported",
-            )
-        )
+    # All-or-nothing: if any item fails (engine error or the budget backstop), every item already
+    # written by this batch is deleted. `export_failed_index` tells the caller WHICH spec failed.
+    current = 0
+    try:
+        with discard_on_error():
+            for item in planned:
+                current = item.index
+                if item.object_id is None:
+                    result = export_document(
+                        doc_id,
+                        item.format,
+                        width_px=item.width_px,
+                        out_dir=out_dir,
+                        name_prefix=name_prefix,
+                        settings=s,
+                    )
+                else:
+                    result = export_object(
+                        doc_id,
+                        item.object_id,
+                        item.format,
+                        width_px=item.width_px,
+                        out_dir=out_dir,
+                        name_prefix=name_prefix,
+                        settings=s,
+                    )
+                # Stat via the root-anchored resolvable path (works whether the artifact landed
+                # in the managed per-doc dir or a caller-chosen out_dir).
+                size = (Path(entry.root) / result.workspace_relative_path).stat().st_size
+                actual_total += size
+                # Backstop against a projection that under-estimated (e.g. a complex SVG export):
+                # abort the moment the real cumulative output crosses the budget, so a batch can
+                # never run unbounded.
+                if actual_total > budget:
+                    raise BatchError(
+                        f"export batch output exceeded the byte budget mid-run "
+                        f"({actual_total} > {budget} bytes)"
+                    )
+                items.append(
+                    BatchItem(
+                        index=item.index,
+                        format=item.format,
+                        width_px=item.width_px,
+                        object_id=item.object_id,
+                        projected_bytes=item.projected_bytes,
+                        workspace_relative_path=result.workspace_relative_path,
+                        status="exported",
+                    )
+                )
+    except Exception as exc:
+        setattr(exc, "export_failed_index", current)  # noqa: B010 - annotate a foreign exception
+        raise
 
     _logger.info(
         "export batch complete",

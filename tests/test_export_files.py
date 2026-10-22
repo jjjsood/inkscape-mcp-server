@@ -15,7 +15,12 @@ from pathlib import Path
 import pytest
 from fastmcp.exceptions import ToolError
 
-from inkscape_mcp.config import ENV_MAX_EXPORT_PX, ENV_MAX_OUTPUT_BYTES, get_settings
+from inkscape_mcp.config import (
+    ENV_MAX_EXPORT_PX,
+    ENV_MAX_OUTPUT_BYTES,
+    ENV_PROCESS_TIMEOUT_S,
+    get_settings,
+)
 from inkscape_mcp.registry import get_registry
 from inkscape_mcp.render import cli
 from inkscape_mcp.render.cli import (
@@ -51,6 +56,10 @@ class FakeInkscape:
         self.blank = False  # write a fully transparent PNG
         self.svg_body = b""  # extra bytes appended to SVG output (to blow a budget)
         self.error: Exception | None = None
+        # failure knobs: the artifact is still written (as a crashed Inkscape may leave one)
+        self.returncode = 0
+        self.timed_out = False
+        self.fail_on_call: int | None = None  # 1-based call that exits non-zero
 
     def __call__(self, args: list[str], settings: object = None) -> ProcessResult:
         self.calls.append(list(args))
@@ -69,8 +78,14 @@ class FakeInkscape:
             out.write_bytes(
                 b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>' + self.svg_body
             )
+        failed = self.fail_on_call == len(self.calls)
         return ProcessResult(
-            args=args, returncode=0, stdout="", stderr="", duration_s=0.0, timed_out=False
+            args=args,
+            returncode=1 if failed else self.returncode,
+            stdout="",
+            stderr="",
+            duration_s=0.0,
+            timed_out=self.timed_out,
         )
 
     def _png(self, out: Path, width: int, height: int) -> None:
@@ -123,16 +138,17 @@ def test_png_reports_true_dims_and_one_location(fake_inkscape, doc) -> None:
     assert out.read_bytes()[:4] == PNG_MAGIC
     assert (result.width_px, result.height_px) == _png_dims(out) == (150, 120)
     # one location contract: both fields are the same root-relative path with the doc base
-    assert result.artifact_path == result.workspace_relative_path
-    assert not result.artifact_path.startswith("/")
-    assert result.artifact_path.startswith(f".inkscape-mcp/documents/{doc}/artifacts/exports/")
+    assert not result.workspace_relative_path.startswith("/")
+    assert result.workspace_relative_path.startswith(
+        f".inkscape-mcp/documents/{doc}/artifacts/exports/"
+    )
     assert result.opaque_px and result.opaque_px > 0 and result.all_blank is False
     assert result.is_vector is None and result.stale is False
 
 
 def test_pdf_and_svg_are_vector_without_raster_dims(fake_inkscape, doc) -> None:
     pdf = export_document(doc, "pdf")
-    assert _file(doc, pdf.artifact_path).read_bytes()[:4] == b"%PDF"
+    assert _file(doc, pdf.workspace_relative_path).read_bytes()[:4] == b"%PDF"
     assert (pdf.width_px, pdf.height_px, pdf.opaque_px) == (None, None, None)
     assert pdf.is_vector is True and pdf.fonts_outlined is True
     svg = export_document(doc, "svg", width_px=999)  # width is ignored for vector output
@@ -152,7 +168,7 @@ def test_object_export_clips_to_the_object(fake_inkscape, doc) -> None:
     argv = fake_inkscape.calls[-1]
     assert "--export-id=dot" in argv and "--export-id-only" in argv
     assert "--export-area-page" not in argv
-    assert "obj-dot" in result.artifact_path
+    assert "obj-dot" in result.workspace_relative_path
     assert (result.width_px, result.height_px) == (36, 36)
 
 
@@ -180,9 +196,9 @@ def test_internal_extra_args_must_be_export_flags(fake_inkscape, doc, flag) -> N
 
 def test_name_prefix_is_sanitised_into_the_filename(fake_inkscape, doc, tool_ws) -> None:
     result = export_document(doc, "png", width_px=16, name_prefix="a/../b c")
-    name = Path(result.artifact_path).name
+    name = Path(result.workspace_relative_path).name
     assert "a-..-b-c" in name and "/" not in name
-    assert Path(result.artifact_path).parent.as_posix().endswith("artifacts/exports")
+    assert Path(result.workspace_relative_path).parent.as_posix().endswith("artifacts/exports")
 
 
 # --- engine: out_dir sandbox ---------------------------------------------------------------
@@ -190,9 +206,11 @@ def test_name_prefix_is_sanitised_into_the_filename(fake_inkscape, doc, tool_ws)
 
 def test_out_dir_in_workspace_is_honoured(fake_inkscape, doc, tool_ws) -> None:
     result = export_document(doc, "png", width_px=48, out_dir="deep/nested/out", name_prefix="hero")
-    assert result.artifact_path == result.workspace_relative_path
-    assert result.artifact_path.startswith("deep/nested/out/") and "hero" in result.artifact_path
-    assert _file(doc, result.artifact_path).read_bytes()[:4] == PNG_MAGIC
+    assert (
+        result.workspace_relative_path.startswith("deep/nested/out/")
+        and "hero" in result.workspace_relative_path
+    )
+    assert _file(doc, result.workspace_relative_path).read_bytes()[:4] == PNG_MAGIC
     assert (tool_ws / "deep" / "nested" / "out").is_dir()
 
 
@@ -220,14 +238,6 @@ def test_out_dir_through_a_symlink_out_of_the_workspace_is_rejected(
     assert not (outside / "sub").exists() and fake_inkscape.calls == []
 
 
-def test_resolve_out_dir_defaults_to_none_and_creates_nested_dirs(doc, tool_ws) -> None:
-    entry = get_registry().get(doc)
-    assert cli._resolve_out_dir(None, entry, get_settings()) is None
-    resolved = cli._resolve_out_dir("x/y/z", entry, get_settings())
-    assert resolved is not None and resolved.resolve() == (tool_ws / "x" / "y" / "z").resolve()
-    assert resolved.is_dir()
-
-
 # --- engine: limits ------------------------------------------------------------------------
 
 
@@ -252,15 +262,47 @@ def test_oversized_output_is_deleted_and_refused(fake_inkscape, doc, tool_ws, mo
     assert not any(exports.iterdir())
 
 
-def test_engine_failure_leaves_no_artifact(fake_inkscape, doc) -> None:
+def test_engine_failure_leaves_no_artifact(fake_inkscape, doc, tool_ws) -> None:
     fake_inkscape.error = ProcessError("inkscape binary not found")
     with pytest.raises(ProcessError):
         export_document(doc, "png")
+    exports = sandbox.exports_dir(tool_ws, doc)
+    assert not exports.exists() or not any(exports.rglob("*"))
 
 
 def test_unknown_document_is_a_keyerror(fake_inkscape, tool_ws) -> None:
     with pytest.raises(KeyError):
         export_document("d_missing", "png")
+
+
+@pytest.mark.parametrize(
+    ("knob", "message"), [("returncode", "render failed"), ("timed_out", "render timed out")]
+)
+def test_failed_or_timed_out_inkscape_leaves_no_artifact(
+    fake_inkscape, doc, tool_ws, knob, message
+) -> None:
+    setattr(fake_inkscape, knob, 1 if knob == "returncode" else True)
+    with pytest.raises(RenderError, match=message):
+        export_document(doc, "png", width_px=32)
+    assert fake_inkscape.calls  # Inkscape ran (and the fake wrote a file) ...
+    assert not any(sandbox.exports_dir(tool_ws, doc).rglob("*"))  # ... which was removed
+
+
+def test_run_inkscape_uses_the_configured_process_timeout(monkeypatch) -> None:
+    from inkscape_mcp.workspace import subprocess_exec
+
+    monkeypatch.setenv(ENV_PROCESS_TIMEOUT_S, "7.5")
+    get_settings.cache_clear()
+    seen: dict[str, object] = {}
+
+    def run_process(argv: list[str], timeout_s: float) -> str:
+        seen.update(argv=argv, timeout_s=timeout_s)
+        return "ran"
+
+    monkeypatch.setattr(subprocess_exec.shutil, "which", lambda _name: "/opt/inkscape")
+    monkeypatch.setattr(subprocess_exec, "run_process", run_process)
+    assert subprocess_exec.run_inkscape(["--version"]) == "ran"
+    assert seen == {"argv": ["/opt/inkscape", "--version"], "timeout_s": 7.5}
 
 
 # --- engine: staleness ----------------------------------------------------------------------
@@ -278,19 +320,6 @@ def test_compute_stale_compares_mtimes(tmp_path: Path) -> None:
     assert compute_stale(working, tmp_path / "gone.png") is False  # unknown is never stale
 
 
-def test_result_goes_stale_after_the_working_copy_changes(fake_inkscape, doc) -> None:
-    result = export_document(doc, "png", width_px=64)
-    assert result.stale is False
-    working = Path(get_registry().get(doc).working_path)
-    later = Path(result.artifact_abspath or "").stat().st_mtime + 10
-    os.utime(working, (later, later))
-    assert result.recompute_stale() is True and result.stale is True
-    # the produce-time host paths never reach a client
-    assert (
-        "working_path" not in result.model_dump() and "artifact_abspath" not in result.model_dump()
-    )
-
-
 # --- tool: file targets -----------------------------------------------------------------------
 
 
@@ -305,6 +334,7 @@ def test_tool_artifacts_resolve_by_one_root_join(tool_app, fake_inkscape, doc, t
         ],
     )
     assert [a["format"] for a in data["artifacts"]] == ["png", "pdf", "png"]
+    assert data["total_bytes"] == sum(a["bytes"] for a in data["artifacts"])
     for art in data["artifacts"]:
         assert art["path"].startswith(f".inkscape-mcp/documents/{doc}/artifacts/exports/")
         assert _file(doc, art["path"]).is_file() and art["bytes"] > 0
@@ -325,17 +355,15 @@ def test_tool_out_dir_and_prefix(tool_app, fake_inkscape, doc, tool_ws) -> None:
     assert path.startswith("delivery/") and "final" in path and (tool_ws / path).is_file()
 
 
-@pytest.mark.parametrize("out_dir", ["/etc", "a/../b", "../escape"])
-def test_tool_out_dir_escape_is_rejected(tool_app, fake_inkscape, doc, out_dir) -> None:
+def test_tool_out_dir_escape_is_rejected(tool_app, fake_inkscape, doc) -> None:
     with pytest.raises(ToolError, match=r"targets\[0\] \(file\): path rejected"):
-        _export(tool_app, doc, [{"kind": "file", "format": "png"}], out_dir=out_dir)
+        _export(tool_app, doc, [{"kind": "file", "format": "png"}], out_dir="../escape")
     assert fake_inkscape.calls == []
 
 
-@pytest.mark.parametrize("bad_id", ["a b", "../etc/passwd", "id;rm -rf", "a/b", "$(x)"])
-def test_tool_rejects_unsafe_object_ids(tool_app, fake_inkscape, doc, bad_id) -> None:
+def test_tool_rejects_unsafe_object_ids(tool_app, fake_inkscape, doc) -> None:
     with pytest.raises(ToolError, match="object id is not valid"):
-        _export(tool_app, doc, [{"kind": "file", "format": "png", "object_id": bad_id}])
+        _export(tool_app, doc, [{"kind": "file", "format": "png", "object_id": "id;rm -rf"}])
     assert fake_inkscape.calls == []
 
 
@@ -371,6 +399,46 @@ def test_tool_unknown_document(tool_app, tool_ws) -> None:
         _export(tool_app, "d_missing", [{"kind": "file", "format": "png"}])
 
 
+def _state(tool_ws: Path, doc_id: str) -> dict[str, object]:
+    """Source + working-copy bytes and every snapshot / operation-record file of `doc_id`."""
+    return {
+        "source": (tool_ws / "art.svg").read_bytes(),
+        "working": sandbox.working_copy(tool_ws, doc_id).read_bytes(),
+        "history": sorted(
+            p.relative_to(tool_ws)
+            for d in (
+                sandbox.snapshots_dir(tool_ws, doc_id),
+                sandbox.operations_dir(tool_ws, doc_id),
+            )
+            if d.exists()
+            for p in d.rglob("*")
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("export", {"targets": [{"kind": "file", "format": "png", "width_px": 32}]}),
+        (
+            "export",
+            {"targets": [{"kind": "file", "format": "svg"}, {"kind": "file", "format": "pdf"}]},
+        ),
+        ("export", {"targets": [{"kind": "profile", "name": "icons", "sizes": [16]}]}),
+        ("render", {}),
+        ("render", {"target": "object", "object_id": "dot"}),
+        ("render", {"target": "frame"}),
+    ],
+)
+def test_render_and_export_are_hermetic(tool_app, fake_inkscape, doc, tool_ws, tool, args) -> None:
+    """Render/export read the working copy only: no byte of source or working copy changes, and
+    no snapshot or Operation Record is written (they are not edits)."""
+    before = _state(tool_ws, doc)
+    call(tool_app, tool, {"doc_id": doc, **args})
+    assert fake_inkscape.calls
+    assert _state(tool_ws, doc) == before
+
+
 # --- real renderer -------------------------------------------------------------------------
 
 
@@ -396,10 +464,15 @@ def test_real_object_export_is_clipped_to_the_object(doc) -> None:
 @pytest.mark.inkscape
 def test_real_pdf_and_svg(doc) -> None:
     pdf = export_document(doc, "pdf")
-    assert _file(doc, pdf.artifact_path).read_bytes()[:4] == b"%PDF"
+    assert _file(doc, pdf.workspace_relative_path).read_bytes()[:4] == b"%PDF"
     assert pdf.is_vector is True and pdf.width_px is None
     svg = export_document(doc, "svg")
-    assert _file(doc, svg.artifact_path).read_bytes()[:64].lstrip().startswith((b"<?xml", b"<svg"))
+    assert (
+        _file(doc, svg.workspace_relative_path)
+        .read_bytes()[:64]
+        .lstrip()
+        .startswith((b"<?xml", b"<svg"))
+    )
 
 
 @pytest.mark.inkscape

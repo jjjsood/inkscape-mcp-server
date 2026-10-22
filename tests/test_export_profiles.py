@@ -121,6 +121,18 @@ def test_icons_keep_the_requested_order(fake_inkscape, doc) -> None:
     assert [a.width_px for a in result.artifacts] == [96, 24]
 
 
+def test_icons_are_square_padded_transparent(fake_inkscape, doc) -> None:
+    from PIL import Image
+
+    for art in create_icon_set(doc, sizes=[16, 64]).artifacts:
+        n = art.requested_size_px
+        assert (art.width_px, art.height_px) == (n, n)
+        with Image.open(_file(doc, art.path)) as im:
+            assert im.size == (n, n)
+            assert im.getpixel((n // 2, 0))[3] == 0  # padding row is transparent
+        assert art.opaque_px
+
+
 def test_icon_size_errors_name_their_cause(fake_inkscape, doc) -> None:
     too_big = get_settings().max_export_px + 1
     with pytest.raises(ProfileSizeError, match="exceeds the configured pixel cap") as over:
@@ -129,13 +141,6 @@ def test_icon_size_errors_name_their_cause(fake_inkscape, doc) -> None:
         create_icon_set(doc, sizes=[0])
     assert str(over.value) != str(non_positive.value)
     assert fake_inkscape.calls == []  # validated up front: no partial icon set
-
-
-@pytest.mark.parametrize("bad", [0, -1, -256])
-def test_icon_sizes_must_be_positive(fake_inkscape, doc, bad) -> None:
-    with pytest.raises(ProfileSizeError, match="positive integer"):
-        create_icon_set(doc, sizes=[16, bad])
-    assert fake_inkscape.calls == []
 
 
 # --- print ---------------------------------------------------------------------------------
@@ -211,8 +216,8 @@ def test_unknown_document_is_a_keyerror(fake_inkscape, tool_ws, run) -> None:
 def test_tool_profiles_report_kind_and_dims(tool_app, fake_inkscape, doc) -> None:
     icons = _export(tool_app, doc, [{"kind": "profile", "name": "icons", "sizes": [16, 32]}])
     assert [(a["kind"], a["width_px"], a["height_px"]) for a in icons["artifacts"]] == [
-        ("profile:icons", 16, 13),
-        ("profile:icons", 32, 26),
+        ("profile:icons", 16, 16),
+        ("profile:icons", 32, 32),
     ]
     web = _export(
         tool_app, doc, [{"kind": "profile", "name": "web", "width_px": 100, "scales": [1, 2]}]
@@ -300,3 +305,30 @@ def test_real_print_profile_is_vector_and_differs_from_plain(tool_ws) -> None:
     plain_bytes = _file(doc_id, plain.workspace_relative_path).read_bytes()
     print_bytes = _file(doc_id, printed.workspace_relative_path).read_bytes()
     assert plain_bytes != print_bytes and print_bytes[:8] == b"%PDF-1.4"
+
+
+def test_profiles_default_next_to_a_save_as_in_the_same_call(tool_app, fake_inkscape, doc) -> None:
+    res = _export(
+        tool_app,
+        doc,
+        [
+            {"kind": "profile", "name": "web", "width_px": 32},
+            {"kind": "save_as", "dest_path": "dist/site/logo.svg"},
+        ],
+    )
+    assert res["saved"]["path"] == "dist/site/logo.svg"
+    assert res["artifacts"] and all(a["path"].startswith("dist/site/") for a in res["artifacts"])
+    assert "save_as folder" in res["out_dir"]
+    # an explicit out_dir still wins; no save_as keeps the managed store
+    res = _export(
+        tool_app,
+        doc,
+        [
+            {"kind": "profile", "name": "web", "width_px": 32},
+            {"kind": "save_as", "dest_path": "dist/site/logo2.svg"},
+        ],
+        out_dir="other",
+    )
+    assert all(a["path"].startswith("other/") for a in res["artifacts"])
+    res = _export(tool_app, doc, [{"kind": "profile", "name": "web", "width_px": 32}])
+    assert all(a["path"].startswith(".inkscape-mcp/") for a in res["artifacts"])

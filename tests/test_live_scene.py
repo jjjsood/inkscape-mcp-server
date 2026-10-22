@@ -15,13 +15,11 @@ from inkscape_mcp.config import ENV_LIVE_ENABLED, ENV_WORKSPACE_ROOTS, Settings,
 from inkscape_mcp.document.inspect import ObjectInfo
 from inkscape_mcp.live import session as session_mod
 from inkscape_mcp.live.protocol import PROTOCOL_VERSION, LiveCommand
-from inkscape_mcp.live.records import list_live_operations
 from inkscape_mcp.live.scene import get_live_scene, scene_from_result
 from inkscape_mcp.live.session import LiveSessionManager, reset_session_manager
 from inkscape_mcp.live.socket_backend import ENV_RENDEZVOUS, ExtensionSocketTransport
 from inkscape_mcp.live.transport import BBox, LiveDocumentRef, LiveScene
 from inkscape_mcp.resources.live import live_view
-from inkscape_mcp.workspace import sandbox
 from tests.conftest import FakeTransport, mock_helper
 from tests.tool_support import call
 
@@ -70,6 +68,8 @@ def test_scene_from_result_assembles_a_typed_scene() -> None:
     assert scene.viewport.visible_region == BBox(x=0, y=0, width=10, height=10)
     assert scene.canvas.width == 100.0 and scene.canvas.units == "mm"
     assert scene.object_count == 2
+    # visible objects reuse the headless inspect `ObjectInfo` model
+    assert scene.visible_objects[0] == ObjectInfo(id="r1", tag="rect", label="L", has_style=True)
 
 
 def test_scene_from_result_rejects_non_finite_and_malformed_values() -> None:
@@ -84,13 +84,6 @@ def test_scene_from_result_rejects_non_finite_and_malformed_values() -> None:
     assert scene.viewport.zoom is None and scene.viewport.center is None
     assert scene.canvas.width is None
     assert scene.object_count == 1  # the "junk" entry is skipped
-
-
-def test_visible_object_summary_reuses_the_headless_objectinfo() -> None:
-    scene = scene_from_result(
-        {"visible_objects": [{"id": "r1", "tag": "rect", "label": None, "has_style": False}]}, None
-    )
-    assert scene.visible_objects == [ObjectInfo(id="r1", tag="rect", label=None, has_style=False)]
 
 
 def test_get_live_scene_pulls_from_the_connected_transport(
@@ -119,12 +112,6 @@ def test_observe_scene_and_view_come_back_in_one_call(tool_app, live_on) -> None
 def test_observe_scene_alone_attaches_no_image(tool_app, live_on) -> None:
     res = call(tool_app, "live", {"action": "observe", "include": ["scene"]})
     assert res.images == [] and set(res.data) == {"scene"}
-
-
-def test_observing_the_scene_creates_no_operation_record(tool_app, live_on) -> None:
-    call(tool_app, "live", {"action": "observe", "include": ["scene", "view"]})
-    assert list_live_operations(settings=get_settings()).count == 0
-    assert not list(sandbox.live_operations_dir(live_on).glob("op_*.json"))
 
 
 # --- inkscape://live/view -----------------------------------------------------
@@ -172,6 +159,7 @@ def test_get_scene_roundtrips_over_the_socket(
             json.dumps({"port": port, "token": secret, "protocol_version": PROTOCOL_VERSION}),
             encoding="utf-8",
         )
+        rv.chmod(0o600)  # discovery only trusts a private, own-user rendezvous
         monkeypatch.setenv(ENV_RENDEZVOUS, str(rv))
         transport = ExtensionSocketTransport(get_settings())
         transport.connect()

@@ -9,7 +9,7 @@ layer (`resolve_write_path` + containment/symlink guard), registers the file via
 (working copy) and mirrors the change as an Operation Record + snapshot (ADR-004).
 
 Damage-safety (epic Done-when): the destination must be a NEW path — an existing file is refused,
-never overwritten. The SVG is written to a temp file and atomically `os.replace`d into place, so a
+never overwritten. The SVG is written to a temp file and hard-linked (no-clobber) into place, so a
 live read that fails mid-transfer (or a fault anywhere before the replace) can never partially
 overwrite or corrupt a workspace file.
 """
@@ -29,11 +29,13 @@ from inkscape_mcp.logging_setup import get_logger, log_file_io
 from inkscape_mcp.operations import OperationStatus, new_operation, update_operation
 from inkscape_mcp.registry import Registry, get_registry
 from inkscape_mcp.snapshots import create_snapshot
+from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.limits import LimitExceeded
 from inkscape_mcp.workspace.paths import (
     SandboxViolation,
     anchor_to_root,
     ensure_parent_within_sandbox,
+    in_state_dir,
     owning_root,
     resolve_write_path,
 )
@@ -72,9 +74,9 @@ def sync_live_to_workspace(
     """Persist the live document SVG to `dest_path` as a new tracked workspace document.
 
     Order (fail-safe): resolve+containment-check the destination → refuse if it already exists →
-    require the transport and read SVG → atomic temp-write+replace → register via `open_document` →
-    Operation Record (medium) + snapshot → mark applied. Raises `LiveSyncError` on any failure;
-    nothing partial is left behind.
+    require the transport and read SVG → temp-write + no-clobber link → register via
+    `open_document` → Operation Record (medium) + snapshot → mark applied. Raises `LiveSyncError`
+    on any failure; nothing partial is left behind.
 
     Destination validation runs BEFORE the transport is required, so an out-of-sandbox or
     symlinked `dest_path` is rejected with `path rejected: outside workspace` even when DISCONNECTED
@@ -90,6 +92,9 @@ def sync_live_to_workspace(
     # an out-of-sandbox dest is rejected by `resolve_write_path` below — and this happens BEFORE any
     # transport/live work, so the guard holds regardless of connection state.
     anchored = anchor_to_root(dest_path, s)
+    state_dir_msg = f"cannot write into the managed {sandbox.STATE_DIR} directory"
+    if in_state_dir(Path(anchored), s.workspace_roots):  # before any mkdir: nothing created
+        raise LiveSyncError(state_dir_msg)
 
     # 2. Create any missing parent dirs INSIDE the sandbox, then resolve the destination
     #    through the sandbox write-path choke point (§3 / sec.12). Parent creation proves
@@ -102,10 +107,14 @@ def sync_live_to_workspace(
         resolved = resolve_write_path(anchored, s)
     except SandboxViolation as exc:
         raise LiveSyncError(exc.args[0]) from exc
+    if in_state_dir(resolved, s.workspace_roots):
+        raise LiveSyncError(state_dir_msg)
 
     # 3. Never overwrite an existing file (damage-safety): sync only ever creates a new file. The
     #    atomic O_EXCL write below is the authoritative guard; this is the fast, friendly pre-check.
-    if resolved.exists():
+    #    `lexists`: an in-sandbox (even dangling) symlink at the name is an existing entry too — the
+    #    final `os.replace` would otherwise silently destroy it.
+    if os.path.lexists(resolved):
         raise LiveSyncError("destination already exists; live sync never overwrites")
 
     # 4. Require a live transport and read the live SVG. If either fails, the already-validated
@@ -120,12 +129,12 @@ def sync_live_to_workspace(
     if len(data) > s.max_input_bytes:
         raise LiveSyncError("live document exceeds the configured size limit")
 
-    # 5. Atomic write: temp file in the same dir, then os.replace into place. Open the temp file
-    #    with O_CREAT|O_EXCL|O_NOFOLLOW so the write can never follow a symlink planted at the
+    # 5. Atomic write: temp file in the same dir, then a no-clobber link into place. Open the temp
+    #    file with O_CREAT|O_EXCL|O_NOFOLLOW so the write can never follow a symlink planted at the
     #    (server-minted) temp name and never clobber a pre-existing file — defence in depth behind
     #    resolve_write_path's containment + symlink guard (sec.12 / SV5; mirrors tools/save.py).
     tmp = resolved.with_name(f"{resolved.name}.{secrets.token_hex(4)}.tmp")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)  # Windows: none
     try:
         fd = os.open(tmp, flags, 0o644)
         try:
@@ -134,10 +143,23 @@ def sync_live_to_workspace(
         except OSError:
             tmp.unlink(missing_ok=True)
             raise
-        # rename(2) replaces the destination NAME and does not follow a symlink at `resolved`: a
-        # symlink raced into place is destroyed (not written through), so the file always lands in
-        # the sandbox-validated location — no escape via the replace (sec.12).
-        tmp.replace(resolved)
+        # No-clobber placement: link(2) fails with EEXIST if anything (file or symlink) appeared at
+        # `resolved` since the lexists pre-check, so nothing raced in is ever overwritten.
+        try:
+            os.link(tmp, resolved)
+        except FileExistsError:
+            tmp.unlink(missing_ok=True)
+            raise LiveSyncError("destination already exists; live sync never overwrites") from None
+        except OSError:
+            # Hard links unsupported (e.g. FAT/some network FS): fall back to rename after a
+            # re-check. rename does not follow a symlink at the target name (sec.12).
+            if os.path.lexists(resolved):
+                tmp.unlink(missing_ok=True)
+                raise LiveSyncError(
+                    "destination already exists; live sync never overwrites"
+                ) from None
+            tmp.replace(resolved)
+        tmp.unlink(missing_ok=True)
     except OSError as exc:
         tmp.unlink(missing_ok=True)
         raise LiveSyncError("failed to write the synced document") from exc
@@ -146,6 +168,7 @@ def sync_live_to_workspace(
     try:
         entry = reg.open_document(resolved)
     except (SandboxViolation, LimitExceeded, ValueError) as exc:
+        resolved.unlink(missing_ok=True)  # nothing partial left behind
         raise LiveSyncError("synced document could not be registered") from exc
 
     record = new_operation(

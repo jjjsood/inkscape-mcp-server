@@ -78,7 +78,7 @@ from inkscape_mcp.render.cli import (
     RenderResult,
     render_preview,
 )
-from inkscape_mcp.snapshots import create_snapshot
+from inkscape_mcp.snapshots import SnapshotInfo, _read_index, _write_index, create_snapshot
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.limits import LimitExceeded
 from inkscape_mcp.workspace.risk import RiskClass
@@ -131,15 +131,6 @@ class EditResult(BaseModel):
     preview_after: str | None = None
 
 
-def _relative_to_workspace(workspace_dir: Path, out: Path) -> str:
-    """Return `out` as a POSIX path relative to the document workspace dir (never absolute).
-
-    Mirrors `render/cli.py::_relative_to_workspace`. The op-specific preview is always built
-    under the per-document workspace dir, so a path outside it is a construction bug.
-    """
-    return out.relative_to(workspace_dir).as_posix()
-
-
 def _render_op_preview(
     doc_id: str,
     *,
@@ -171,17 +162,18 @@ def _render_op_preview(
         )
         return None
 
-    # `result.artifact_path` is relative to the workspace ROOT (one-location contract:
+    # `result.workspace_relative_path` is relative to the workspace ROOT (one-location contract:
     # it carries the `.inkscape-mcp/documents/<doc_id>/...` base), so resolve it against `root`,
     # NOT `workspace_dir` — joining to the per-doc dir would double the base and miss the file.
-    produced = root / result.artifact_path
+    produced = root / result.workspace_relative_path
     preview_dir = sandbox.artifacts_dir(root, doc_id) / "preview"
     preview_dir.mkdir(parents=True, exist_ok=True)
     dest = preview_dir / f"op-{operation_id}-{phase}.png"
 
     # Internal, registry-derived paths only (operation_id is server-minted) — never client input.
     shutil.copyfile(produced, dest)
-    rel = _relative_to_workspace(workspace_dir, dest)
+    # The preview is always built under the per-document workspace dir (never absolute out).
+    rel = dest.relative_to(workspace_dir).as_posix()
     log_file_io(
         _logger,
         action="op_preview",
@@ -204,6 +196,39 @@ def _canonical_bytes(tree: etree._ElementTree) -> bytes:
     bytes and is correctly reported as a no-op.
     """
     return etree.tostring(tree, xml_declaration=True, encoding="UTF-8")
+
+
+def _drop_orphan_snapshot(doc_id: str, root: Path, pre: SnapshotInfo) -> None:
+    """Remove the pre-change snapshot of a failed write (best-effort, never raises).
+
+    `write_working_tree` is atomic, so the working copy is still the pre-change bytes; the snapshot
+    is then an orphan with no applied record pointing at it.
+    """
+    try:
+        entries = [e for e in _read_index(root, doc_id) if e.snapshot_id != pre.snapshot_id]
+        _write_index(root, doc_id, entries)
+        (sandbox.snapshots_dir(root, doc_id) / pre.file).unlink(missing_ok=True)
+    except Exception:
+        _logger.exception("failed to drop orphan snapshot", extra={"doc_id": doc_id})
+
+
+#: Max length of the "before: ..." snapshot label (history entries stay one readable line).
+_LABEL_MAX = 120
+
+
+def snapshot_label(tool: str, summary: str) -> str:
+    """Self-explanatory label for the pre-edit snapshot: what the edit AFTER it did.
+
+    `summary` is `applied N op(s) | op: detail | ...`; the count prefix is dropped and the rest
+    truncated, e.g. `before: delete: removed 1 element(s) | create_rect: ...`.
+    """
+    body = (
+        summary.split(" | ", 1)[1]
+        if summary.startswith("applied ") and " | " in summary
+        else summary
+    )
+    label = f"before: {body or tool}"
+    return label if len(label) <= _LABEL_MAX else label[: _LABEL_MAX - 3].rstrip() + "..."
 
 
 def apply_edit(
@@ -316,13 +341,24 @@ def apply_edit(
     # 5. Pre-mutation snapshot: on-disk is still pre-change, so this is the correct revert target.
     pre = create_snapshot(
         doc_id,
-        label=f"pre-{tool}",
+        label=snapshot_label(tool, summary),
         operation_id=record.operation_id,
         registry=registry,
     )
 
-    # 6. Persist the mutation: the working copy is now post-change.
-    write_working_tree(entry, tree)
+    # 6. Persist the mutation: the working copy is now post-change. `write_working_tree` is atomic
+    #    (temp + os.replace), so a failure (disk full, permission, cancellation, …) leaves the
+    #    pre-change working copy intact. Drop the now-orphan snapshot, discard the record, and
+    #    re-raise the original error (BaseException: a cancelled write is rolled back too).
+    try:
+        write_working_tree(entry, tree)
+    except BaseException:
+        _drop_orphan_snapshot(doc_id, root, pre)
+        try:
+            update_operation(record, registry, status=OperationStatus.DISCARDED)
+        except Exception:
+            _logger.exception("failed to mark operation discarded", extra={"doc_id": doc_id})
+        raise
 
     # 7. AFTER preview (unless `edit_previews=none`): the on-disk working copy now reflects the
     #    mutation. Best-effort.

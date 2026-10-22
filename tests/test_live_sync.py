@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -84,16 +85,6 @@ def test_sync_never_overwrites_existing_file(
     assert dest.read_bytes() == b"ORIGINAL"
 
 
-def test_sync_rejects_path_outside_workspace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    mgr, settings = _connected(tmp_path, monkeypatch)
-    reg = Registry(settings)
-    outside = tmp_path.parent / "escape.svg"
-    with pytest.raises(LiveSyncError):
-        sync_live_to_workspace(str(outside), manager=mgr, registry=reg, settings=settings)
-
-
 def test_render_view_writes_png_under_live_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -129,19 +120,6 @@ def test_relative_dest_anchors_to_workspace_root(
     assert not Path(result.saved_path).is_absolute()
 
 
-def test_relative_dest_into_existing_subdir_anchors_to_workspace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    mgr, settings = _connected(tmp_path, monkeypatch)
-    reg = Registry(settings)
-    (tmp_path / "out").mkdir()
-    monkeypatch.chdir(tmp_path.parent)
-
-    result = sync_live_to_workspace("out/nested.svg", manager=mgr, registry=reg, settings=settings)
-    assert (tmp_path / "out" / "nested.svg").is_file()
-    assert result.saved_path == "out/nested.svg"
-
-
 # ---: live sync auto-creates missing parent dirs inside the sandbox ----------
 
 
@@ -156,6 +134,7 @@ def test_sync_creates_missing_parent_dir_in_sandbox(
     mgr, settings = _connected(tmp_path, monkeypatch)
     reg = Registry(settings)
     assert not (tmp_path / "out").exists()
+    monkeypatch.chdir(tmp_path.parent)  # nested dest anchors to the workspace, not the CWD
 
     result = sync_live_to_workspace(
         "out/deep/synced.svg", manager=mgr, registry=reg, settings=settings
@@ -182,19 +161,6 @@ def test_sync_missing_parent_escape_rejected_creates_nothing(
     assert str(tmp_path) not in str(exc.value)
     # Nothing was created outside the sandbox.
     assert not (tmp_path.parent / "escape-dir").exists()
-
-
-def test_relative_dest_escaping_workspace_is_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # A relative dest with `..` that escapes the workspace must still be rejected after anchoring.
-    mgr, settings = _connected(tmp_path, monkeypatch)
-    reg = Registry(settings)
-    with pytest.raises(LiveSyncError) as exc:
-        sync_live_to_workspace("../escape.svg", manager=mgr, registry=reg, settings=settings)
-    assert "outside workspace" in str(exc.value)
-    # No host path leaks in the public message.
-    assert str(tmp_path) not in str(exc.value)
 
 
 def test_absolute_out_of_sandbox_dest_still_rejected_no_leak(
@@ -247,3 +213,103 @@ def test_relative_escape_dest_rejected_when_disconnected(
     assert "outside workspace" in str(exc.value)
     assert "no live session" not in str(exc.value)
     assert str(tmp_path) not in str(exc.value)
+
+
+# --- size cap + symlinked destination ------------------------------------------
+
+
+def test_sync_refuses_live_svg_over_input_cap_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mgr, settings = _connected(tmp_path, monkeypatch)
+    settings = settings.model_copy(update={"max_input_bytes": 8})
+    reg = Registry(settings)
+    before = set(tmp_path.rglob("*"))
+
+    with pytest.raises(LiveSyncError, match="size limit"):
+        sync_live_to_workspace("big.svg", manager=mgr, registry=reg, settings=settings)
+
+    assert set(tmp_path.rglob("*")) == before  # no dest, no temp file, no record
+
+
+@pytest.mark.parametrize("target_inside", [False, True], ids=["outside", "inside"])
+def test_sync_refuses_symlinked_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_inside: bool
+) -> None:
+    mgr, settings = _connected(tmp_path, monkeypatch)
+    reg = Registry(settings)
+    base = tmp_path if target_inside else tmp_path.parent
+    target = base / f"{tmp_path.name}-target.svg"
+    link = tmp_path / "link.svg"
+    link.symlink_to(target)  # dangling: a write through it would create `target`
+
+    with pytest.raises(LiveSyncError):
+        sync_live_to_workspace(str(link), manager=mgr, registry=reg, settings=settings)
+
+    assert link.is_symlink()
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("dest", [".inkscape-mcp/x.svg", ".INKSCAPE-MCP/new/x.svg"])
+def test_sync_refuses_state_dir_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dest: str
+) -> None:
+    mgr, settings = _connected(tmp_path, monkeypatch)
+    before = set(tmp_path.rglob("*"))
+    with pytest.raises(LiveSyncError, match="managed"):
+        sync_live_to_workspace(dest, manager=mgr, registry=Registry(settings), settings=settings)
+    assert set(tmp_path.rglob("*")) == before
+
+
+def test_sync_does_not_clobber_file_raced_in_after_precheck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mgr, settings = _connected(tmp_path, monkeypatch)
+    dest = tmp_path / "raced.svg"
+    transport = mgr.require_transport()
+    real_get = transport.get_document_svg
+
+    def racing_get() -> str:
+        dest.write_bytes(b"RACED")  # appears between the lexists check and placement
+        return real_get()
+
+    monkeypatch.setattr(transport, "get_document_svg", racing_get)
+    with pytest.raises(LiveSyncError, match="already exists"):
+        sync_live_to_workspace(
+            str(dest), manager=mgr, registry=Registry(settings), settings=settings
+        )
+    assert dest.read_bytes() == b"RACED"
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_sync_falls_back_to_replace_without_hardlinks_or_nofollow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mgr, settings = _connected(tmp_path, monkeypatch)
+    monkeypatch.delattr(os, "O_NOFOLLOW")
+
+    def no_link(src: object, dst: object) -> None:
+        raise PermissionError("hard links unsupported")
+
+    monkeypatch.setattr(os, "link", no_link)
+    result = sync_live_to_workspace(
+        "fb.svg", manager=mgr, registry=Registry(settings), settings=settings
+    )
+    assert (tmp_path / "fb.svg").read_text().startswith("<svg")
+    assert result.saved_path == "fb.svg"
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_sync_removes_file_when_registration_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mgr, settings = _connected(tmp_path, monkeypatch)
+    reg = Registry(settings)
+
+    def boom(path: object) -> None:
+        raise ValueError("bad")
+
+    monkeypatch.setattr(reg, "open_document", boom)
+    with pytest.raises(LiveSyncError, match="registered"):
+        sync_live_to_workspace("reg.svg", manager=mgr, registry=reg, settings=settings)
+    assert not (tmp_path / "reg.svg").exists()

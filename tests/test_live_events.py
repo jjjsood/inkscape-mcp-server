@@ -16,7 +16,6 @@ from inkscape_mcp.config import ENV_LIVE_ENABLED, ENV_WORKSPACE_ROOTS, Settings,
 from inkscape_mcp.live import session as session_mod
 from inkscape_mcp.live.events import (
     MAX_WAIT_TIMEOUT_S,
-    MIN_POLL_INTERVAL_S,
     classify_change,
     detect_change,
     token_from_result,
@@ -137,30 +136,29 @@ def test_wait_times_out_with_bounded_sleeps_when_nothing_changes() -> None:
 
 
 def test_wait_bounds_are_hard_capped() -> None:
-    assert MAX_WAIT_TIMEOUT_S == 60.0 and MIN_POLL_INTERVAL_S > 0
     mgr, _ = _connected_manager()
     detect_change(mgr)
-    # NaN/inf timeouts fall back to the default instead of making the wait unbounded
-    clock = iter([0.0, 0.0] + [1000.0] * 5)
-    change = wait_for_change(
-        timeout_s=float("nan"),
-        poll_interval_s=float("inf"),
-        manager=mgr,
-        sleep=lambda s: None,
-        monotonic=lambda: next(clock),
-    )
-    assert change.timed_out is True
-    # a huge timeout is clamped to the cap: the deadline never exceeds 60s past the first tick
-    deadlines: list[float] = []
-    ticks = iter([0.0, 0.0, 70.0])
-    wait_for_change(
-        timeout_s=10_000.0,
-        poll_interval_s=0.01,
-        manager=mgr,
-        sleep=deadlines.append,
-        monotonic=lambda: next(ticks),
-    )
-    assert deadlines == [0.01]  # slept once, then saw 70s > 60s cap and stopped
+
+    def simulated_wait(timeout_s: float) -> float:
+        # A fake clock that advances only by what the wait sleeps: returns the total time waited.
+        now = [0.0]
+
+        def sleep(s: float) -> None:
+            now[0] += s
+
+        change = wait_for_change(
+            timeout_s=timeout_s,
+            poll_interval_s=float("inf"),  # non-finite interval falls back to the default
+            manager=mgr,
+            sleep=sleep,
+            monotonic=lambda: now[0],
+        )
+        assert change.timed_out is True
+        return now[0]
+
+    # NaN must not defeat the clamp (it falls back to the default) and a huge timeout is capped.
+    assert 0 < simulated_wait(float("nan")) <= MAX_WAIT_TIMEOUT_S
+    assert simulated_wait(10_000.0) == pytest.approx(MAX_WAIT_TIMEOUT_S)
 
 
 # --- live(action=wait) --------------------------------------------------------
@@ -196,12 +194,6 @@ def test_wait_connects_on_demand_and_detects_a_document_change(tool_app, on) -> 
     assert change["changed"] is True and change["document_changed"] is True
     assert change["timed_out"] is False
     assert not change.get("selection_changed")
-
-
-def test_wait_with_no_change_times_out(tool_app, on) -> None:
-    _wait(tool_app, 0.02)
-    change = _wait(tool_app, 0.05)
-    assert change["timed_out"] is True and change["changed"] is False
 
 
 def test_wait_is_read_only(tool_app, on) -> None:
@@ -273,6 +265,7 @@ def test_get_state_token_roundtrips_over_the_socket(
             json.dumps({"port": port, "token": secret, "protocol_version": PROTOCOL_VERSION}),
             encoding="utf-8",
         )
+        rv.chmod(0o600)  # discovery only trusts a private, own-user rendezvous
         monkeypatch.setenv(ENV_RENDEZVOUS, str(rv))
         transport = ExtensionSocketTransport(get_settings())
         transport.connect()

@@ -16,9 +16,11 @@ fastmcp-patterns error model); the offending raw path is kept only in the privat
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 from inkscape_mcp.config import Settings, get_settings
+from inkscape_mcp.workspace.sandbox import STATE_DIR
 
 
 class SandboxViolation(Exception):
@@ -59,6 +61,26 @@ def owning_root(p: Path, roots: list[Path]) -> Path | None:
         except ValueError:
             continue
     return None
+
+
+def in_state_dir(path: Path, roots: list[Path]) -> bool:
+    """True when `path` lies inside the managed `.inkscape-mcp/` state tree of ANY root.
+
+    Checks EVERY containing root (nested roots `/ws` + `/ws/sub` must both be tested, not just the
+    first match) and compares the state-dir component case-insensitively so `.INKSCAPE-MCP` on a
+    case-insensitive filesystem is caught too. Shared write guard (sec.12): callers pass the
+    lexical anchored dest before any mkdir AND the resolved real path after resolution.
+    """
+    for root in roots:
+        try:
+            if os.path.commonpath([str(root), str(path)]) != str(root):
+                continue
+        except ValueError:
+            continue
+        parts = Path(path).relative_to(root).parts
+        if parts and parts[0].casefold() == STATE_DIR.casefold():
+            return True
+    return False
 
 
 def anchor_to_root(raw: str | Path, settings: Settings | None = None) -> str:
@@ -148,6 +170,13 @@ def ensure_parent_within_sandbox(anchored: str | Path, settings: Settings | None
 
     missing = parent.relative_to(existing).parts
     if missing:
+        # Check the RESOLVED ancestor + tail: a lexical check misses an in-sandbox symlink
+        # (`link -> .inkscape-mcp`) that would otherwise get `.inkscape-mcp/new/` created.
+        if in_state_dir(resolved_existing.joinpath(*missing), s.workspace_roots):
+            raise SandboxViolation(
+                f"cannot write into the managed {STATE_DIR} directory",
+                detail=f"dest {anchored_str!r} parent resolves into the state dir",
+            )
         _safe_mkdir_chain(resolved_existing, missing)
 
 
@@ -159,7 +188,12 @@ def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
     `O_RDONLY|O_DIRECTORY|O_NOFOLLOW`, so if any component is (or is raced into) a symlink the
     descend `open` fails with `ELOOP`/`ENOTDIR` and creation aborts — the side-effect can never
     escape the base dir. Mirrors `render/cli.py::_safe_mkdir_chain`/`document/save.py`.
+
+    Platforms without `dir_fd` / `O_DIRECTORY` (Windows) take the portable path-based branch.
     """
+    if os.mkdir not in os.supports_dir_fd or not hasattr(os, "O_DIRECTORY"):
+        _portable_mkdir_chain(base_real_dir, components)
+        return
     dir_fd = os.open(base_real_dir, os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in components:
@@ -184,6 +218,39 @@ def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
             os.close(old_fd)
     finally:
         os.close(dir_fd)
+
+
+def _portable_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
+    """Path-based fallback of `_safe_mkdir_chain` for platforms without `dir_fd` (Windows).
+
+    Per component: mkdir, then `lstat` it and refuse a symlink / reparse point / non-directory
+    before descending, so a pre-planted link is never traversed.
+    """
+    # ponytail: lstat-then-descend is not atomic like the dir_fd branch; a link raced in between
+    # can still be followed. Upgrade path: Windows handle-relative creation (NtCreateFile).
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    cur = base_real_dir
+    for part in components:
+        if part in ("", ".", ".."):
+            raise SandboxViolation(
+                "path rejected: invalid filename",
+                detail=f"unsafe dest component {part!r}",
+            )
+        cur = cur / part
+        try:
+            os.mkdir(cur)
+        except FileExistsError:
+            pass
+        st = os.lstat(cur)
+        if (
+            stat.S_ISLNK(st.st_mode)
+            or not stat.S_ISDIR(st.st_mode)
+            or getattr(st, "st_file_attributes", 0) & reparse
+        ):
+            raise SandboxViolation(
+                "path rejected: outside workspace",
+                detail=f"dest component {part!r} is not a real directory",
+            )
 
 
 def _reject_empty_or_nul(raw: str | Path) -> str:

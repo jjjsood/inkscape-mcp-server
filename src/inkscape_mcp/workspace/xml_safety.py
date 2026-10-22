@@ -12,8 +12,8 @@ from pathlib import Path
 
 from lxml import etree
 
-from inkscape_mcp.config import Settings
-from inkscape_mcp.workspace.limits import check_input_size
+from inkscape_mcp.config import Settings, resolve_settings
+from inkscape_mcp.workspace.limits import check_input_bytes_size, check_input_size
 
 
 class UnsafeXMLError(Exception):
@@ -54,7 +54,7 @@ def parse_svg_bytes(data: bytes) -> etree._ElementTree:
     return etree.ElementTree(root)
 
 
-def parse_svg_string(text: str) -> etree._ElementTree:
+def parse_svg_string(text: str, settings: Settings | None = None) -> etree._ElementTree:
     """Parse an SVG/XML STRING with the safe parser; raise `UnsafeXMLError` on failure.
 
     The string counterpart of :func:`parse_svg_bytes` for agent-composed SVG that arrives as a
@@ -62,9 +62,15 @@ def parse_svg_string(text: str) -> etree._ElementTree:
     the SAME normative hardened parser (XXE off, no network, no entity expansion, huge_tree off), so
     no string variant can ever bypass the §4 safety configuration. A leading XML declaration with an
     explicit encoding is tolerated (lxml rejects an encoding declaration on a `str`, so the encode
-    is mandatory). The error message is stable and carries no host path.
+    is mandatory). The error message is stable and carries no host path. The encoded size is checked
+    against `max_input_bytes` BEFORE any parse (§4); `LimitExceeded` if over the cap.
     """
-    return parse_svg_bytes(text.encode("utf-8"))
+    try:
+        data = text.encode("utf-8")
+    except UnicodeEncodeError as exc:  # lone surrogates cannot be encoded
+        raise UnsafeXMLError("failed to parse SVG: text is not valid Unicode") from exc
+    check_input_bytes_size(data, settings)
+    return parse_svg_bytes(data)
 
 
 def parse_svg_file(path: Path, settings: Settings | None = None) -> etree._ElementTree:
@@ -74,5 +80,8 @@ def parse_svg_file(path: Path, settings: Settings | None = None) -> etree._Eleme
     `LimitExceeded` if the file is over the input cap.
     """
     check_input_size(path, settings)
-    data = path.read_bytes()
+    # Bounded read: the file may have grown since the stat, so never read past cap + 1.
+    with path.open("rb") as fh:
+        data = fh.read(resolve_settings(settings).max_input_bytes + 1)
+    check_input_bytes_size(data, settings)
     return parse_svg_bytes(data)

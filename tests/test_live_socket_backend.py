@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -26,6 +30,7 @@ def _write_rendezvous(path: Path, port: int, token: str, version: int = PROTOCOL
         json.dumps({"port": port, "token": token, "protocol_version": version}),
         encoding="utf-8",
     )
+    path.chmod(0o600)  # discovery only trusts files private to the current user
 
 
 @pytest.fixture
@@ -100,6 +105,10 @@ def test_discover_rendezvous_skips_malformed_and_version_mismatch(
     monkeypatch.setenv(ENV_RENDEZVOUS, str(rv))
 
     rv.write_text("not json", encoding="utf-8")
+    rv.chmod(0o600)
+    assert discover_rendezvous(settings) is None
+
+    rv.write_text("[" * 50_000, encoding="utf-8")  # deep nesting -> RecursionError, still skipped
     assert discover_rendezvous(settings) is None
 
     _write_rendezvous(rv, 5000, "tok", version=PROTOCOL_VERSION + 1)
@@ -178,3 +187,102 @@ def test_install_helper_copies_both_files_and_is_detected(tmp_path: Path) -> Non
     # The data dir's parent is what `is_helper_installed` scans (it appends "extensions/").
     assert is_helper_installed([str(tmp_path)]) is True
     assert is_helper_installed([str(tmp_path / "nowhere")]) is False
+
+
+def test_discover_rendezvous_skips_non_private_and_symlinked_files(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = tmp_path / "real.json"
+    _write_rendezvous(real, 5000, "tok")
+    rv = tmp_path / "rv.json"
+    monkeypatch.setenv(ENV_RENDEZVOUS, str(rv))
+
+    rv.symlink_to(real)  # a planted symlink must not be followed
+    assert discover_rendezvous(settings) is None
+
+    rv.unlink()
+    _write_rendezvous(rv, 5000, "tok")
+    rv.chmod(0o644)  # group/world-readable → untrusted
+    assert discover_rendezvous(settings) is None
+
+
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX owner check")
+def test_discover_rendezvous_skips_file_owned_by_another_user(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rv = tmp_path / "rv.json"
+    monkeypatch.setenv(ENV_RENDEZVOUS, str(rv))
+    _write_rendezvous(rv, 5000, "tok")
+    assert discover_rendezvous(settings) is not None
+    uid = os.getuid()
+    monkeypatch.setattr(os, "getuid", lambda: uid + 1)
+    assert discover_rendezvous(settings) is None
+
+
+def _load_helper(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    fake = types.ModuleType("inkex")
+    fake.EffectExtension = object  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "inkex", fake)
+    src = Path(__file__).parents[1] / "src/inkscape_mcp/live/helper_extension/inkscape_mcp_live.py"
+    spec = importlib.util.spec_from_file_location("_helper_under_test", src)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_helper_rendezvous_write_replaces_planted_file_and_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    helper = _load_helper(monkeypatch)
+    rv = tmp_path / "rv.json"
+    monkeypatch.setenv(ENV_RENDEZVOUS, str(rv))
+
+    rv.write_text("planted", encoding="utf-8")
+    rv.chmod(0o666)
+    helper.InkscapeMcpLive._write_rendezvous(None, 4321, "secret")
+    assert rv.stat().st_mode & 0o777 == 0o600
+    assert json.loads(rv.read_text(encoding="utf-8"))["token"] == "secret"
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep", encoding="utf-8")
+    rv.unlink()
+    rv.symlink_to(victim)
+    helper.InkscapeMcpLive._write_rendezvous(None, 4321, "secret")
+    assert not rv.is_symlink()
+    assert victim.read_text(encoding="utf-8") == "keep"
+
+    assert helper._token_ok("secret", "secret")
+    assert not helper._token_ok("nope", "secret")
+    assert not helper._token_ok(None, "secret")
+
+
+@pytest.mark.parametrize("launch_ok", [False, True], ids=["popen-fails", "rendezvous-found"])
+def test_arm_socket_helper_removes_its_temp_doc(
+    settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, launch_ok: bool
+) -> None:
+    import tempfile
+
+    from inkscape_mcp.live import socket_backend
+
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmpdir))
+    rv = tmp_path / "rv.json"
+    monkeypatch.setenv(ENV_RENDEZVOUS, str(rv))
+    monkeypatch.setattr(socket_backend.shutil, "which", lambda name: "/usr/bin/inkscape")
+    monkeypatch.setattr(socket_backend, "_display_available", lambda: True)
+
+    def fake_popen(argv: list[str], **_kw: object) -> None:
+        assert Path(argv[-1]).is_file()  # the doc exists while Inkscape is launching
+        if not launch_ok:
+            raise OSError("no exec")
+        _write_rendezvous(rv, 4321, "tok")
+
+    monkeypatch.setattr(socket_backend.subprocess, "Popen", fake_popen)
+    if launch_ok:
+        assert socket_backend.arm_socket_helper(settings).port == 4321
+    else:
+        with pytest.raises(socket_backend.SocketArmError):
+            socket_backend.arm_socket_helper(settings)
+    assert list(tmpdir.glob("inkscape-mcp-arm-*.svg")) == []

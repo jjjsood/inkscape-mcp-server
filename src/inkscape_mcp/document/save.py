@@ -13,8 +13,8 @@ directories are CREATED first — but only after a TOCTOU-safe containment proof
 existing ancestor is resolved (symlinks followed) and `commonpath`-checked against the
 configured roots BEFORE any side-effect, then the missing tail is created relative to a
 directory file descriptor on that validated ancestor, descending with `O_NOFOLLOW` so a symlink
-raced into the path cannot redirect the `mkdir` outside the sandbox (mirrors the proven
-`render/cli.py::_resolve_out_dir` pattern). A `..`-escaping or absolute-outside dest still
+raced into the path cannot redirect the `mkdir` outside the sandbox (see
+`workspace/paths.py::ensure_parent_within_sandbox`). A `..`-escaping or absolute-outside dest still
 creates nothing and is rejected with `path rejected: outside workspace`. The destination is
 then validated through the §3 write-path choke point (`resolve_write_path`), which resolves the
 parent strictly (following symlinks), containment-checks it, and — when the final component
@@ -49,7 +49,9 @@ from inkscape_mcp.validate import ValidationReport, validate_document
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.paths import (
     SandboxViolation,
-    is_contained,
+    anchor_to_root,
+    ensure_parent_within_sandbox,
+    in_state_dir,
     owning_root,
     resolve_write_path,
 )
@@ -66,12 +68,14 @@ class SaveResult(BaseModel):
     leaking the on-disk layout. `overwritten` is True iff the destination already existed on
     disk before the save (a HIGH-risk, approval-gated overwrite). `pre_validation` and
     `post_validation` are the `validate_document` reports from before and after the write.
+    `bytes` is the size of the written file.
     """
 
     doc_id: str
     saved_path: str
     operation_id: str
     overwritten: bool
+    bytes: int
     pre_validation: ValidationReport
     post_validation: ValidationReport
 
@@ -91,6 +95,9 @@ def _managed_paths(registry: Registry) -> set[Path]:
         source = Path(entry.root) / entry.source_path
         protected.add(_safe_resolve(source))
     return protected
+
+
+_STATE_DIR_MSG = f"cannot write into the managed {sandbox.STATE_DIR} directory"
 
 
 def _safe_resolve(p: Path) -> Path:
@@ -128,121 +135,6 @@ def _relative_to_root(resolved_dest: Path, entry: DocEntry) -> str:
         return resolved_dest.name
 
 
-def _anchor_dest(dest_path: str) -> str:
-    """Anchor a RELATIVE destination to the workspace root, leaving absolute dests untouched.
-
-    A relative `dest_path` (the common, friendly form) resolves against the FIRST configured
-    workspace root — the document root — so a save never lands relative to the server's process
-    CWD (SV1). An absolute dest is returned unchanged; `resolve_write_path` then enforces
-    that it still lands inside a configured root. If no workspace root is configured the raw
-    value is returned and the sandbox choke point rejects it cleanly.
-    """
-    candidate = Path(dest_path)
-    if candidate.is_absolute():
-        return dest_path
-    roots = get_settings().workspace_roots
-    if not roots:
-        return dest_path
-    return str(roots[0] / candidate)
-
-
-def _ensure_parent_dir(anchored_dest: str) -> None:
-    """Create the destination's parent directory tree if missing — TOCTOU-safe (sec.12).
-
-    `anchored_dest` is the dest already anchored to the workspace root (relative dests resolved,
-    absolute dests untouched). When the parent already exists this is a no-op; when one or more
-    leading components are missing they are created so an agent can naturally save into a fresh
-    subfolder. Containment is proven BEFORE any side-effect, mirroring the audited pattern in
-    `render/cli.py::_resolve_out_dir`/`_safe_mkdir_chain`:
-
-    1. A literal `..` anywhere in the destination is refused outright (`path rejected: outside
-       workspace`) — no directory is created.
-    2. The longest EXISTING ancestor of the parent is resolved with `strict=True` (every symlink
-       followed) and `commonpath`-checked against the configured roots. An ancestor that resolves
-       outside every root is rejected before anything is created, so a `../`- or absolute-escape
-       can never plant a directory outside the sandbox.
-    3. The missing tail is then created one component at a time relative to a directory file
-       descriptor opened on that validated-contained ancestor, descending with
-       `O_RDONLY|O_DIRECTORY|O_NOFOLLOW`; if any component is (or is raced into) a symlink the
-       descend `open` fails with `ELOOP` and creation aborts — the side-effect can never escape
-       the validated ancestor.
-
-    No host path appears in any raised message. The final-component symlink guard and the
-    `O_NOFOLLOW` write in `save_document_as` stay the authority on the destination itself; this
-    helper only ever creates the PARENT tree.
-    """
-    settings = get_settings()
-    if not settings.workspace_roots:
-        # No root configured: leave the dest for the sandbox choke point to reject cleanly.
-        return
-    parent = Path(anchored_dest).parent
-    if any(part == ".." for part in Path(anchored_dest).parts):
-        raise SandboxViolation(
-            "path rejected: outside workspace",
-            detail=f"dest_path {anchored_dest!r} contains a '..' component",
-        )
-
-    # Longest existing ancestor (PRE-CREATE CONTAINMENT): resolve + commonpath-check it BEFORE
-    # creating anything (sec.12), so an escape never reaches the mkdir side-effect.
-    existing = parent
-    while not existing.exists():
-        nxt = existing.parent
-        if nxt == existing:  # reached the filesystem root
-            break
-        existing = nxt
-    try:
-        resolved_existing = existing.resolve(strict=True)
-    except OSError as exc:
-        raise SandboxViolation(
-            "path rejected: could not resolve path",
-            detail=f"dest parent prefix resolve failed: {exc}",
-        ) from None
-    if not is_contained(resolved_existing, settings.workspace_roots):
-        raise SandboxViolation(
-            "path rejected: outside workspace",
-            detail=f"dest_path {anchored_dest!r} parent resolves outside all configured roots",
-        )
-
-    missing = parent.relative_to(existing).parts
-    if missing:
-        _safe_mkdir_chain(resolved_existing, missing)
-
-
-def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
-    """Create `components` under `base_real_dir` one level at a time, TOCTOU-safe (sec.12).
-
-    `base_real_dir` MUST already be a resolved, sandbox-contained real directory. Each component
-    is created with `os.mkdir(..., dir_fd=...)` and then descended with
-    `O_RDONLY|O_DIRECTORY|O_NOFOLLOW`, so if any component is (or is raced into) a symlink the
-    descend `open` fails with `ELOOP`/`ENOTDIR` and creation aborts — the side-effect can never
-    escape the base dir. Mirrors `render/cli.py::_safe_mkdir_chain`.
-    """
-    dir_fd = os.open(base_real_dir, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        for part in components:
-            if part in ("", ".", ".."):
-                raise SandboxViolation(
-                    "path rejected: invalid filename",
-                    detail=f"unsafe dest_path component {part!r}",
-                )
-            try:
-                os.mkdir(part, dir_fd=dir_fd)
-            except FileExistsError:
-                pass
-            try:
-                next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
-            except OSError as exc:  # ELOOP (symlink) / ENOTDIR — refuse, never follow
-                raise SandboxViolation(
-                    "path rejected: outside workspace",
-                    detail=f"dest_path component {part!r} is not a real directory: {exc}",
-                ) from None
-            # Reassign BEFORE closing so `finally` always closes the live fd even if close() raises.
-            old_fd, dir_fd = dir_fd, next_fd
-            os.close(old_fd)
-    finally:
-        os.close(dir_fd)
-
-
 def save_document_as(
     doc_id: str,
     dest_path: str,
@@ -269,9 +161,12 @@ def save_document_as(
     #    inside a configured root. A containment failure in EITHER step raises SandboxViolation,
     #    which is mapped to the safe, host-path-free ToolError below — and the parent-creation
     #    step proves containment BEFORE any mkdir, so a rejected dest creates nothing.
-    anchored_dest = _anchor_dest(dest_path)
+    anchored_dest = anchor_to_root(dest_path)
+    # Before any mkdir: nothing is created in there.
+    if in_state_dir(Path(anchored_dest), get_settings().workspace_roots):
+        raise ToolError(_STATE_DIR_MSG)
     try:
-        _ensure_parent_dir(anchored_dest)
+        ensure_parent_within_sandbox(anchored_dest)
         resolved_dest = resolve_write_path(anchored_dest)
     except SandboxViolation as exc:
         _logger.error("save_document_as rejected", extra={"detail": exc.detail})
@@ -280,7 +175,10 @@ def save_document_as(
         # field pinned even if SandboxViolation's str form ever changes.
         raise ToolError(exc.args[0]) from exc
 
-    # 3. Never overwrite a managed document file (independent of the `overwrite` flag).
+    # 3. Never write into the server's state tree (any document's original / working copy /
+    #    snapshots / records) nor over a managed document file, whatever `overwrite` says.
+    if in_state_dir(_safe_resolve(resolved_dest), get_settings().workspace_roots):
+        raise ToolError(_STATE_DIR_MSG)
     if _safe_resolve(resolved_dest) in _managed_paths(registry):
         raise ToolError("cannot overwrite a managed document file")
 
@@ -294,10 +192,15 @@ def save_document_as(
     # 5. An already-existing destination is an overwrite → HIGH risk, approval-gated.
     overwritten = resolved_dest.exists()
     if overwritten:
-        if not overwrite or not approval_token:
+        if not overwrite:
             raise ToolError(
                 "destination already exists; overwriting requires overwrite=True and an "
                 "approval_token"
+            )
+        if not (approval_token and approval_token.strip()):
+            raise ToolError(
+                "destination already exists; overwrite=True also needs an approval_token "
+                "(overwriting is HIGH risk)"
             )
         risk_class = RiskClass.HIGH
     else:
@@ -325,7 +228,10 @@ def save_document_as(
     #    file is truncated (the approval-gated overwrite).
     working = sandbox.working_copy(Path(entry.root), doc_id)
     working_bytes = working.read_bytes()
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+    nofollow = getattr(os, "O_NOFOLLOW", 0)  # absent on Windows
+    if not nofollow and os.path.islink(resolved_dest):  # no O_NOFOLLOW: explicit last check
+        raise ToolError("cannot overwrite a symbolic link")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow
     try:
         fd = os.open(resolved_dest, flags, 0o644)
     except OSError as exc:
@@ -388,6 +294,7 @@ def save_document_as(
         saved_path=rel_saved,
         operation_id=record.operation_id,
         overwritten=overwritten,
+        bytes=written,
         pre_validation=pre_report,
         post_validation=post_report,
     )

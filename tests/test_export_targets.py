@@ -1,7 +1,8 @@
-"""`export`: file / profile / save_as targets, sets, dry run, budget, error context.
+"""`export`: document sets, dry-run profile projection, the shared byte budget, invalid targets.
 
 The Inkscape export engine is faked (`export_document` / `export_object` write stub files), so the
-tests exercise the tool's own logic: target routing, prefixes, aggregation and failure context.
+tests exercise the tool's own logic. Per-kind coverage lives in `test_export_files.py`,
+`test_export_profiles.py`, `test_export_batch.py` and `test_save_as.py`.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from inkscape_mcp.registry import get_registry
-from inkscape_mcp.render.cli import RenderError, RenderResult
+from inkscape_mcp.render.cli import RenderResult
 from inkscape_mcp.workspace import sandbox
 from tests.tool_support import PNG, call, open_doc
 
@@ -33,7 +34,6 @@ def engine(monkeypatch, tool_ws):
         rel = out.relative_to(root).as_posix()
         return RenderResult(
             doc_id=doc_id,
-            artifact_path=rel,
             workspace_relative_path=rel,
             format=fmt,
             width_px=width_px if fmt == "png" else None,
@@ -57,55 +57,6 @@ def _export(app, doc, targets, **kw):
     return call(app, "export", {"doc_id": doc, "targets": targets, **kw}).data
 
 
-def test_png_and_svg_in_one_call(tool_app, tool_ws, engine) -> None:
-    doc = open_doc(tool_ws)
-    data = _export(
-        tool_app,
-        doc,
-        [
-            {"kind": "file", "format": "png", "width_px": 256},
-            {"kind": "file", "format": "svg"},
-        ],
-    )
-    assert data["count"] == 2
-    assert [a["format"] for a in data["artifacts"]] == ["png", "svg"]
-    assert data["artifacts"][0]["width_px"] == 256
-    assert data["total_bytes"] == sum(a["bytes"] for a in data["artifacts"]) > 0
-    assert all(a["path"].endswith(a["format"]) for a in data["artifacts"])
-
-
-def test_object_target(tool_app, tool_ws, engine) -> None:
-    doc = open_doc(tool_ws)
-    _export(tool_app, doc, [{"kind": "file", "format": "png", "object_id": "r1"}])
-    assert engine[0][1] == "r1"
-
-
-def test_profiles(tool_app, tool_ws, engine) -> None:
-    doc = open_doc(tool_ws)
-    icons = _export(tool_app, doc, [{"kind": "profile", "name": "icons", "sizes": [16, 32]}])
-    assert [a["width_px"] for a in icons["artifacts"]] == [16, 32]
-    assert icons["artifacts"][0]["kind"] == "profile:icons"
-    web = _export(tool_app, doc, [{"kind": "profile", "name": "web", "widths": [320, 640]}])
-    assert [a["format"] for a in web["artifacts"]] == ["png", "png", "svg"]
-
-
-def test_save_as_writes_a_workspace_file(tool_app, tool_ws) -> None:
-    doc = open_doc(tool_ws)
-    data = _export(tool_app, doc, [{"kind": "save_as", "dest_path": "out/copy.svg"}])
-    assert data["saved"]["path"].endswith("copy.svg")
-    assert (tool_ws / "out" / "copy.svg").is_file()
-
-
-def test_save_as_overwrite_needs_approval(tool_app, tool_ws) -> None:
-    doc = open_doc(tool_ws)
-    (tool_ws / "existing.svg").write_bytes(b"<svg xmlns='http://www.w3.org/2000/svg'/>")
-    target = [{"kind": "save_as", "dest_path": "existing.svg", "overwrite": True}]
-    with pytest.raises(ToolError, match="approval_token"):
-        _export(tool_app, doc, target)
-    data = _export(tool_app, doc, target, approval_token="yes")
-    assert data["saved"]["overwritten"] is True
-
-
 def test_a_set_prefixes_files_with_each_doc_id(tool_app, tool_ws, engine) -> None:
     a, b = open_doc(tool_ws, "a.svg"), open_doc(tool_ws, "b.svg")
     data = _export(tool_app, [a, b], [{"kind": "file", "format": "png"}])
@@ -127,19 +78,6 @@ def test_save_as_is_rejected_for_a_set(tool_app, tool_ws) -> None:
         _export(tool_app, [a, b], [{"kind": "save_as", "dest_path": "x.svg"}])
 
 
-def test_dry_run_plans_without_writing(tool_app, tool_ws, engine) -> None:
-    doc = open_doc(tool_ws)
-    data = _export(
-        tool_app,
-        doc,
-        [{"kind": "file", "format": "png", "width_px": 128}, {"kind": "profile", "name": "web"}],
-        dry_run=True,
-    )
-    assert data["dry_run"] is True and data["within_budget"] is True
-    assert data["plan"][0]["format"] == "png" and data["projected_bytes"] > 0
-    assert engine == []
-
-
 @pytest.mark.parametrize(
     ("profile", "formats"),
     [
@@ -157,17 +95,6 @@ def test_dry_run_projects_profile_sizes(tool_app, tool_ws, engine, profile, form
     assert engine == []
 
 
-def test_dry_run_totals_add_up_across_targets(tool_app, tool_ws, engine) -> None:
-    doc = open_doc(tool_ws)
-    data = _export(
-        tool_app,
-        doc,
-        [{"kind": "file", "format": "png", "width_px": 128}, {"kind": "profile", "name": "print"}],
-        dry_run=True,
-    )
-    assert data["projected_bytes"] == sum(p["projected_bytes"] for p in data["plan"])
-
-
 def test_dry_run_rejects_what_the_real_run_would(tool_app, tool_ws, engine) -> None:
     doc = open_doc(tool_ws)
     with pytest.raises(ToolError, match="icon size"):
@@ -175,12 +102,24 @@ def test_dry_run_rejects_what_the_real_run_would(tool_app, tool_ws, engine) -> N
     assert engine == []
 
 
-def test_budget_refuses_an_oversized_batch(tool_app, tool_ws, engine) -> None:
+def test_budget_refuses_a_real_profile_export_before_writing(tool_app, tool_ws, engine) -> None:
     doc = open_doc(tool_ws)
-    with pytest.raises(ToolError, match="budget"):
-        _export(
-            tool_app, doc, [{"kind": "file", "format": "png", "width_px": 4000}], byte_budget=10
-        )
+    with pytest.raises(ToolError, match="byte budget"):
+        _export(tool_app, doc, [{"kind": "profile", "name": "icons"}], byte_budget=10)
+    assert engine == []
+    assert list(tool_ws.rglob("*.png")) == []
+
+
+def test_file_and_profile_targets_share_one_budget(tool_app, tool_ws, engine) -> None:
+    doc = open_doc(tool_ws)
+    png = {"kind": "file", "format": "png", "width_px": 128}
+    pdf = {"kind": "profile", "name": "print"}
+    alone = [_export(tool_app, doc, [t], dry_run=True)["projected_bytes"] for t in (png, pdf)]
+    budget = max(alone)  # each target fits on its own, both together do not
+    planned = _export(tool_app, doc, [png, pdf], dry_run=True, byte_budget=budget)
+    assert planned["within_budget"] is False
+    with pytest.raises(ToolError, match="byte budget"):
+        _export(tool_app, doc, [png, pdf], byte_budget=budget)
     assert engine == []
 
 
@@ -194,19 +133,3 @@ def test_invalid_targets(tool_app, tool_ws, engine) -> None:
         _export(tool_app, doc, [{"kind": "file", "format": "png", "object_id": "ghost"}])
     with pytest.raises(ToolError):
         _export(tool_app, doc, [{"kind": "nonsense"}])
-
-
-def test_failure_names_the_doc_and_target(tool_app, tool_ws, monkeypatch) -> None:
-    def boom(*_a, **_k):
-        raise RenderError("x")
-
-    monkeypatch.setattr("inkscape_mcp.render.profiles.export_document", boom)
-    doc = open_doc(tool_ws)
-    with pytest.raises(ToolError, match=rf"{doc} targets\[0\] \(profile\): render/export failed"):
-        _export(tool_app, doc, [{"kind": "profile", "name": "icons"}])
-
-
-def test_out_dir_outside_the_workspace_is_rejected(tool_app, tool_ws, engine) -> None:
-    doc = open_doc(tool_ws)
-    with pytest.raises(ToolError, match="path rejected"):
-        _export(tool_app, doc, [{"kind": "file", "format": "png"}], out_dir="../outside")

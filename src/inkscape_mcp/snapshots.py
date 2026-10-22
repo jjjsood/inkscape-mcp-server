@@ -30,8 +30,9 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
+from inkscape_mcp.config import utc_iso
 from inkscape_mcp.logging_setup import get_logger, log_file_io
 from inkscape_mcp.operations import OperationStatus, new_operation, update_operation
 from inkscape_mcp.registry import Registry, get_registry
@@ -78,13 +79,6 @@ class SnapshotInfo(BaseModel):
     size_bytes: int
 
 
-class SnapshotList(BaseModel):
-    """Ordered snapshot manifest for one document (clean tool outputSchema wrapper)."""
-
-    doc_id: str
-    snapshots: list[SnapshotInfo] = Field(default_factory=list)
-
-
 class RestoreResult(BaseModel):
     """Outcome of `restore_snapshot`: the reversibility chain links (§7) + recovery assertion.
 
@@ -99,10 +93,6 @@ class RestoreResult(BaseModel):
     pre_restore_snapshot_id: str
     restored_sha256: str
     restored_size_bytes: int
-
-
-def _utc_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _utc_timestamp() -> str:
@@ -140,11 +130,16 @@ def _write_index(root: Path, doc_id: str, entries: list[SnapshotInfo]) -> None:
     index_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"snapshots": [e.model_dump() for e in entries]}
     tmp = index_path.with_name(f"{index_path.name}.{secrets.token_hex(4)}.tmp")
-    tmp.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    tmp.replace(index_path)
+    # ponytail: no lock; concurrent writers to one doc's index are last-writer-wins.
+    try:
+        tmp.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        tmp.replace(index_path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _next_seq(entries: list[SnapshotInfo]) -> int:
@@ -196,7 +191,7 @@ def create_snapshot(
         snapshot_id=snapshot_id,
         seq=seq,
         file=filename,
-        created_at=_utc_iso(),
+        created_at=utc_iso(),
         label=label,
         operation_id=operation_id,
         size_bytes=size_bytes,

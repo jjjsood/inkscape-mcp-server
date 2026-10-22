@@ -21,6 +21,7 @@ import os
 import platform
 import shutil
 import socket
+import stat
 import subprocess
 import tempfile
 import time
@@ -205,41 +206,47 @@ def arm_socket_helper(settings: Settings | None = None) -> Rendezvous:
         )
 
     # Server-minted temp doc to open (never client input). A blank valid SVG is enough for the
-    # helper to bind; it is left on disk for the GUI session and cleaned up by the OS temp policy.
+    # helper to bind. It is removed on every exit path: once the rendezvous lands, Inkscape has
+    # loaded it and run the helper on it; on a launch failure / timeout the call is over anyway.
     fd, tmp_name = tempfile.mkstemp(prefix="inkscape-mcp-arm-", suffix=".svg")
     doc_path = Path(tmp_name)
-    with os.fdopen(fd, "wb") as fh:
-        fh.write(
-            b'<?xml version="1.0" encoding="UTF-8"?>\n'
-            b'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" '
-            b'viewBox="0 0 100 100"></svg>\n'
-        )
-
-    argv = _arm_launch_argv(binary, doc_path)
     try:
-        # Detached background GUI: it must OUTLIVE this call to keep serving the socket, so it is
-        # NOT run through the capturing/timeout `run_process` path. shell=False, fixed argv.
-        subprocess.Popen(
-            argv,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except OSError as exc:
-        raise SocketArmError("could not launch a live Inkscape to arm the socket helper") from exc
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(
+                b'<?xml version="1.0" encoding="UTF-8"?>\n'
+                b'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" '
+                b'viewBox="0 0 100 100"></svg>\n'
+            )
 
-    # Poll for the rendezvous the helper writes once its socket is bound (bounded by the per-process
-    # timeout so a never-arming launch fails cleanly instead of hanging).
-    deadline = time.monotonic() + max(5.0, s.process_timeout_s)
-    while time.monotonic() < deadline:
-        rv = discover_rendezvous(s)
-        if rv is not None:
-            return rv
-        time.sleep(0.25)
-    raise SocketArmError(
-        "live Inkscape launched but the socket helper did not advertise a rendezvous in time"
-    )
+        argv = _arm_launch_argv(binary, doc_path)
+        try:
+            # Detached background GUI: it must OUTLIVE this call to keep serving the socket, so it
+            # is NOT run through the capturing/timeout `run_process` path. shell=False, fixed argv.
+            subprocess.Popen(
+                argv,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            raise SocketArmError(
+                "could not launch a live Inkscape to arm the socket helper"
+            ) from exc
+
+        # Poll for the rendezvous the helper writes once its socket is bound (bounded by the
+        # per-process timeout so a never-arming launch fails cleanly instead of hanging).
+        deadline = time.monotonic() + max(5.0, s.process_timeout_s)
+        while time.monotonic() < deadline:
+            rv = discover_rendezvous(s)
+            if rv is not None:
+                return rv
+            time.sleep(0.25)
+        raise SocketArmError(
+            "live Inkscape launched but the socket helper did not advertise a rendezvous in time"
+        )
+    finally:
+        doc_path.unlink(missing_ok=True)
 
 
 def _rendezvous_candidates(settings: Settings) -> list[Path]:
@@ -265,6 +272,30 @@ def _rendezvous_candidates(settings: Settings) -> list[Path]:
     return candidates
 
 
+_MAX_RENDEZVOUS_BYTES = 64 * 1024
+
+
+def _read_private_file(path: Path) -> bytes:
+    """Read a rendezvous candidate only if it is a regular file private to the current user.
+
+    The temp-dir candidate is shared with other local users, who could plant a file (or symlink /
+    FIFO) there to steal the session token. No symlink follow, no blocking open, regular file only;
+    on POSIX it must be owned by us with no group/other bits. Windows %TEMP% is per-user, so no
+    owner check there. Any violation raises OSError (caller skips the candidate).
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError("rendezvous is not a regular file")
+        if hasattr(os, "getuid") and (st.st_uid != os.getuid() or st.st_mode & 0o077):
+            raise OSError("rendezvous is not private to the current user")
+        return os.read(fd, _MAX_RENDEZVOUS_BYTES)
+    finally:
+        os.close(fd)
+
+
 def discover_rendezvous(settings: Settings) -> Rendezvous | None:
     """Find and parse the helper's rendezvous file, or None if no live session advertises one.
 
@@ -273,10 +304,8 @@ def discover_rendezvous(settings: Settings) -> Rendezvous | None:
     """
     for path in _rendezvous_candidates(settings):
         try:
-            if not path.is_file():
-                continue
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            raw = json.loads(_read_private_file(path))
+        except (OSError, ValueError, RecursionError):
             _logger.debug("skip unreadable rendezvous candidate")
             continue
         if not isinstance(raw, dict):
@@ -399,8 +428,9 @@ class ExtensionSocketTransport(LiveTransport):
     ) -> dict[str, Any]:
         """Send one fixed-schema command, return the validated `result` dict.
 
-        Raises `LiveConnectionError` if not connected or the socket fails, `ProtocolError` if the
-        peer's frame is out of schema. The token is attached to every request (handshake-on-every).
+        Raises `LiveConnectionError` if not connected, the socket fails, or the peer's frame is out
+        of schema / a helper-reported error (a `LiveError`, so session/sync/tool callers handle it
+        and never leak a half-open session). The token is attached to every request.
         """
         if self._sock is None or self._token is None:
             raise LiveConnectionError("not connected to a live session")
@@ -410,9 +440,9 @@ class ExtensionSocketTransport(LiveTransport):
             # below via max_output_bytes but never widen it past the schema's own cap.
             cap = min(MAX_MESSAGE_BYTES, self._settings.max_output_bytes)
             frame = recv_message(self._sock, cap)
+            return parse_response(frame)
         except (OSError, ProtocolError) as exc:
             raise LiveConnectionError("live communication failed") from exc
-        return parse_response(frame)
 
     def get_active_document(self) -> LiveDocumentRef:
         result = self._request(LiveCommand.GET_ACTIVE_DOCUMENT)

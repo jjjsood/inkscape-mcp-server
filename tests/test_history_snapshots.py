@@ -1,4 +1,4 @@
-"""Snapshot engine (ADR-004) and `history(action=reload)` beyond the basics in `test_history.py`.
+"""Snapshot engine (ADR-004) and the `history` tool: list / create / restore / reload.
 
 Engine tests pin the on-disk contract (index, files, operation record, sha256 of restored content,
 id shape guards); tool tests pin how `history` surfaces it. Reload is covered against external
@@ -132,6 +132,8 @@ def test_engine_rejects_a_non_op_token_as_operation_id(doc) -> None:
 
 def test_tool_list_orders_snapshots_and_restore_matches_engine(tool_app, doc) -> None:
     doc_id, root, _ = doc
+    empty = _hist(tool_app, doc_id, "list")
+    assert empty["count"] == 0 and "snapshots" not in empty
     made = [_hist(tool_app, doc_id, "create", label=f"s{i}") for i in range(2)]
     listed = _hist(tool_app, doc_id, "list")["snapshots"]
     assert [s["id"] for s in listed] == [m["snapshot_id"] for m in made]
@@ -141,19 +143,38 @@ def test_tool_list_orders_snapshots_and_restore_matches_engine(tool_app, doc) ->
     sandbox.working_copy(root, doc_id).write_bytes(MUTATED)
     res = _hist(tool_app, doc_id, "restore", snapshot_id=made[0]["snapshot_id"])
     assert sandbox.working_copy(root, doc_id).read_bytes() == SVG
+    assert res["restored_from"] == made[0]["snapshot_id"]
     assert res["pre_restore_snapshot_id"].startswith("snap_") and res["operation_id"].startswith(
         "op_"
     )
     assert len(_hist(tool_app, doc_id, "list")["snapshots"]) == 3
 
 
-@pytest.mark.parametrize("bad_id", ["../../etc/passwd", "snap_deadbeef"])
-def test_tool_restore_of_a_bad_id_is_actionable_and_harmless(tool_app, doc, bad_id: str) -> None:
+def test_tool_restore_of_a_bad_id_is_actionable_and_harmless(tool_app, doc) -> None:
+    # the engine test covers absent ids too; the tool must surface the crafted one as a hint
     doc_id, root, _ = doc
     before = sandbox.working_copy(root, doc_id).read_bytes()
-    with pytest.raises(ToolError, match="snapshot not found"):
-        _hist(tool_app, doc_id, "restore", snapshot_id=bad_id)
+    with pytest.raises(ToolError, match=r"snapshot not found; call history\(action='list'\)"):
+        _hist(tool_app, doc_id, "restore", snapshot_id="../../etc/passwd")
     assert sandbox.working_copy(root, doc_id).read_bytes() == before
+
+
+def test_tool_create_label_is_listed_and_length_limited(tool_app, doc) -> None:
+    doc_id, _, _ = doc
+    assert _hist(tool_app, doc_id, "create", label="before-logo")["snapshot_id"]
+    assert _hist(tool_app, doc_id, "list")["snapshots"][0]["label"] == "before-logo"
+    with pytest.raises(ToolError, match="label too long"):
+        _hist(tool_app, doc_id, "create", label="x" * 300)
+
+
+def test_tool_arguments_must_match_the_action(tool_app, doc) -> None:
+    doc_id, _, _ = doc
+    with pytest.raises(ToolError, match="requires snapshot_id"):
+        _hist(tool_app, doc_id, "restore")
+    with pytest.raises(ToolError, match="only used with action='restore'"):
+        _hist(tool_app, doc_id, "list", snapshot_id="x")
+    with pytest.raises(ToolError, match="only used with action='create'"):
+        _hist(tool_app, doc_id, "list", label="x")
 
 
 @pytest.mark.parametrize("action", ["list", "create", "restore", "prune", "reload"])
@@ -218,3 +239,39 @@ def test_reload_falls_back_to_the_baseline_when_the_source_is_gone(tool_app, too
     res = _hist(tool_app, doc_id, "reload")
     assert res["doc_id"] == doc_id
     assert 'id="r1"' in _working(doc_id).read_text(encoding="utf-8")
+
+
+def test_restoring_the_pre_restore_snapshot_undoes_the_restore(tool_app, tool_ws) -> None:
+    """Undo of undo: restore to the pre-edit snapshot, then restore its pre_restore snapshot."""
+    doc_id, _ = _open(tool_app, tool_ws)
+    edit = call(
+        tool_app,
+        "edit",
+        {"doc_id": doc_id, "ops": [{"op": "fill", "ids": ["r1"], "color": "#00ff00"}]},
+    ).data
+    edited = _working(doc_id).read_bytes()
+
+    undo = _hist(tool_app, doc_id, "restore", snapshot_id=edit["snapshot_id"])
+    assert _working(doc_id).read_bytes() != edited
+    _hist(tool_app, doc_id, "restore", snapshot_id=undo["pre_restore_snapshot_id"])
+    assert _working(doc_id).read_bytes() == edited
+
+
+def test_edit_snapshot_is_labelled_with_what_it_precedes(tool_app, tool_ws) -> None:
+    doc_id, _ = _open(tool_app, tool_ws)
+    edit = call(
+        tool_app,
+        "edit",
+        {
+            "doc_id": doc_id,
+            "ops": [{"op": "fill", "ids": ["r1"], "color": "#00ff00"}],
+            "detail": "summary",
+        },
+    ).data
+    assert "BEFORE this edit" in edit["snapshot_note"]
+    listed = _hist(tool_app, doc_id, "list")
+    assert "BEFORE the edit" in listed["note"]
+    entry = next(s for s in listed["snapshots"] if s["id"] == edit["snapshot_id"])
+    assert entry["label"].startswith("before: fill")
+    assert entry["restoring"] == f"returns to the state {entry['label']}"
+    assert len(entry["label"]) <= 120

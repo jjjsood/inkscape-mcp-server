@@ -30,19 +30,18 @@ Reproducibility / naming (workspace model):
   renders at the SAME width NON-clobbering so an agent can render a before and an after
   without copying out of band. An optional caller ``name`` is folded into the stem.
 - User exports land under ``artifacts/exports/`` (or a caller-chosen, sandbox-validated
-  ``out_dir``) named ``<utc-timestamp>-[<prefix>-]<basename>-<descriptor>.<ext>`` per
-  §6. The descriptor encodes the reproducible parameters (size/format/object); ``<basename>`` is
-  a sanitized stem of the document source; an optional ``name_prefix`` tags the stem. The
-  timestamp makes successive exports non-clobbering while the descriptor keeps the parameter set
-  reproducible and predictable.
+  ``out_dir``) named ``<utc-timestamp>-<rand>-[<prefix>-]<basename>-<descriptor>.<ext>``
+  per §6. The descriptor encodes the reproducible parameters (size/format/object); ``<basename>``
+  is a sanitized stem of the document source; an optional ``name_prefix`` tags the stem. The
+  timestamp + random token make successive exports non-clobbering (and every output is created
+  exclusively, so an existing file is never overwritten or later deleted) while the descriptor
+  keeps the parameter set reproducible and predictable.
 
-Caller-resolvable locations — ONE CONTRACT: ``artifact_path`` and
-``workspace_relative_path`` carry the SAME value, always relative to the WORKSPACE ROOT (a managed
-output carries the ``.inkscape-mcp/documents/<doc_id>/...`` base; an ``out_dir`` output is its
-in-workspace relative path), so a caller opens the file by a single join to the workspace root with
-no ``find``/``stat`` for EVERY output. ``artifact_path`` is kept only for back-compat and now means
-exactly the same thing. Reported PNG ``width_px``/``height_px`` are the TRUE on-disk raster dims
-(read from the written file's IHDR), not a page/viewBox estimate.
+Caller-resolvable location — ``workspace_relative_path`` is always relative to the WORKSPACE ROOT
+(a managed output carries the ``.inkscape-mcp/documents/<doc_id>/...`` base; an ``out_dir`` output
+is its in-workspace relative path), so a caller opens the file by a single join to the workspace
+root with no ``find``/``stat`` for EVERY output. Reported PNG ``width_px``/``height_px`` are the
+TRUE on-disk raster dims (read from the written file's IHDR), not a page/viewBox estimate.
 
 SECURITY (sec.12): every argv element is a validated/typed value. Numeric params are coerced
 to int and formatted; the input path is the registry's sandbox-validated ``working_path``; the
@@ -59,32 +58,34 @@ import re
 import secrets
 import struct
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from inkscape_mcp.config import Settings, get_settings
+from inkscape_mcp.config import Settings, resolve_settings
 from inkscape_mcp.document.inspect import DocSummary, inspect_summary
 from inkscape_mcp.engine.ops import (
     ENGINE_EXPORT_FORMATS,
     engine_export_document,
     engine_mode_is_shell,
 )
-from inkscape_mcp.engine.process import EngineError
+from inkscape_mcp.engine.process import EngineCrash, EngineError
 from inkscape_mcp.logging_setup import get_logger, log_export, log_preview
 from inkscape_mcp.registry import DocEntry, get_registry
 from inkscape_mcp.render.verify import verify_pdf, verify_raster
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.limits import (
-    LimitExceeded,
     check_export_dimensions,
     check_output_size,
 )
-from inkscape_mcp.workspace.locations import workspace_relative_path
 from inkscape_mcp.workspace.paths import (
     SandboxViolation,
-    is_contained,
+    ensure_parent_within_sandbox,
+    in_state_dir,
     resolve_write_path,
 )
 from inkscape_mcp.workspace.subprocess_exec import ProcessResult, run_inkscape
@@ -123,21 +124,17 @@ class InvalidObjectId(Exception):
 class RenderResult(BaseModel):
     """Outcome of one render/export invocation.
 
-    ONE LOCATION CONTRACT: `artifact_path` and `workspace_relative_path` carry the SAME
-    value — the file relative to the WORKSPACE ROOT, never an absolute host path — so a caller opens
-    it by a single join to the workspace root with no `find`/`stat`, for both managed and `out_dir`
-    outputs. A managed output carries the `.inkscape-mcp/documents/<doc_id>/...` base;
-    `artifact_path` is kept only for back-compat and now means exactly the same thing. `format` is
-    the produced format token; `width_px`/`height_px` are the TRUE on-disk raster dimensions for
-    raster (PNG) outputs (read from the written file's IHDR) and None for vector PDF/SVG.
+    `workspace_relative_path` is the file relative to the WORKSPACE ROOT, never an absolute host
+    path — so a caller opens it by a single join to the workspace root with no `find`/`stat`, for
+    both managed and `out_dir` outputs. A managed output carries the
+    `.inkscape-mcp/documents/<doc_id>/...` base. `format` is the produced format token;
+    `width_px`/`height_px` are the TRUE on-disk raster dimensions for raster (PNG) outputs (read
+    from the written file's IHDR) and None for vector PDF/SVG.
     `duration_s` is the Inkscape wall-clock.
     """
 
     doc_id: str
-    artifact_path: str
-    # Defaults to empty only so a hand-built stub (test fakes) stays valid; every real engine
-    # result populates it via `_relative_paths`.
-    workspace_relative_path: str = ""
+    workspace_relative_path: str
     format: str
     width_px: int | None
     height_px: int | None
@@ -160,25 +157,6 @@ class RenderResult(BaseModel):
     all_blank: bool | None = None
     is_vector: bool | None = None
     fonts_outlined: bool | None = None
-    #: PRODUCE-TIME source location, captured so a stored/handed-back result can be RE-EVALUATED for
-    #: staleness later via `recompute_stale()` without re-resolving the registry. These are absolute
-    #: host paths used ONLY for the read-only `os.stat` mtime comparison; they are excluded from the
-    #: serialized/client-facing model (sec.12 — no host path ever reaches a client) and default None
-    #: so hand-built stubs (test fakes) stay valid.
-    working_path: str | None = Field(default=None, exclude=True)
-    artifact_abspath: str | None = Field(default=None, exclude=True)
-
-    def recompute_stale(self) -> bool:
-        """Re-evaluate `stale` from the current on-disk mtimes; return the updated value.
-
-        Lets a caller that held this result across a later working-copy edit/reload observe whether
-        the artifact is now stale, without re-resolving the registry. Read-only: it only `os.stat`s
-        the captured produce-time `working_path` and `artifact_abspath` (no file is modified). When
-        either path was not captured (a hand-built stub) `stale` is left unchanged.
-        """
-        if self.working_path is not None and self.artifact_abspath is not None:
-            self.stale = compute_stale(Path(self.working_path), Path(self.artifact_abspath))
-        return self.stale
 
 
 class FrameResult(RenderResult):
@@ -226,10 +204,6 @@ def compute_stale(working_path: Path, artifact_path: Path) -> bool:
 def is_safe_object_id(object_id: str) -> bool:
     """True iff `object_id` matches the conservative safe SVG-id charset (argv-safe)."""
     return bool(_SAFE_ID_RE.match(object_id))
-
-
-def _settings(settings: Settings | None) -> Settings:
-    return settings if settings is not None else get_settings()
 
 
 def _entry(doc_id: str) -> DocEntry:
@@ -315,51 +289,35 @@ def _descriptor(width_px: int | None, *, object_id: str | None = None) -> str:
 
 
 def _output_name(entry: DocEntry, name_prefix: str | None, descriptor: str, ext: str) -> str:
-    """Build a non-clobbering export filename ``<stamp>-[prefix-]<basename>-<descriptor>.<ext>``.
+    """Build a unique export filename ``<stamp>-<rand>-[prefix-]<basename>-<descriptor>.<ext>``.
 
-    The UTC timestamp keeps successive exports distinct; the sanitized `name_prefix` (when given)
-    lets a caller tag the output. The descriptor keeps the parameter set reproducible.
+    The UTC timestamp + random token keep repeat exports (same second, or two identical targets in
+    one call) distinct; the sanitized `name_prefix` (when given) lets a caller tag the output. The
+    descriptor keeps the parameter set reproducible.
     """
-    stamp = _utc_stamp()
+    stamp = f"{_utc_stamp()}-{secrets.token_hex(4)}"
     basename = _sanitize_basename(entry)
     prefix = _safe_name_fragment(name_prefix) if name_prefix is not None else None
     stem = f"{prefix}-{basename}" if prefix else basename
     return f"{stamp}-{stem}-{descriptor}.{ext}"
 
 
-def _relative_paths(entry: DocEntry, out: Path) -> tuple[str, str]:
-    """Return `(artifact_path, workspace_relative_path)` for a produced artifact (POSIX, relative).
+def _relative_path(entry: DocEntry, out: Path) -> str:
+    """Return the workspace-relative path of a produced artifact (POSIX, relative).
 
-    ONE LOCATION CONTRACT: both elements are the SAME value — the file relative to the
-    WORKSPACE ROOT (`entry.root`) — so an agent opens any artifact by a single join to the workspace
-    root with no `find`/`stat`, for EVERY output (managed AND caller-chosen `out_dir`). A managed
-    output carries the `.inkscape-mcp/documents/<doc_id>/...` base; an `out_dir` output is just its
-    in-workspace relative path. `artifact_path` is retained only for back-compat and now means
-    exactly the same thing as `workspace_relative_path`.
+    The file relative to the WORKSPACE ROOT (`entry.root`), so an agent opens any artifact by a
+    single join to the workspace root with no `find`/`stat`, for EVERY output (managed AND
+    caller-chosen `out_dir`). A managed output carries the `.inkscape-mcp/documents/<doc_id>/...`
+    base; an `out_dir` output is just its in-workspace relative path.
 
-    For a managed output the per-doc relative form is computed first and re-anchored to the root via
-    the single location helper (one conversion source of truth); for an `out_dir` output the path is
-    anchored to the root directly. `out` is always sandbox-validated, so it is contained by the
-    root; an `out` outside the root is a construction bug and raises.
+    `out` is always sandbox-validated, so it is contained by the root; an `out` outside the root is
+    a construction bug and raises.
     """
-    root = Path(entry.root)
     try:
-        artifact_rel = out.relative_to(Path(entry.workspace_dir)).as_posix()
-    except ValueError:
-        artifact_rel = None
-    if artifact_rel is not None:
-        # In-managed-dir: re-anchor the per-doc form to the workspace root via the single location
-        # helper. Both fields carry this one root-relative value.
-        ws_rel = workspace_relative_path(entry, artifact_rel)
-        return ws_rel, ws_rel
-    # Caller-chosen out_dir outside the per-doc dir: anchor directly to the root. Both fields carry
-    # this one root-relative value too.
-    try:
-        ws_rel = out.relative_to(root).as_posix()
+        return out.relative_to(Path(entry.root)).as_posix()
     except ValueError as exc:  # pragma: no cover - outputs are always validated under the root
         _logger.error("artifact path outside workspace", extra={"doc_id": entry.doc_id})
         raise RenderError("render failed") from exc
-    return ws_rel, ws_rel
 
 
 def _emit(
@@ -382,45 +340,57 @@ def _emit(
     tries the warm `inkscape --shell` worker. ANY engine fault transparently falls back to
     the per-call CLI for this op, so the warm path can never regress correctness. `engine_width_px`
     is the requested raster width (None = intrinsic) the engine export should honor.
-    """
-    if engine_eligible and engine_mode_is_shell(settings) and fmt in ENGINE_EXPORT_FORMATS:
-        start = time.monotonic()
-        try:
-            engine_export_document(
-                Path(entry.working_path), out, fmt=fmt, width_px=engine_width_px, settings=settings
-            )
-        except EngineError as exc:
-            # Never a hard error: the per-call CLI below handles exactly the same op.
-            _safe_unlink(out)
-            _logger.warning(
-                "warm engine export fell back to per-call CLI",
-                extra={"doc_id": doc_id, "format": fmt, "error": type(exc).__name__},
-            )
-        else:
-            return _finalize_output(
-                doc_id=doc_id,
-                out=out,
-                fmt=fmt,
-                width_px=width_px,
-                height_px=height_px,
-                entry=entry,
-                settings=settings,
-                event=event,
-                duration_s=time.monotonic() - start,
-                via="engine",
-            )
 
-    return _run_and_finalize(
-        doc_id=doc_id,
-        args=args,
-        out=out,
-        fmt=fmt,
-        width_px=width_px,
-        height_px=height_px,
-        entry=entry,
-        settings=settings,
-        event=event,
-    )
+    `out` is created EXCLUSIVELY and tracked before Inkscape runs, so a pre-existing file is never
+    overwritten or deleted, and any failure or cancellation (even a BaseException mid-render)
+    removes the half-written output via `discard_on_error`.
+    """
+    with discard_on_error() as written:
+        written.append(_claim_output(out))
+        if engine_eligible and engine_mode_is_shell(settings) and fmt in ENGINE_EXPORT_FORMATS:
+            start = time.monotonic()
+            try:
+                engine_export_document(
+                    Path(entry.working_path),
+                    out,
+                    fmt=fmt,
+                    width_px=engine_width_px,
+                    settings=settings,
+                )
+                if not _has_output(out):  # the claimed placeholder is still empty
+                    raise EngineCrash("warm engine produced no output")
+            except EngineError as exc:
+                # Never a hard error: the per-call CLI below handles exactly the same op and
+                # rewrites the (still claimed, still tracked) output in place.
+                _logger.warning(
+                    "warm engine export fell back to per-call CLI",
+                    extra={"doc_id": doc_id, "format": fmt, "error": type(exc).__name__},
+                )
+            else:
+                return _finalize_output(
+                    doc_id=doc_id,
+                    out=out,
+                    fmt=fmt,
+                    width_px=width_px,
+                    height_px=height_px,
+                    entry=entry,
+                    settings=settings,
+                    event=event,
+                    duration_s=time.monotonic() - start,
+                    via="engine",
+                )
+
+        return _run_and_finalize(
+            doc_id=doc_id,
+            args=args,
+            out=out,
+            fmt=fmt,
+            width_px=width_px,
+            height_px=height_px,
+            entry=entry,
+            settings=settings,
+            event=event,
+        )
 
 
 def _run_and_finalize(
@@ -437,19 +407,17 @@ def _run_and_finalize(
 ) -> RenderResult:
     """Run Inkscape (per-call CLI), enforce success + output-size cap, return the typed result.
 
-    On timeout / non-zero exit / missing output, raises `RenderError`. An oversized output file
-    is deleted before raising (so it never lingers under the artifact dir).
+    On timeout / non-zero exit / missing output, raises `RenderError`. Only called from `_emit`,
+    whose `discard_on_error` block removes the claimed output on any raise.
     """
     result: ProcessResult = run_inkscape(args, settings=settings)
     if result.timed_out:
-        _safe_unlink(out)
         _logger.error(
             "render timed out",
             extra={"doc_id": doc_id, "format": fmt, "duration_s": result.duration_s},
         )
         raise RenderError("render timed out")
-    if result.returncode != 0 or not out.exists():
-        _safe_unlink(out)
+    if result.returncode != 0 or not _has_output(out):
         _logger.error(
             "render failed",
             extra={"doc_id": doc_id, "format": fmt, "returncode": result.returncode},
@@ -486,14 +454,10 @@ def _finalize_output(
     """Enforce the output-size cap, read true raster dims, build resolvable paths, log + return.
 
     Shared post-success tail for BOTH the per-call CLI and the warm engine path, so an
-    artifact is finalized identically however it was produced. An oversized output is deleted before
-    raising `LimitExceeded`.
+    artifact is finalized identically however it was produced. An oversized output raises
+    `LimitExceeded` (the caller's `discard_on_error` block deletes it).
     """
-    try:
-        check_output_size(out, settings)
-    except LimitExceeded:
-        _safe_unlink(out)
-        raise
+    check_output_size(out, settings)
 
     # Report the TRUE on-disk raster dims for PNG: read the written file's IHDR
     # rather than the page/viewBox-derived target. For vector (PDF/SVG) there is no raster size.
@@ -519,26 +483,22 @@ def _finalize_output(
         if pdf_info is not None:
             is_vector, fonts_outlined = pdf_info.is_vector, pdf_info.fonts_outlined
 
-    artifact_rel, ws_rel = _relative_paths(entry, out)
+    ws_rel = _relative_path(entry, out)
     # STALENESS: compute the signal at PRODUCE time by comparing the just-written
     # artifact's mtime to the working copy's. A freshly produced artifact was rendered FROM the
-    # current working copy and lands with an mtime at/after it, so it is NOT stale. The source paths
-    # are captured (server-internal only, excluded from the client-facing model) so a stored result
-    # can be re-evaluated later via `recompute_stale()`.
-    working_path = Path(entry.working_path)
-    stale = compute_stale(working_path, out)
+    # current working copy and lands with an mtime at/after it, so it is NOT stale.
+    stale = compute_stale(Path(entry.working_path), out)
     log_fn = log_preview if event == "preview" else log_export
     log_fn(
         _logger,
         doc_id=doc_id,
         format=fmt,
-        artifact=artifact_rel,
+        artifact=ws_rel,
         duration_s=duration_s,
         via=via,
     )
     return RenderResult(
         doc_id=doc_id,
-        artifact_path=artifact_rel,
         workspace_relative_path=ws_rel,
         format=fmt,
         width_px=width_px,
@@ -549,16 +509,77 @@ def _finalize_output(
         all_blank=all_blank,
         is_vector=is_vector,
         fonts_outlined=fonts_outlined,
-        working_path=str(working_path),
-        artifact_abspath=str(out),
     )
 
 
-def _safe_unlink(path: Path) -> None:
+def _has_output(out: Path) -> bool:
+    """True iff `out` exists and is non-empty (the claimed placeholder starts empty)."""
     try:
-        path.unlink(missing_ok=True)
-    except OSError:  # pragma: no cover - best-effort cleanup
-        pass
+        return out.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _claim_output(out: Path) -> Path:
+    """Create `out` EXCLUSIVELY (never reuse an existing file) and return its real path.
+
+    The parent is resolved first and the file is created at the real path with
+    `O_CREAT|O_EXCL|O_NOFOLLOW`, so a pre-existing file or planted symlink is refused rather than
+    overwritten (and later deleted). The returned real path is what `discard_on_error` tracks.
+    """
+    try:
+        real = out.parent.resolve(strict=True) / out.name
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        os.close(os.open(real, flags, 0o644))
+    except FileExistsError as exc:
+        raise RenderError("export output already exists") from exc
+    except OSError as exc:
+        raise RenderError("render failed") from exc
+    return real
+
+
+def _safe_unlink(path: Path) -> bool:
+    """Delete a tracked real path; True iff something was actually removed.
+
+    `path` was recorded with its RESOLVED parent at claim time; the parent is re-resolved here and
+    must still be that same real directory, so a directory swapped for a symlink after the claim can
+    never steer the delete elsewhere.
+    """
+    try:
+        if path.parent.resolve(strict=True) != path.parent:
+            return False
+        path.unlink()
+    except OSError:
+        return False
+    return True
+
+
+#: Outputs claimed inside the outermost `discard_on_error` block (None = not tracking).
+_WRITTEN: ContextVar[list[Path] | None] = ContextVar("render_written", default=None)
+
+
+@contextmanager
+def discard_on_error() -> Iterator[list[Path]]:
+    """Track every output claimed in the block; if the block raises, delete them all.
+
+    Makes a multi-file export all-or-nothing: a failure on item N never leaves items 1..N-1 (or a
+    half-written item N) behind as a silent half result. Nested blocks share the outermost list, so
+    the outermost owner does the cleanup; on a raise its list is narrowed to the paths it really
+    deleted. Yields that list.
+    """
+    outer = _WRITTEN.get()
+    if outer is not None:
+        yield outer
+        return
+    written: list[Path] = []
+    token = _WRITTEN.set(written)
+    try:
+        yield written
+    except BaseException:
+        written[:] = [path for path in written if _safe_unlink(path)]
+        raise
+    finally:
+        _WRITTEN.reset(token)
 
 
 def _png_size_args(width_px: int | None) -> list[str]:
@@ -625,79 +646,20 @@ def _resolve_out_dir(out_dir: str | None, entry: DocEntry, settings: Settings) -
     if out_dir is None:
         return None
     candidate = Path(out_dir)
-    if any(part == ".." for part in candidate.parts):
-        raise SandboxViolation(
-            "path rejected: outside workspace",
-            detail=f"out_dir {out_dir!r} contains a '..' component",
-        )
     if not candidate.is_absolute():
         candidate = Path(entry.root) / candidate
-
-    # PRE-CREATE CONTAINMENT (sec.12): resolve the longest existing prefix (following symlinks)
-    # and confirm it is inside a configured root BEFORE creating anything, so a `../`-escape can
-    # never plant a directory outside the sandbox.
-    existing = candidate
-    while not existing.exists():
-        parent = existing.parent
-        if parent == existing:  # reached filesystem root
-            break
-        existing = parent
-    try:
-        resolved_existing = existing.resolve(strict=True)
-    except OSError as exc:
-        raise SandboxViolation(
-            "path rejected: could not resolve path",
-            detail=f"out_dir prefix resolve failed: {exc}",
-        ) from None
-    if not is_contained(resolved_existing, settings.workspace_roots):
-        raise SandboxViolation(
-            "path rejected: outside workspace",
-            detail=f"out_dir {str(candidate)!r} resolves outside all configured roots",
-        )
-
-    # Create any missing tail relative to the validated-contained ancestor, descending with
-    # O_NOFOLLOW so a symlink raced into the path between the check above and the create cannot
-    # redirect us outside the sandbox (the directory side-effect can only land under the ancestor).
-    missing = candidate.relative_to(existing).parts
-    _safe_mkdir_chain(resolved_existing, missing)
-    # Re-validate through the single choke point: a probe final-component forces parent
-    # normalization + containment + the final-component symlink guard. Keep the validated parent.
-    validated = resolve_write_path(candidate / ".probe", settings)
-    return validated.parent
-
-
-def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
-    """Create `components` under `base_real_dir` one level at a time, TOCTOU-safe.
-
-    `base_real_dir` must already be a resolved, sandbox-contained real directory. Each component
-    is created with `os.mkdir(..., dir_fd=...)` and then descended with
-    `O_RDONLY|O_DIRECTORY|O_NOFOLLOW`, so if any component is (or is raced into) a symlink the
-    `open` fails with `ELOOP` and creation aborts — the side-effect can never escape the base dir.
-    """
-    dir_fd = os.open(base_real_dir, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        for part in components:
-            if part in ("", ".", ".."):
-                raise SandboxViolation(
-                    "path rejected: invalid filename",
-                    detail=f"unsafe out_dir path component {part!r}",
-                )
-            try:
-                os.mkdir(part, dir_fd=dir_fd)
-            except FileExistsError:
-                pass
-            try:
-                next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
-            except OSError as exc:  # ELOOP (symlink) / ENOTDIR — refuse, never follow
-                raise SandboxViolation(
-                    "path rejected: outside workspace",
-                    detail=f"out_dir component {part!r} is not a real directory: {exc}",
-                ) from None
-            # Reassign BEFORE closing so `finally` always closes the live fd even if close() raises.
-            old_fd, dir_fd = dir_fd, next_fd
-            os.close(old_fd)
-    finally:
-        os.close(dir_fd)
+    # The probe final-component makes `candidate` the parent that gets contained + created
+    # (TOCTOU-safe, `..`-refusing) by the shared helper, then re-validated by the choke point
+    # (parent normalization + containment + final-component symlink guard).
+    state_dir_msg = f"cannot write into the managed {sandbox.STATE_DIR} directory"
+    if in_state_dir(candidate, settings.workspace_roots):  # lexical, before any mkdir
+        raise SandboxViolation(state_dir_msg, detail=f"out_dir {out_dir!r} is in the state dir")
+    probe = candidate / ".probe"
+    ensure_parent_within_sandbox(probe, settings)
+    resolved = resolve_write_path(probe, settings).parent
+    if in_state_dir(resolved, settings.workspace_roots):  # an existing dir or symlink into it
+        raise SandboxViolation(state_dir_msg, detail=f"out_dir {out_dir!r} resolves into state dir")
+    return resolved
 
 
 # --- Public engine functions ------------------------------------------------
@@ -716,7 +678,7 @@ def render_preview(
     otherwise a unique token is minted per call so a before/after pair at one width yields two
     distinct files. Returns a resolvable artifact path.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     entry = _entry(doc_id)
     summary = inspect_summary(doc_id)
 
@@ -800,7 +762,7 @@ def capture_frame(
     `label` is folded into the stem. Same whole-doc PNG pipeline, caps, and warm-engine path as
     `render_preview`. Returns a resolvable artifact path plus the `series` + `frame_index`.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     # Guard a non-positive width before it can reach ``--export-width=`` (the dimension cap only
     # bounds the upper end); a negative/zero raster is meaningless.
     if width_px is not None and width_px < 1:
@@ -856,15 +818,7 @@ def capture_frame(
         engine_width_px=width_px,
         engine_eligible=True,
     )
-    # `model_dump()` drops the `exclude=True` produce-time source paths; carry them over explicitly
-    # so a `FrameResult` can still `recompute_stale()` later.
-    return FrameResult(
-        **base.model_dump(),
-        series=safe_series,
-        frame_index=idx,
-        working_path=base.working_path,
-        artifact_abspath=base.artifact_abspath,
-    )
+    return FrameResult(**base.model_dump(), series=safe_series, frame_index=idx)
 
 
 class FrameRef(BaseModel):
@@ -872,7 +826,6 @@ class FrameRef(BaseModel):
 
     frame_index: int
     name: str
-    artifact_path: str
     workspace_relative_path: str
 
 
@@ -911,12 +864,11 @@ def list_frames(
         match = _FRAME_NAME_RE.match(child.name)
         if not match:
             continue
-        artifact_rel, ws_rel = _relative_paths(entry, child)
+        ws_rel = _relative_path(entry, child)
         refs.append(
             FrameRef(
                 frame_index=int(match.group(1)),
                 name=child.name,
-                artifact_path=artifact_rel,
                 workspace_relative_path=ws_rel,
             )
         )
@@ -945,7 +897,7 @@ def export_document(
     NEVER client-sourced: each is hard-validated to be an `--export-` flag before reaching argv.
     Returns a resolvable artifact path.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     if fmt not in _EXT:
         raise RenderError(f"unsupported export format: {fmt!r}")
     # Defense in depth (sec.12): even though `_extra_args` is server-internal, refuse anything that
@@ -1038,7 +990,7 @@ def export_object(
     sandbox-validated) targets a caller-chosen directory and an optional `name_prefix`
     tags the filename stem. Returns a resolvable artifact path.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     if fmt not in _EXT:
         raise RenderError(f"unsupported export format: {fmt!r}")
     if not is_safe_object_id(object_id):
@@ -1074,7 +1026,7 @@ def export_object(
     else:  # SVG (plain)
         args = [*base, "--export-type=svg", "--export-plain-svg", f"--export-filename={out}"]
 
-    return _run_and_finalize(
+    return _emit(
         doc_id=doc_id,
         args=args,
         out=out,

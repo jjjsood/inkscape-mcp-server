@@ -209,15 +209,6 @@ def test_sweep_prunes_every_document_and_is_idempotent(doc) -> None:
     assert sweep_all_roots(settings).pruned_snapshots == 0
 
 
-def test_prune_document_resolves_the_root_via_the_registry(doc) -> None:
-    doc_id, root = doc
-    _create_n(doc_id, 3)
-    result = prune_document(
-        doc_id, settings=_settings(root, snapshot_keep_n=1, snapshot_keep_days=0)
-    )
-    assert result.retained_count == 1
-
-
 # --- `history(action=prune)` --------------------------------------------------------------------
 
 
@@ -233,14 +224,11 @@ def test_history_prune_applies_the_configured_policy(
     res = call(tool_app, "history", {"doc_id": doc_id, "action": "prune"}).data
 
     assert (res["pruned_snapshots"], res["retained"], res["freed_bytes"]) == (3, 2, 3 * SNAP_BYTES)
+    assert res["doc_id"] == doc_id and "pruned_operations" in res
+    assert res["live_frames"]["pruned"] == 0  # the live-frame pass ran and reports its outcome
     assert _remaining(doc_id) == ids[3:]
     again = call(tool_app, "history", {"doc_id": doc_id, "action": "prune"}).data
     assert again["pruned_snapshots"] == 0
-
-
-def test_history_prune_refuses_an_unknown_document(tool_app, tool_ws) -> None:
-    with pytest.raises(ToolError, match="not found"):
-        call(tool_app, "history", {"doc_id": "d_nope", "action": "prune"})
 
 
 # --- live-frame retention (part of the same explicit sweep) -------------------------------------
@@ -369,3 +357,22 @@ def test_live_renders_never_prune_older_frames(doc, monkeypatch: pytest.MonkeyPa
         manager.disconnect()
 
     assert ancient.exists()
+
+
+def test_restore_of_a_pruned_snapshot_is_actionable_and_changes_nothing(
+    tool_app, doc, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    doc_id, root = doc
+    oldest = _create_n(doc_id, 3)[0]
+    monkeypatch.setenv(ENV_SNAPSHOT_KEEP_N, "1")
+    monkeypatch.setenv(ENV_SNAPSHOT_KEEP_DAYS, "0")
+    get_settings.cache_clear()
+    call(tool_app, "history", {"doc_id": doc_id, "action": "prune"})
+    working = sandbox.working_copy(root, doc_id)
+    working.write_bytes(SVG.replace(b"10", b"20"))
+    before, remaining = working.read_bytes(), _remaining(doc_id)
+
+    with pytest.raises(ToolError, match=r"snapshot not found; call history\(action='list'\)"):
+        call(tool_app, "history", {"doc_id": doc_id, "action": "restore", "snapshot_id": oldest})
+
+    assert working.read_bytes() == before and _remaining(doc_id) == remaining

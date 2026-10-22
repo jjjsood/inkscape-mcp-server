@@ -8,8 +8,9 @@ server's live tools need.
 
 Lifecycle: Inkscape runs this extension on the active document; it binds ``127.0.0.1`` on an
 ephemeral port, mints a random session token, and advertises both by writing a rendezvous file
-(0600) the server discovers. It then serves a single client until that client disconnects or an
-idle timeout elapses, after which the extension returns control to Inkscape.
+(0600) the server discovers. It then serves the first AUTHENTICATED client until it disconnects
+(connections failing the token handshake are dropped and accepting continues) or the idle timeout
+elapses, after which the extension returns control to Inkscape.
 
 IMPORTANT: this file runs under Inkscape's bundled Python with `inkex`, so it CANNOT import the
 inkscape-mcp server package. The protocol constants below MUST stay in lock-step with
@@ -23,6 +24,7 @@ selection tracking is a later epic.
 from __future__ import annotations
 
 import base64
+import hmac
 import json
 import math
 import os
@@ -31,6 +33,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +45,7 @@ MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 LOOPBACK_HOST = "127.0.0.1"
 RENDEZVOUS_FILENAME = "inkscape-mcp-live.json"
 IDLE_TIMEOUT_S = 120.0
+HANDSHAKE_TIMEOUT_S = 5.0  # a connected client must send its hello promptly
 
 CMD_HELLO = "hello"
 CMD_PING = "ping"
@@ -87,6 +91,11 @@ INKSCAPE_NS = "http://www.inkscape.org/namespaces/inkscape"
 _NON_OBJECT_TAGS = {"svg", "defs", "metadata", "style", "title", "desc", "namedview"}
 
 
+def _token_ok(got: Any, token: str) -> bool:
+    """Constant-time session-token check."""
+    return isinstance(got, str) and hmac.compare_digest(got.encode(), token.encode())
+
+
 def _rendezvous_path() -> Path:
     """Where to advertise the socket. Mirrors the server's discovery order (env → temp)."""
     override = os.environ.get("INKSCAPE_MCP_LIVE_RENDEZVOUS", "").strip()
@@ -120,7 +129,7 @@ def _recv(sock: socket.socket) -> dict[str, Any] | None:
     raw = b"".join(chunks).rstrip(b"\n")
     try:
         obj = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         return None
     return obj if isinstance(obj, dict) else None
 
@@ -147,24 +156,40 @@ class InkscapeMcpLive(inkex.EffectExtension):  # type: ignore[misc]
     def effect(self) -> None:
         token = os.urandom(16).hex()
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind((LOOPBACK_HOST, 0))  # loopback-only; ephemeral port
-        server.listen(1)
-        port = server.getsockname()[1]
-        self._write_rendezvous(port, token)
-        server.settimeout(IDLE_TIMEOUT_S)
         try:
-            conn, _addr = server.accept()
-        except OSError:
-            self._clear_rendezvous()
-            server.close()
-            return
-        try:
-            self._serve(conn, token)
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind((LOOPBACK_HOST, 0))  # loopback-only; ephemeral port
+            server.listen(1)
+            port = server.getsockname()[1]
+            try:
+                self._write_rendezvous(port, token)
+            except OSError:
+                return  # cannot advertise (e.g. a planted file we may not remove): no session
+            try:
+                self._accept_loop(server, token)
+            finally:
+                self._clear_rendezvous(token)
         finally:
-            conn.close()
             server.close()
-            self._clear_rendezvous()
+
+    def _accept_loop(self, server: socket.socket, token: str) -> None:
+        """Accept until one authenticated session ends or IDLE_TIMEOUT_S passes in total.
+
+        A connection that fails the handshake (another local process, a wrong token) is dropped
+        and accepting continues, so it cannot end the session for the real client.
+        """
+        deadline = time.monotonic() + IDLE_TIMEOUT_S
+        while (remaining := deadline - time.monotonic()) > 0:
+            server.settimeout(remaining)
+            try:
+                conn, _addr = server.accept()
+            except OSError:
+                return
+            try:
+                if self._serve(conn, token):
+                    return
+            finally:
+                conn.close()
 
     def _write_rendezvous(self, port: int, token: str) -> None:
         path = _rendezvous_path()
@@ -174,23 +199,42 @@ class InkscapeMcpLive(inkex.EffectExtension):  # type: ignore[misc]
             "protocol_version": PROTOCOL_VERSION,
             "pid": os.getpid(),
         }
-        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # Never reuse an existing path: a pre-created file keeps its (attacker-chosen) mode and a
+        # symlink would redirect the token. Remove it, then create exclusively without following.
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(str(path), flags, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
 
-    def _clear_rendezvous(self) -> None:
+    def _clear_rendezvous(self, token: str) -> None:
+        """Remove the rendezvous only if it is still OURS (a newer session may have replaced it)."""
+        path = _rendezvous_path()
         try:
-            _rendezvous_path().unlink()
-        except OSError:
+            if json.loads(path.read_text(encoding="utf-8")).get("token") == token:
+                path.unlink()
+        except Exception:  # best-effort: missing, unreadable or foreign file -> leave it
             pass
 
-    def _serve(self, conn: socket.socket, token: str) -> None:
-        conn.settimeout(IDLE_TIMEOUT_S)
+    def _serve(self, conn: socket.socket, token: str) -> bool:
+        """Serve one connection; return False if it failed the handshake, True once it ends."""
+        conn.settimeout(HANDSHAKE_TIMEOUT_S)
         # Handshake first: the opening message MUST be a hello carrying the session token.
-        first = _recv(conn)
-        if not first or first.get("cmd") != CMD_HELLO or first.get("token") != token:
-            _send(conn, {"v": PROTOCOL_VERSION, "ok": False, "error": "unauthorized"})
-            return
+        try:
+            first = _recv(conn)
+            if (
+                not first
+                or first.get("cmd") != CMD_HELLO
+                or not _token_ok(first.get("token"), token)
+            ):
+                _send(conn, {"v": PROTOCOL_VERSION, "ok": False, "error": "unauthorized"})
+                return False
+        except OSError:
+            return False
+        conn.settimeout(IDLE_TIMEOUT_S)
         _send(
             conn,
             {
@@ -206,10 +250,10 @@ class InkscapeMcpLive(inkex.EffectExtension):  # type: ignore[misc]
         while True:
             msg = _recv(conn)
             if msg is None:
-                return
-            if msg.get("token") != token:
+                return True
+            if not _token_ok(msg.get("token"), token):
                 _send(conn, {"v": PROTOCOL_VERSION, "ok": False, "error": "unauthorized"})
-                return
+                return True
             params = msg.get("params")
             self._dispatch(
                 conn, str(msg.get("cmd", "")), params if isinstance(params, dict) else {}

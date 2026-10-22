@@ -39,9 +39,9 @@ def enforce_risk_policy(
 
     Policy split (project risk model):
     - ``low`` / ``medium``: permitted (reversible, snapshot-backed).
-    - ``high``: permitted only with an explicit per-operation ``approval_token`` (the
-      token is minted/confirmed out of band, bound to a single operation — never an
-      ambient env flag a model can request).
+    - ``high``: permitted only with an explicit per-call ``approval_token`` — never an
+      ambient env flag or setting. Only presence is checked (any non-empty string): the
+      token marks a deliberate confirmation, it is not a minted or verified secret.
     - ``restricted``: never permitted (no code/network/fs-escape tools ship in the MVP).
 
     Raises ``PolicyViolation`` when the operation is not permitted. Returns a

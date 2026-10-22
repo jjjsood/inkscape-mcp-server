@@ -9,6 +9,7 @@ that file to an operation-specific name).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ from inkscape_mcp.edit import pipeline
 from inkscape_mcp.edit.dom import EditError
 from inkscape_mcp.registry import get_registry, reset_registry
 from inkscape_mcp.render.cli import RenderError, RenderResult
-from inkscape_mcp.snapshots import restore_snapshot
+from inkscape_mcp.snapshots import list_snapshots
 from inkscape_mcp.workspace import sandbox
 
 SVG = (
@@ -55,7 +56,7 @@ def _install_fake_render(monkeypatch: pytest.MonkeyPatch) -> None:
     """Replace `render_preview` in the pipeline module with a hermetic fake.
 
     Writes a deterministic `artifacts/preview/preview-auto.png` (the real engine's no-width
-    name) and returns a `RenderResult` whose `artifact_path` is workspace-relative to it.
+    name) and returns a `RenderResult` whose `workspace_relative_path` is workspace-relative to it.
     """
 
     def fake_render_preview(
@@ -69,11 +70,10 @@ def _install_fake_render(monkeypatch: pytest.MonkeyPatch) -> None:
         out.write_bytes(PNG_BYTES)
         # one-location contract: the real engine returns a path relative to the workspace
         # ROOT (carries the `.inkscape-mcp/documents/<doc_id>/...` base). Mirror that here so the
-        # pipeline's `root / artifact_path` join resolves exactly as it does against real Inkscape.
+        # pipeline's `root / workspace_relative_path` join resolves as against real Inkscape.
         rel = out.relative_to(root).as_posix()
         return RenderResult(
             doc_id=doc_id,
-            artifact_path=rel,
             workspace_relative_path=rel,
             format="png",
             width_px=10,
@@ -198,7 +198,7 @@ def test_apply_edit_against_real_render_preview(
 ) -> None:
     """End-to-end against the REAL `render_preview` engine — NO fake render.
 
-    Guards the contract seam: `render_preview` returns an `artifact_path` relative to the
+    Guards the contract seam: `render_preview` returns an `workspace_relative_path` relative to the
     workspace ROOT, and the pipeline must resolve it against `root` (not `workspace_dir`) when it
     copies the before/after frames. A regression here (the doubled `.inkscape-mcp/documents/<id>/`
     join) makes EVERY mutating edit raise `FileNotFoundError` on any host with Inkscape — but the
@@ -217,23 +217,6 @@ def test_apply_edit_against_real_render_preview(
     assert (preview_dir / f"op-{result.operation_id}-before.png").is_file()
     assert (preview_dir / f"op-{result.operation_id}-after.png").is_file()
     assert b'fill="#ff0000"' in sandbox.working_copy(root, doc_id).read_bytes()
-
-
-def test_pre_mutation_snapshot_reverts_working_copy(
-    doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    doc_id, root, _ = doc
-    _install_fake_render(monkeypatch)
-
-    working = sandbox.working_copy(root, doc_id)
-    pre_edit_bytes = working.read_bytes()
-
-    result = pipeline.apply_edit(doc_id, "set_fill", {"fill": "#ff0000"}, _mutate_set_fill)
-    assert working.read_bytes() != pre_edit_bytes  # mutation landed
-
-    # Restoring the linked pre-mutation snapshot returns the working copy to its pre-edit bytes.
-    restore_snapshot(doc_id, result.snapshot_id)
-    assert working.read_bytes() == pre_edit_bytes
 
 
 def test_bad_input_discards_record_and_writes_nothing(
@@ -265,6 +248,45 @@ def test_bad_input_discards_record_and_writes_nothing(
 
     # Working copy and original are untouched.
     assert working.read_bytes() == before
+    assert src.read_bytes() == SVG
+
+
+def test_failed_write_rolls_back_record_snapshot_and_working_copy(
+    doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A working-copy write that fails (disk full) must leave no half state: the record is
+    # discarded, the pre-mutation snapshot is dropped, and the working copy is byte-unchanged.
+    doc_id, root, src = doc
+    _install_fake_render(monkeypatch)
+
+    working = sandbox.working_copy(root, doc_id)
+    before = working.read_bytes()
+
+    def _failing_replace(*_args: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    real_write = pipeline.write_working_tree
+
+    def _write(entry: object, tree: object) -> None:
+        with monkeypatch.context() as m:  # only the working-copy write fails, not the index write
+            m.setattr(os, "replace", _failing_replace)
+            real_write(entry, tree)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pipeline, "write_working_tree", _write)
+
+    with pytest.raises(OSError, match="No space left"):
+        pipeline.apply_edit(doc_id, "set_fill", {"fill": "#00ff00"}, _mutate_set_fill)
+
+    op_dir = sandbox.operations_dir(root, doc_id)
+    records = [json.loads(p.read_text()) for p in op_dir.glob("op_*.json")]
+    assert len(records) == 1
+    assert records[0]["status"] == "discarded"
+
+    assert list_snapshots(doc_id) == []
+    assert list(sandbox.snapshots_dir(root, doc_id).glob("*.svg")) == []
+
+    assert working.read_bytes() == before
+    assert [p.name for p in working.parent.iterdir() if p.name.endswith(".tmp")] == []
     assert src.read_bytes() == SVG
 
 
@@ -336,3 +358,59 @@ def test_render_degradation_still_applies_with_none_previews(
     preview_dir = sandbox.artifacts_dir(root, doc_id) / "preview"
     assert not (preview_dir / f"op-{result.operation_id}-before.png").exists()
     assert not (preview_dir / f"op-{result.operation_id}-after.png").exists()
+
+
+def test_cancelled_write_discards_record_and_drops_snapshot(
+    doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    doc_id, root, _src = doc
+
+    def _cancelled(*_a: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(pipeline, "write_working_tree", _cancelled)
+    with pytest.raises(KeyboardInterrupt):
+        pipeline.apply_edit(doc_id, "set_fill", {"fill": "#00ff00"}, _mutate_set_fill)
+
+    records = [
+        json.loads(p.read_text()) for p in sandbox.operations_dir(root, doc_id).glob("op_*.json")
+    ]
+    assert [r["status"] for r in records] == ["discarded"]
+    assert list_snapshots(doc_id) == []
+
+
+def test_working_tree_temp_is_created_exclusively_without_following_symlinks(
+    doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from inkscape_mcp.edit import dom
+
+    doc_id, _root, _src = doc
+    entry, tree = dom.load_working_tree(doc_id)
+    working = Path(entry.working_path)
+    before = working.read_bytes()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(dom.secrets, "token_hex", lambda _n: "fixed")
+    (working.parent / f".{working.name}.fixed.tmp").symlink_to(victim)
+
+    with pytest.raises(FileExistsError):
+        dom.write_working_tree(entry, tree)
+    assert victim.read_text(encoding="utf-8") == "keep"
+    assert working.read_bytes() == before
+
+
+def test_snapshot_index_write_failure_leaves_no_temp(
+    doc: tuple[str, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inkscape_mcp import snapshots
+
+    doc_id, root, _src = doc
+
+    def _fail(*_a: object, **_k: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Path, "replace", _fail)
+    with pytest.raises(OSError, match="No space left"):
+        snapshots._write_index(root, doc_id, [])
+    index = sandbox.snapshots_index(root, doc_id)
+    assert list(index.parent.glob("*.tmp")) == []

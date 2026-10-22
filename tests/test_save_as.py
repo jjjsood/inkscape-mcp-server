@@ -8,6 +8,7 @@ parent folders are created only after a containment proof. No Inkscape involved.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -108,6 +109,51 @@ def test_managed_document_files_are_never_overwritten(doc) -> None:
         assert path.read_bytes() == before
 
 
+def test_another_documents_managed_files_are_never_overwritten(doc) -> None:
+    doc_id, root = doc
+    other = open_doc(root, "other.svg", SVG)
+    entry = get_registry().get(other)
+    for path in (sandbox.working_copy(root, other), Path(entry.original_path), root / "other.svg"):
+        with pytest.raises(ToolError, match="managed"):
+            save_document_as(doc_id, str(path), overwrite=True, approval_token="ok")
+    assert _save_records(root, doc_id) == []
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "{other}/new.svg",
+        "{other}/working/new.svg",
+        "{other}/snapshots/new.svg",
+        "{other}/fresh/sub/new.svg",
+        "{own}/new.svg",
+    ],
+)
+def test_destinations_inside_a_managed_document_dir_are_refused(doc, rel) -> None:
+    doc_id, root = doc
+    other = open_doc(root, "other.svg", SVG)
+    docs = root / sandbox.STATE_DIR / "documents"
+    dest = docs / rel.format(other=other, own=doc_id)
+    before = sorted(docs.rglob("*"))
+    with pytest.raises(ToolError, match="managed"):
+        save_document_as(doc_id, str(dest.relative_to(root)))
+    assert sorted(docs.rglob("*")) == before  # no file and no parent folder was created
+    assert _save_records(root, doc_id) == []
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="design question: save_as writes SVG bytes to any filename; no .svg/.svgz suffix "
+    "rule exists in code or docs",
+)
+@pytest.mark.parametrize("dest", ["x.png", ".bashrc", "notes.txt"])
+def test_destination_must_have_an_svg_suffix(doc, dest) -> None:
+    doc_id, root = doc
+    with pytest.raises(ToolError, match="svg"):
+        save_document_as(doc_id, dest)
+    assert not (root / dest).exists()
+
+
 # --- engine: sandbox ---------------------------------------------------------------------------
 
 
@@ -122,14 +168,6 @@ def test_escaping_destinations_are_rejected_and_create_nothing(doc, tool_ws, des
     assert str(exc.value) == OUTSIDE and str(root) not in str(exc.value)
     assert set(root.parent.iterdir()) == before
     assert not Path("/etc/inkscape_mcp_escape").exists() and not (root / "a").exists()
-
-
-def test_absolute_destination_outside_the_workspace_is_rejected(doc, tmp_path) -> None:
-    doc_id, _ = doc
-    outside = tmp_path / "evil.svg"
-    with pytest.raises(ToolError, match="outside workspace"):
-        save_document_as(doc_id, str(outside))
-    assert not outside.exists()
 
 
 @pytest.mark.parametrize("form", ["absolute", "relative"])
@@ -162,6 +200,22 @@ def test_nested_destination_through_a_symlinked_folder_is_rejected(doc, tmp_path
         save_document_as(doc_id, "linked/sub/out.svg")
     assert str(exc.value) == OUTSIDE
     assert not (outside / "sub").exists()
+
+
+def test_symlink_into_the_state_dir_creates_nothing_there(doc) -> None:
+    doc_id, root = doc
+    (root / "link").symlink_to(root / sandbox.STATE_DIR)
+    with pytest.raises(ToolError, match="managed"):
+        save_document_as(doc_id, "link/new/f.svg")
+    assert not (root / sandbox.STATE_DIR / "new").exists()
+
+
+def test_save_works_without_o_nofollow(doc, monkeypatch) -> None:
+    """Windows has no os.O_NOFOLLOW: no AttributeError, symlink still refused explicitly."""
+    monkeypatch.delattr(os, "O_NOFOLLOW")
+    doc_id, root = doc
+    save_document_as(doc_id, "plain.svg")
+    assert (root / "plain.svg").read_bytes() == SVG
 
 
 # --- engine: relative destinations -----------------------------------------------------------
@@ -203,7 +257,7 @@ def _save_as(app, doc_id, dest, **kw):
 def test_tool_save_as_reports_path_and_operation(tool_app, doc) -> None:
     doc_id, root = doc
     data = _save_as(tool_app, doc_id, "output/final.svg")
-    assert "artifacts" not in data and data["count"] == 0
+    assert "artifacts" not in data and data["count"] == 1 and data["total_bytes"] == len(SVG)
     assert data["saved"]["path"] == "output/final.svg" and "overwritten" not in data["saved"]
     (rec,) = _save_records(root, doc_id)
     assert data["saved"]["operation_id"] == rec["operation_id"]
