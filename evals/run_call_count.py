@@ -3,8 +3,8 @@
 
 Drives scripted scenarios through the in-memory FastMCP `Client` against the registered server and
 records, per scenario, the number of tool calls, the total response bytes the model would receive,
-and how many calls failed. Used to compare against the pre-rework surface (docs/rework-plan.md:
-scenario A cost 5 calls, B 6, C 4 there).
+and how many calls failed. Used to compare against the pre-rework surface (scenario A cost 5 calls,
+B 6, C 4 there).
 
 Without an Inkscape binary the render/export steps fail; they are still COUNTED (the call a real
 agent would make) and flagged `failed` so the report stays honest.

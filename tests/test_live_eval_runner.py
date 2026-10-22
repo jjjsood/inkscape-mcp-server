@@ -21,12 +21,8 @@ sys.path.insert(0, str(_EVALS_DIR))
 
 from run_eval import load_scenarios  # noqa: E402
 from run_live_eval import (  # noqa: E402
-    AgentDriver,
-    AgentTrace,
     ReplayDriver,
-    build_real_driver,
     run_live_eval,
-    select_driver,
 )
 
 
@@ -66,19 +62,6 @@ def test_fake_driver_shares_dataset_and_scorer_with_deterministic_harness() -> N
     assert live["overall_accuracy"] == det["overall_accuracy"]
 
 
-def test_canned_replay_trace_is_honoured() -> None:
-    scenarios = load_scenarios()
-    task = scenarios[0]["task"]
-    canned = {task: AgentTrace(tools=["create_rect", "set_fill"], turns=4, success=True)}
-
-    report = run_live_eval(ReplayDriver(canned))
-    record = next(r for r in report["records"] if r["task"] == task)
-
-    assert record["tool_trace"] == ["create_rect", "set_fill"]
-    assert record["turn_count"] == 4
-    assert record["task_success"] is True
-
-
 def test_out_of_scope_task_records_empty_trace() -> None:
     oos = next(s for s in load_scenarios() if s["out_of_scope"])
     report = run_live_eval(ReplayDriver())
@@ -88,22 +71,3 @@ def test_out_of_scope_task_records_empty_trace() -> None:
     # HIT under the shared scorer.
     assert record["tool_trace"] == []
     assert record["task_success"] is True
-
-
-def test_replay_driver_satisfies_agent_driver_protocol() -> None:
-    assert isinstance(ReplayDriver(), AgentDriver)
-    trace = ReplayDriver().run("Draw a rectangle on the canvas", [])
-    assert isinstance(trace, AgentTrace)
-
-
-def test_select_driver_defaults_to_fake_and_real_is_gated_off() -> None:
-    assert isinstance(select_driver("fake"), ReplayDriver)
-    assert isinstance(select_driver("replay"), ReplayDriver)
-
-    # The real LLM path is OFF BY DEFAULT: selecting it without a wired client must fail loudly.
-    import pytest
-
-    with pytest.raises(NotImplementedError):
-        build_real_driver()
-    with pytest.raises(NotImplementedError):
-        select_driver("real")

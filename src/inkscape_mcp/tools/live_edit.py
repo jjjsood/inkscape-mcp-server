@@ -18,8 +18,7 @@ from inkscape_mcp.live.edit import (
 )
 from inkscape_mcp.live.protocol import LiveCommand
 from inkscape_mcp.live.render import render_live_view
-from inkscape_mcp.live.scene import get_live_scene
-from inkscape_mcp.live.transport import BBox, LiveMutationResult, LiveTransport
+from inkscape_mcp.live.transport import LiveMutationResult, LiveTransport
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
 from inkscape_mcp.tools._live import ensure_connected, live_png
 from inkscape_mcp.tools._result import guarded, ok
@@ -153,13 +152,7 @@ def live_edit(
             payload["warning"] = "render unavailable"
     elif observe == "diff":
         try:
-            scene = get_live_scene()
-            canvas = None
-            if scene.canvas.width is not None and scene.canvas.height is not None:
-                canvas = BBox(x=0.0, y=0.0, width=scene.canvas.width, height=scene.canvas.height)
-            diff = diff_live_operation(
-                result.operation_id, selection=scene.selection, canvas=canvas
-            )
+            diff = diff_live_operation(result.operation_id)
             images.append(live_png(diff.artifact_path))
             payload["changed_bbox"] = diff.changed_bbox
             payload["highlighted_ids"] = diff.highlighted_ids

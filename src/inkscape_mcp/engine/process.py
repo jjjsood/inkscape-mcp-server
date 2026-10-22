@@ -347,22 +347,6 @@ def _ends_with_prompt(region: str) -> bool:
     return region.endswith("\n" + PROMPT) or region == PROMPT
 
 
-__all__ = [
-    "PROMPT",
-    "EngineActionError",
-    "EngineCrash",
-    "EngineError",
-    "EngineProcess",
-    "EngineResponse",
-    "EngineTimeout",
-    "EngineUnavailable",
-]
-
-
-def _which_inkscape() -> str | None:  # pragma: no cover - thin shim, used by manager/diagnostics
-    return shutil.which("inkscape")
-
-
 def shell_mode_available(settings: Settings | None = None) -> bool:
     """Best-effort: whether a `inkscape --shell` worker can be spawned + framed on this host.
 
@@ -372,7 +356,7 @@ def shell_mode_available(settings: Settings | None = None) -> bool:
     manager commits to shell mode. Bounded by the per-process timeout.
     """
     s = settings if settings is not None else get_settings()
-    if _which_inkscape() is None:
+    if shutil.which("inkscape") is None:
         return False
     proc = EngineProcess(settings=s, label="probe")
     try:

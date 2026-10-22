@@ -48,6 +48,7 @@ from inkscape_mcp.live.transport import (
     LiveTransport,
     LiveViewportResult,
     RenderRegion,
+    first_root,
 )
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
 from inkscape_mcp.operations import OperationStatus
@@ -410,9 +411,7 @@ def export_live_selection(
     selection = _safe_selection(transport)
     png = transport.export_selection()
 
-    if not s.workspace_roots:
-        raise LiveError("no workspace root configured to store the selection export")
-    root = s.workspace_roots[0]
+    root = first_root(s, LiveError, "store the selection export")
     sandbox.ensure_live_dirs(root)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     out = sandbox.live_artifacts_dir(root) / f"live-selection-{stamp}.png"

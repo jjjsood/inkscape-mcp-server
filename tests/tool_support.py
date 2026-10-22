@@ -28,11 +28,10 @@ PNG = b"\x89PNG\r\n\x1a\n"
 
 @dataclass
 class Called:
-    """A tool call's outcome: parsed JSON text, inline images, and the raw result."""
+    """A tool call's outcome: parsed JSON text and inline images."""
 
     data: Any
     images: list[ImageContent] = field(default_factory=list)
-    raw: Any = None
 
 
 def call(app: FastMCP, name: str, args: dict[str, Any] | None = None) -> Called:
@@ -44,7 +43,7 @@ def call(app: FastMCP, name: str, args: dict[str, Any] | None = None) -> Called:
             texts = [c for c in res.content if isinstance(c, TextContent)]
             images = [c for c in res.content if isinstance(c, ImageContent)]
             assert len(texts) == 1, "every tool returns exactly one text block"
-            return Called(data=json.loads(texts[0].text), images=images, raw=res)
+            return Called(data=json.loads(texts[0].text), images=images)
 
     return asyncio.run(go())
 
@@ -77,7 +76,6 @@ def fake_render(calls: list[str]) -> Any:
         rel = out.relative_to(root).as_posix()
         return RenderResult(
             doc_id=doc_id,
-            artifact_path=rel,
             workspace_relative_path=rel,
             format="png",
             width_px=10,
@@ -93,40 +91,39 @@ def tool_schemas(app: FastMCP) -> dict[str, dict[str, Any]]:
     return {t.name: t.parameters for t in asyncio.run(app.list_tools())}
 
 
-def _enums(node: Any) -> set[str]:
-    """Every string `enum` value anywhere inside a JSON-schema fragment."""
+def _enums(node: Any, key: str = "enum") -> set[str]:
+    """Every string `enum` (or `const`) value anywhere inside a JSON-schema fragment."""
     found: set[str] = set()
     if isinstance(node, dict):
-        for key, value in node.items():
-            if key == "enum":
+        for name, value in node.items():
+            if name == key == "enum":
                 found |= {v for v in value if isinstance(v, str)}
+            elif name == key == "const" and isinstance(value, str):
+                found.add(value)
             else:
-                found |= _enums(value)
+                found |= _enums(value, key)
     elif isinstance(node, list):
         for item in node:
-            found |= _enums(item)
+            found |= _enums(item, key)
     return found
 
 
-_OPEN_MODES = {"path", "svg", "canvas", "from_live"}
-_EXPORT_KINDS = {"file", "profile", "save_as"}
+def target_ops(tool: str, schemas: dict[str, dict[str, Any]]) -> set[str]:
+    """The `op` values a `(tool, op)` intent target may carry for `tool`, read off the schemas.
 
-
-def target_ops(tool: str, schema: dict[str, Any]) -> set[str]:
-    """The `op` values a `(tool, op)` intent target may carry for `tool`.
-
-    `edit`: the op names; `open`: the source mode; `export`: the target kind; everything else the
-    enum of its `action` / `topic` / `target` / `include` parameter.
+    `edit`: the op names; `open`: the source modes (its parameters beyond the call options it
+    shares with `edit`); `export`: the target `kind` consts; everything else the enum of its
+    `action` / `topic` / `target` / `include` parameter.
     """
     from inkscape_mcp.edit.op_docs import op_models
 
-    props = schema.get("properties", {})
+    props = schemas[tool].get("properties", {})
     if tool == "edit":
         return set(op_models())
     if tool == "open":
-        return _OPEN_MODES & set(props)
+        return set(props) - set(schemas["edit"]["properties"])
     if tool == "export":
-        return set(_EXPORT_KINDS)
+        return _enums(props["targets"], "const")
     ops: set[str] = set()
     for name in ("action", "topic", "target", "include"):
         ops |= _enums(props.get(name, {}))

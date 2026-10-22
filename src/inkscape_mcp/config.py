@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 
@@ -26,13 +27,10 @@ ENV_MAX_INPUT_BYTES = "INKSCAPE_MCP_MAX_INPUT_BYTES"
 ENV_MAX_EXPORT_PX = "INKSCAPE_MCP_MAX_EXPORT_PX"
 ENV_MAX_OUTPUT_BYTES = "INKSCAPE_MCP_MAX_OUTPUT_BYTES"
 ENV_PROCESS_TIMEOUT_S = "INKSCAPE_MCP_PROCESS_TIMEOUT_S"
-ENV_MAX_PROCS = "INKSCAPE_MCP_MAX_PROCS"
 ENV_SNAPSHOT_KEEP_N = "INKSCAPE_MCP_SNAPSHOT_KEEP_N"
 ENV_SNAPSHOT_KEEP_DAYS = "INKSCAPE_MCP_SNAPSHOT_KEEP_DAYS"
 ENV_SNAPSHOT_HARD_MAX_N = "INKSCAPE_MCP_SNAPSHOT_HARD_MAX_N"
 ENV_SNAPSHOT_HARD_MAX_BYTES = "INKSCAPE_MCP_SNAPSHOT_HARD_MAX_BYTES"
-ENV_ARTIFACT_KEEP_DAYS = "INKSCAPE_MCP_ARTIFACT_KEEP_DAYS"
-ENV_ARTIFACT_MAX_BYTES = "INKSCAPE_MCP_ARTIFACT_MAX_BYTES"
 ENV_ARTIFACT_MAX_BYTES_PER_DOC = "INKSCAPE_MCP_ARTIFACT_MAX_BYTES_PER_DOC"
 
 # Live-view render cache + loop-frame retention knobs. The cache is a bounded LRU; the
@@ -41,7 +39,6 @@ ENV_ARTIFACT_MAX_BYTES_PER_DOC = "INKSCAPE_MCP_ARTIFACT_MAX_BYTES_PER_DOC"
 # a bound into "unbounded" growth.
 ENV_LIVE_CACHE_MAX_ENTRIES = "INKSCAPE_MCP_LIVE_CACHE_MAX_ENTRIES"
 ENV_LIVE_CACHE_MAX_BYTES = "INKSCAPE_MCP_LIVE_CACHE_MAX_BYTES"
-ENV_LIVE_COALESCE_BUDGET_MS = "INKSCAPE_MCP_LIVE_COALESCE_BUDGET_MS"
 ENV_LIVE_FRAME_KEEP_DAYS = "INKSCAPE_MCP_LIVE_FRAME_KEEP_DAYS"
 ENV_LIVE_FRAME_MAX_BYTES = "INKSCAPE_MCP_LIVE_FRAME_MAX_BYTES"
 
@@ -143,15 +140,12 @@ class Settings(BaseModel):
     max_export_px: int = 8192
     max_output_bytes: int = 100 * 1024 * 1024
     process_timeout_s: float = 60.0
-    max_procs: int = 2
 
     snapshot_keep_n: int = 50
     snapshot_keep_days: int = 30
     snapshot_hard_max_n: int = 500
     snapshot_hard_max_bytes: int = 5 * 1024**3
 
-    artifact_keep_days: int = 14
-    artifact_max_bytes: int = 2 * 1024**3
     artifact_max_bytes_per_doc: int = 512 * 1024**2
 
     #: Live-view render cache bounds. The per-session frame cache holds at most
@@ -161,11 +155,6 @@ class Settings(BaseModel):
     #: frame can never be served after the document changes.
     live_cache_max_entries: int = 64
     live_cache_max_bytes: int = 256 * 1024**2
-
-    #: Coalescing latency budget (ms) for the live render cache. Within this window a
-    #: repeated IDENTICAL-key render request returns the just-cached frame instead of launching
-    #: another render, so a burst of same-state requests cannot thrash the renderer. `0` = off.
-    live_coalesce_budget_ms: float = 200.0
 
     #: Loop-frame retention caps. Rasterized live frames accumulate under the root-scoped
     #: live artifacts dir; the EXPLICIT sweep (`sweep_all_roots` / `prune_snapshots`) prunes
@@ -321,6 +310,10 @@ def _env_token_set(key: str, defaults: tuple[str, ...]) -> frozenset[str]:
     return frozenset(tokens)
 
 
+#: Field defaults, so `get_settings` reads each env override's fallback from `Settings` itself.
+_D = Settings()
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Return the process-cached `Settings` singleton (reads env on first call).
@@ -331,35 +324,47 @@ def get_settings() -> Settings:
     return Settings(
         workspace_roots=roots,
         root_diagnostics=diagnostics,
-        max_input_bytes=_env_int(ENV_MAX_INPUT_BYTES, 50 * 1024 * 1024, minimum=1),
-        max_export_px=_env_int(ENV_MAX_EXPORT_PX, 8192, minimum=1),
-        max_output_bytes=_env_int(ENV_MAX_OUTPUT_BYTES, 100 * 1024 * 1024, minimum=1),
-        process_timeout_s=_env_float(ENV_PROCESS_TIMEOUT_S, 60.0, minimum=1.0),
-        max_procs=_env_int(ENV_MAX_PROCS, 2, minimum=1),
-        snapshot_keep_n=_env_int(ENV_SNAPSHOT_KEEP_N, 50),
-        snapshot_keep_days=_env_int(ENV_SNAPSHOT_KEEP_DAYS, 30),
-        snapshot_hard_max_n=_env_int(ENV_SNAPSHOT_HARD_MAX_N, 500),
-        snapshot_hard_max_bytes=_env_int(ENV_SNAPSHOT_HARD_MAX_BYTES, 5 * 1024**3),
-        artifact_keep_days=_env_int(ENV_ARTIFACT_KEEP_DAYS, 14),
-        artifact_max_bytes=_env_int(ENV_ARTIFACT_MAX_BYTES, 2 * 1024**3),
-        artifact_max_bytes_per_doc=_env_int(ENV_ARTIFACT_MAX_BYTES_PER_DOC, 512 * 1024**2),
-        live_cache_max_entries=_env_int(ENV_LIVE_CACHE_MAX_ENTRIES, 64, minimum=1),
-        live_cache_max_bytes=_env_int(ENV_LIVE_CACHE_MAX_BYTES, 256 * 1024**2, minimum=1),
-        live_coalesce_budget_ms=_env_float(ENV_LIVE_COALESCE_BUDGET_MS, 200.0, minimum=0.0),
-        live_frame_keep_days=_env_int(ENV_LIVE_FRAME_KEEP_DAYS, 7),
-        live_frame_max_bytes=_env_int(ENV_LIVE_FRAME_MAX_BYTES, 512 * 1024**2),
-        live_enabled=_env_bool(ENV_LIVE_ENABLED, True),
+        max_input_bytes=_env_int(ENV_MAX_INPUT_BYTES, _D.max_input_bytes, minimum=1),
+        max_export_px=_env_int(ENV_MAX_EXPORT_PX, _D.max_export_px, minimum=1),
+        max_output_bytes=_env_int(ENV_MAX_OUTPUT_BYTES, _D.max_output_bytes, minimum=1),
+        process_timeout_s=_env_float(ENV_PROCESS_TIMEOUT_S, _D.process_timeout_s, minimum=1.0),
+        snapshot_keep_n=_env_int(ENV_SNAPSHOT_KEEP_N, _D.snapshot_keep_n),
+        snapshot_keep_days=_env_int(ENV_SNAPSHOT_KEEP_DAYS, _D.snapshot_keep_days),
+        snapshot_hard_max_n=_env_int(ENV_SNAPSHOT_HARD_MAX_N, _D.snapshot_hard_max_n),
+        snapshot_hard_max_bytes=_env_int(ENV_SNAPSHOT_HARD_MAX_BYTES, _D.snapshot_hard_max_bytes),
+        artifact_max_bytes_per_doc=_env_int(
+            ENV_ARTIFACT_MAX_BYTES_PER_DOC, _D.artifact_max_bytes_per_doc
+        ),
+        live_cache_max_entries=_env_int(
+            ENV_LIVE_CACHE_MAX_ENTRIES, _D.live_cache_max_entries, minimum=1
+        ),
+        live_cache_max_bytes=_env_int(ENV_LIVE_CACHE_MAX_BYTES, _D.live_cache_max_bytes, minimum=1),
+        live_frame_keep_days=_env_int(ENV_LIVE_FRAME_KEEP_DAYS, _D.live_frame_keep_days),
+        live_frame_max_bytes=_env_int(ENV_LIVE_FRAME_MAX_BYTES, _D.live_frame_max_bytes),
+        live_enabled=_env_bool(ENV_LIVE_ENABLED, _D.live_enabled),
         engine_mode=_env_choice(
             ENV_ENGINE_MODE, ENGINE_MODE_PER_CALL, (ENGINE_MODE_PER_CALL, ENGINE_MODE_SHELL)
         ),
-        engine_max_processes=_env_int(ENV_ENGINE_MAX_PROCESSES, 2, minimum=1),
-        engine_idle_timeout_s=_env_float(ENV_ENGINE_IDLE_TIMEOUT_S, 300.0, minimum=1.0),
+        engine_max_processes=_env_int(ENV_ENGINE_MAX_PROCESSES, _D.engine_max_processes, minimum=1),
+        engine_idle_timeout_s=_env_float(
+            ENV_ENGINE_IDLE_TIMEOUT_S, _D.engine_idle_timeout_s, minimum=1.0
+        ),
         edit_previews=_env_choice(
             ENV_EDIT_PREVIEWS,
             EDIT_PREVIEWS_NONE,
             (EDIT_PREVIEWS_NONE, EDIT_PREVIEWS_AFTER, EDIT_PREVIEWS_BEFORE_AFTER),
         ),
-        raw_action_enabled=_env_bool(ENV_RAW_ACTION_ENABLED, False),
+        raw_action_enabled=_env_bool(ENV_RAW_ACTION_ENABLED, _D.raw_action_enabled),
         action_allowlist=_env_token_set(ENV_ACTION_ALLOWLIST, DEFAULT_ACTION_ALLOWLIST),
         extension_allowlist=_env_token_set(ENV_EXTENSION_ALLOWLIST, DEFAULT_EXTENSION_ALLOWLIST),
     )
+
+
+def resolve_settings(settings: Settings | None) -> Settings:
+    """Return `settings` if given, else the process-cached `get_settings()`."""
+    return settings if settings is not None else get_settings()
+
+
+def utc_iso() -> str:
+    """Current UTC time as an ISO-8601 string (shared record/registry timestamp)."""
+    return datetime.now(UTC).isoformat()

@@ -3,7 +3,6 @@
 The session connects on demand: any observing action attaches to the best transport first.
 """
 
-import contextlib
 from typing import Any, Literal
 
 from fastmcp import FastMCP
@@ -21,7 +20,6 @@ from inkscape_mcp.live.events import (
 from inkscape_mcp.live.render import render_live_view
 from inkscape_mcp.live.scene import get_live_scene
 from inkscape_mcp.live.session import get_session_manager
-from inkscape_mcp.live.transport import BBox
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
 from inkscape_mcp.tools._live import Region, ensure_connected, frame_params, live_png
 from inkscape_mcp.tools._result import compact, guarded, ok
@@ -103,11 +101,7 @@ def live(
     elif action == "status":
         payload = get_session_manager().status()
     elif action == "connect":
-        manager = get_session_manager()
-        if manager.status().connected:
-            payload = manager.status()
-        else:
-            payload = manager.connect(prefer=prefer)
+        payload = ensure_connected(prefer).status()
     elif action == "disconnect":
         payload = get_session_manager().disconnect()
     elif action == "install_helper":
@@ -134,14 +128,7 @@ def live(
     elif action == "diff":
         if not operation_id:
             raise ToolError("action='diff' requires operation_id (from a live_edit result)")
-        selection = None
-        canvas = None
-        with contextlib.suppress(Exception):  # annotation only; no session is required
-            scene = get_live_scene()
-            selection = scene.selection
-            if scene.canvas.width is not None and scene.canvas.height is not None:
-                canvas = BBox(x=0.0, y=0.0, width=scene.canvas.width, height=scene.canvas.height)
-        diff = diff_live_operation(operation_id, selection=selection, canvas=canvas)
+        diff = diff_live_operation(operation_id)
         images.append(live_png(diff.artifact_path))
         payload = diff
     else:  # export_selection

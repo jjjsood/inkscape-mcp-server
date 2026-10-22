@@ -15,16 +15,37 @@ import pytest
 
 from inkscape_mcp.config import Settings
 from inkscape_mcp.engine.manager import EngineManager
-from inkscape_mcp.engine.process import EngineProcess
+from inkscape_mcp.engine.process import EngineProcess, EngineResponse
 
 FAKE = [sys.executable, str(Path(__file__).parent / "fake_inkscape_shell.py")]
 
 
-def _manager(settings: Settings) -> EngineManager:
-    return EngineManager(
-        settings=settings,
-        process_factory=lambda: EngineProcess(argv=FAKE, settings=settings),
-    )
+class _RecordingProcess(EngineProcess):
+    """Fake-shell worker that logs every command it is sent (shared log per manager)."""
+
+    def __init__(self, log: list[str], settings: Settings) -> None:
+        super().__init__(argv=FAKE, settings=settings)
+        self._log = log
+
+    def execute(self, command: str, timeout_s: float | None = None) -> EngineResponse:
+        self._log.append(command)
+        return super().execute(command, timeout_s)
+
+
+def _manager(
+    settings: Settings,
+    log: list[str] | None = None,
+    spawned: list[EngineProcess] | None = None,
+) -> EngineManager:
+    log = [] if log is None else log
+    spawned = [] if spawned is None else spawned
+
+    def factory() -> EngineProcess:
+        proc = _RecordingProcess(log, settings)
+        spawned.append(proc)
+        return proc
+
+    return EngineManager(settings=settings, process_factory=factory)
 
 
 @pytest.fixture
@@ -35,40 +56,27 @@ def doc(tmp_path: Path) -> Path:
 
 
 def test_file_open_once_then_reused_when_unchanged(doc: Path) -> None:
-    mgr = _manager(Settings())
-    opens: list[str] = []
-
-    def fn(proc: EngineProcess) -> str:
-        return "ok"
-
+    log: list[str] = []
+    mgr = _manager(Settings(), log)
     try:
-        assert mgr.run(doc, fn) == "ok"
-        first = mgr.active_count
-        # Second run on the unchanged file reuses the same warm worker (no growth).
-        mgr.run(doc, fn)
-        assert mgr.active_count == first == 1
+        assert mgr.run(doc, lambda p: "ok") == "ok"
+        mgr.run(doc, lambda p: "ok")
+        # Unchanged file on the same warm worker: exactly one file-open, no second worker.
+        assert log == [f"file-open:{doc}"]
+        assert mgr.active_count == 1
     finally:
         mgr.shutdown_all()
-    _ = opens
 
 
 def test_stale_file_triggers_reopen(doc: Path) -> None:
-    mgr = _manager(Settings())
-    seen: list[str | None] = []
-
-    def fn(proc: EngineProcess) -> None:
-        seen.append(proc.opened_path)
-
+    log: list[str] = []
+    mgr = _manager(Settings(), log)
     try:
-        mgr.run(doc, fn)
-        opened_mtime = None
-        # Mutate the file so mtime/size change -> next run must re-file-open.
-        time.sleep(0.01)
-        doc.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"/>')
-        mgr.run(doc, fn)
-        # Both runs saw the doc opened (the second re-opened after the change).
-        assert seen == [str(doc), str(doc)]
-        _ = opened_mtime
+        mgr.run(doc, lambda p: None)
+        # Change size (mtime alone may not tick on coarse filesystems) -> must re-file-open.
+        doc.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"/>')
+        mgr.run(doc, lambda p: None)
+        assert log == [f"file-open:{doc}", f"file-open:{doc}"]
     finally:
         mgr.shutdown_all()
 
@@ -106,14 +114,18 @@ def test_crash_restart(doc: Path) -> None:
 
 
 def test_idle_worker_reaped(doc: Path) -> None:
-    mgr = _manager(Settings(engine_idle_timeout_s=1.0))
+    spawned: list[EngineProcess] = []
+    mgr = _manager(Settings(engine_idle_timeout_s=1.0), spawned=spawned)
     try:
         mgr.run(doc, lambda p: None)
-        assert mgr.active_count == 1
         # Force the worker past its idle timeout, then trigger a reap via another acquire.
         time.sleep(1.05)
         mgr.run(doc, lambda p: None)
-        assert mgr.active_count == 1  # reaped + respawned, never accumulates
+        # Reaped (first worker shut down) + respawned; the pool never accumulates.
+        assert len(spawned) == 2
+        assert not spawned[0].is_alive()
+        assert spawned[1].is_alive()
+        assert mgr.active_count == 1
     finally:
         mgr.shutdown_all()
 

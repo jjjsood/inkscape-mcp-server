@@ -44,6 +44,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from inkscape_mcp import config  # noqa: E402
+from inkscape_mcp.runtime.capabilities import one_line_purpose  # noqa: E402
 
 #: Server project root (parent of ``scripts/``) — where the two generated files land.
 SERVER_ROOT = Path(__file__).resolve().parent.parent
@@ -86,15 +87,6 @@ _GENERATED_HEADER = (
 def _group_for(tool: Any) -> str:
     """Map a tool to its category label by name (`Other` when unlisted)."""
     return _NAME_TO_GROUP.get(tool.name, "Other")
-
-
-def _one_line_purpose(description: str | None) -> str:
-    """First non-empty line of the docstring — the tool's one-line purpose."""
-    for line in (description or "").splitlines():
-        stripped = line.strip()
-        if stripped:
-            return stripped
-    return "(no description)"
 
 
 def _risk_class(tool: Any) -> str:
@@ -282,7 +274,7 @@ def render_index(surface: dict[str, Any]) -> str:
         lines.append("")
         lines.append(f"### {label}")
         for tool in bucket:
-            purpose = _one_line_purpose(tool.description)
+            purpose = one_line_purpose(tool.description)
             risk = _risk_class(tool)
             lines.append(f"- {tool.name} [risk: {risk}] — {purpose}")
     lines.append("")

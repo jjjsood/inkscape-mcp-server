@@ -4,7 +4,7 @@ Pure functions over the WORKING COPY of a registered document. Builds on the
 inspection engine (`inkscape_mcp.document.inspect`) for fonts / assets / viewBox data and
 on the foundation subprocess wrapper (`inkscape_mcp.workspace.subprocess_exec`) to query
 installed fonts via `fc-list`. No MCP decorators here; the tool layer
-(`inkscape_mcp.tools.validate`) wraps `validate_document` and maps errors to `ToolError`.
+(`inkscape_mcp.tools.inspect_`) wraps `validate_document` and maps errors to `ToolError`.
 
 READ-ONLY by contract (sec.12, ): nothing here mutates the working copy or the
 original. No repair / auto-fix in (deferred to).
@@ -50,6 +50,7 @@ from inkscape_mcp.document.inspect import (
     inspect_fonts,
     inspect_summary,
     installed_font_families,
+    local_name,
 )
 from inkscape_mcp.fonts.coverage import suggest_covering_family, uncovered_chars
 from inkscape_mcp.logging_setup import get_logger
@@ -385,13 +386,6 @@ def _check_doctype(root: etree._Element, findings: list[Finding]) -> None:
 _TEXT_TAGS = frozenset({"text", "tspan", "textPath", "tref", "flowRoot", "flowPara", "flowSpan"})
 
 
-def _qname_local(tag: object) -> str:
-    """Local element name (namespace stripped); '' for comments / PIs."""
-    if not isinstance(tag, str):
-        return ""
-    return etree.QName(tag).localname
-
-
 def _effective_font_family(
     elem: etree._Element,
     css_rules: list[_CssRule],
@@ -436,7 +430,7 @@ def _check_glyph_coverage(root: etree._Element, findings: list[Finding]) -> None
     for elem in root.iter():
         if not isinstance(elem.tag, str):
             continue
-        if _qname_local(elem.tag) not in _TEXT_TAGS:
+        if local_name(elem) not in _TEXT_TAGS:
             continue
         # Skip a text node nested inside another text node we already covered with the SAME family —
         # but DO analyse a child that declares its own family (a real override).

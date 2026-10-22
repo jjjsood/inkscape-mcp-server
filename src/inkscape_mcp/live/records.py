@@ -15,14 +15,13 @@ from __future__ import annotations
 
 import re
 import secrets
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from inkscape_mcp.config import Settings, get_settings
-from inkscape_mcp.live.transport import LiveDocumentRef, LiveError
+from inkscape_mcp.config import Settings, get_settings, utc_iso
+from inkscape_mcp.live.transport import LiveDocumentRef, LiveError, first_root
 from inkscape_mcp.operations import OperationStatus
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.paths import owning_root
@@ -79,18 +78,8 @@ class LiveOperationLog(BaseModel):
     count: int = 0
 
 
-def _utc_iso() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 def _mint_operation_id() -> str:
     return f"op_{secrets.token_hex(4)}"
-
-
-def _first_root(settings: Settings) -> Path:
-    if not settings.workspace_roots:
-        raise LiveRecordError("no workspace root configured to record the live operation")
-    return settings.workspace_roots[0]
 
 
 def _sanitize_document(
@@ -148,8 +137,8 @@ def new_live_operation(
     """
     s = settings if settings is not None else get_settings()
     policy_decision = enforce_risk_policy(risk_class, approval_token=approval_token)
-    root = _first_root(s)
-    now = _utc_iso()
+    root = first_root(s, LiveRecordError, "record the live operation")
+    now = utc_iso()
     record = LiveOperationRecord(
         operation_id=_mint_operation_id(),
         tool=tool,
@@ -173,10 +162,10 @@ def update_live_operation(
 ) -> LiveOperationRecord:
     """Apply `changes`, bump `updated_at`, re-persist, and return the updated record."""
     s = settings if settings is not None else get_settings()
-    root = _first_root(s)
+    root = first_root(s, LiveRecordError, "record the live operation")
     data = record.model_dump()
     data.update(changes)
-    data["updated_at"] = _utc_iso()
+    data["updated_at"] = utc_iso()
     updated = LiveOperationRecord.model_validate(data)
     # Re-sanitize defensively in case a caller passed a fresh `document` in `changes` (sec.12).
     updated.document = _sanitize_document(updated.document, s)
@@ -213,7 +202,7 @@ def clear_live_operations(settings: Settings | None = None) -> int:
 def get_live_operation(operation_id: str, settings: Settings | None = None) -> LiveOperationRecord:
     """Load a Live Operation Record from disk. Raises `KeyError` if unknown."""
     s = settings if settings is not None else get_settings()
-    root = _first_root(s)
+    root = first_root(s, LiveRecordError, "record the live operation")
     path = _record_path(root, operation_id)
     if not path.is_file():
         raise KeyError(operation_id)

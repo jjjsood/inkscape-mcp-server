@@ -1,6 +1,6 @@
 """Direct-DOM text / object edit engines (ADR-005).
 
-Pure ``mutate(tree) -> str`` functions for the four tools: ``replace_text``,
+Pure ``fn(tree, ...) -> str`` functions for the four tools: ``replace_text``,
 ``set_font``, ``duplicate_object``, and ``rename_object``. Each edits the parsed working tree
 IN MEMORY and returns a short human summary of what changed; none carries an ``@mcp.tool``
 decorator. They are wired into the shared, reversible edit pipeline (`apply_edit`) by the thin
@@ -27,6 +27,7 @@ from inkscape_mcp.document.inspect import (
     _document_css_rules,
     _font_families_from_value,
     _own_paint_value,
+    local_name,
 )
 from inkscape_mcp.edit.dom import (
     SAFE_ID_RE,
@@ -42,7 +43,6 @@ from inkscape_mcp.edit.dom import (
     set_label,
     set_style_property,
 )
-from inkscape_mcp.edit.pipeline import MutateFn
 from inkscape_mcp.fonts.coverage import suggest_covering_family, uncovered_chars
 
 #: Maximum text-content length accepted by :func:`replace_text` (characters). Bounds how much a
@@ -59,13 +59,6 @@ _FORBIDDEN_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
 #: Local names of SVG elements whose primary purpose is to carry text content.
 _TEXT_TAGS = frozenset({"text", "tspan", "textPath", "tref", "flowRoot", "flowPara", "flowSpan"})
-
-
-def _local_name(elem: etree._Element) -> str:
-    tag = elem.tag
-    if not isinstance(tag, str):
-        return ""
-    return etree.QName(tag).localname
 
 
 class FontCoverage(BaseModel):
@@ -153,8 +146,8 @@ def font_coverage_for_root(
     return ok, details
 
 
-def make_replace_text(object_id: str, text: str) -> MutateFn:
-    """Build a ``mutate`` closure that replaces a text element's content.
+def replace_text(tree: etree._ElementTree, object_id: str, text: str) -> str:
+    """Replace a text element's content.
 
     The target (resolved by ``require_target``) must be a text-bearing element
     (``<text>``, ``<tspan>``, ``<textPath>``, flow text, ...); otherwise :class:`EditError` is
@@ -173,42 +166,39 @@ def make_replace_text(object_id: str, text: str) -> MutateFn:
         raise EditError(f"text too long: {len(text)} > {_MAX_TEXT_LEN} characters")
     if _FORBIDDEN_CTRL_RE.search(text):
         raise EditError("text contains forbidden control characters")
+    root = tree.getroot()
+    elem = require_target(root, object_id)
+    if local_name(elem) not in _TEXT_TAGS:
+        raise EditError(f"object {object_id!r} is not a text element")
 
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        elem = require_target(root, object_id)
-        if _local_name(elem) not in _TEXT_TAGS:
-            raise EditError(f"object {object_id!r} is not a text element")
-
-        # Inkscape writes a one-line text as <text><tspan sodipodi:role="line">..</tspan></text>;
-        # keep that single run (its position, style and id) and replace only its content.
-        children = [c for c in elem if isinstance(c.tag, str)]
-        if (
-            len(children) == 1
-            and _local_name(children[0]) == "tspan"
-            and len(children[0]) == 0
-            and not (elem.text or "").strip()
-        ):
-            children[0].text = text
-            return f"replaced text content of {object_id!r}"
-
-        # Collapse any child runs to a single text node, then assign the new content. Dropping
-        # children removes nested tspans/markup so the result is exactly the requested string.
-        for child in list(elem):
-            elem.remove(child)
-        elem.text = text
+    # Inkscape writes a one-line text as <text><tspan sodipodi:role="line">..</tspan></text>;
+    # keep that single run (its position, style and id) and replace only its content.
+    children = [c for c in elem if isinstance(c.tag, str)]
+    if (
+        len(children) == 1
+        and local_name(children[0]) == "tspan"
+        and len(children[0]) == 0
+        and not (elem.text or "").strip()
+    ):
+        children[0].text = text
         return f"replaced text content of {object_id!r}"
 
-    return mutate
+    # Collapse any child runs to a single text node, then assign the new content. Dropping
+    # children removes nested tspans/markup so the result is exactly the requested string.
+    for child in list(elem):
+        elem.remove(child)
+    elem.text = text
+    return f"replaced text content of {object_id!r}"
 
 
-def make_set_font(
+def set_font(
+    tree: etree._ElementTree,
     object_ids: list[str],
     family: str | None = None,
     size: str | None = None,
     weight: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that sets font properties on one or more targets.
+) -> str:
+    """Set font properties on one or more targets.
 
     Sets any provided of ``font-family`` (via ``normalize_font_family``), ``font-size`` (via
     ``normalize_length``), and ``font-weight`` (via ``normalize_font_weight``) on each target's
@@ -229,21 +219,17 @@ def make_set_font(
         props.append(("font-size", normalize_length(size)))
     if weight is not None:
         props.append(("font-weight", normalize_font_weight(weight)))
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        targets = [require_target(root, oid) for oid in object_ids]
-        for elem in targets:
-            for prop, value in props:
-                set_style_property(elem, prop, value)
-        set_props = ", ".join(f"{p}={v}" for p, v in props)
-        return f"set {set_props} on {len(targets)} object(s)"
-
-    return mutate
+    root = tree.getroot()
+    targets = [require_target(root, oid) for oid in object_ids]
+    for elem in targets:
+        for prop, value in props:
+            set_style_property(elem, prop, value)
+    set_props = ", ".join(f"{p}={v}" for p, v in props)
+    return f"set {set_props} on {len(targets)} object(s)"
 
 
-def make_duplicate_object(object_id: str, new_id: str | None = None) -> MutateFn:
-    """Build a ``mutate`` closure that duplicates an object/group in place.
+def duplicate_object(tree: etree._ElementTree, object_id: str, new_id: str | None = None) -> str:
+    """Duplicate an object/group in place.
 
     The target is deep-copied via ``deep_copy_with_new_ids`` (which re-ids every id in the clone
     uniquely and rewrites intra-clone references), and the clone is inserted IMMEDIATELY AFTER
@@ -253,27 +239,23 @@ def make_duplicate_object(object_id: str, new_id: str | None = None) -> MutateFn
     """
     if new_id is not None and not SAFE_ID_RE.match(new_id):
         raise EditError(f"invalid object id: {new_id!r}")
+    root = tree.getroot()
+    elem = require_target(root, object_id)
+    parent = elem.getparent()
+    if parent is None:
+        raise EditError(f"object {object_id!r} cannot be duplicated (it is the document root)")
+    if new_id is not None and new_id in all_ids(root):
+        raise EditError(f"id already in use: {new_id!r}")
 
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        elem = require_target(root, object_id)
-        parent = elem.getparent()
-        if parent is None:
-            raise EditError(f"object {object_id!r} cannot be duplicated (it is the document root)")
-        if new_id is not None and new_id in all_ids(root):
-            raise EditError(f"id already in use: {new_id!r}")
-
-        clone, top_id = deep_copy_with_new_ids(elem, root, new_id)
-        parent.insert(parent.index(elem) + 1, clone)
-        return f"duplicated {object_id!r} as {top_id!r}"
-
-    return mutate
+    clone, top_id = deep_copy_with_new_ids(elem, root, new_id)
+    parent.insert(parent.index(elem) + 1, clone)
+    return f"duplicated {object_id!r} as {top_id!r}"
 
 
-def make_rename_object(
-    object_id: str, new_id: str | None = None, label: str | None = None
-) -> MutateFn:
-    """Build a ``mutate`` closure that changes an object's ``id`` and/or ``inkscape:label``.
+def rename_object(
+    tree: etree._ElementTree, object_id: str, new_id: str | None = None, label: str | None = None
+) -> str:
+    """Change an object's ``id`` and/or ``inkscape:label``.
 
     At least one of ``new_id`` / ``label`` must be supplied (else :class:`EditError`). When
     changing the id, ``new_id`` is validated (safe charset, not already used) and ALL in-document
@@ -291,32 +273,28 @@ def make_rename_object(
             raise EditError(f"label too long: {len(label)} > {_MAX_LABEL_LEN} characters")
         if _FORBIDDEN_CTRL_RE.search(label):
             raise EditError("label contains forbidden control characters")
+    root = tree.getroot()
+    elem = require_target(root, object_id)
+    changes: list[str] = []
 
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        elem = require_target(root, object_id)
-        changes: list[str] = []
+    if new_id is not None:
+        if new_id == object_id:
+            raise EditError("new_id is the same as the current id")
+        if new_id in all_ids(root):
+            raise EditError(f"id already in use: {new_id!r}")
+        elem.set("id", new_id)
+        rewrite_references(root, {object_id: new_id})
+        changes.append(f"id {object_id!r} -> {new_id!r}")
 
-        if new_id is not None:
-            if new_id == object_id:
-                raise EditError("new_id is the same as the current id")
-            if new_id in all_ids(root):
-                raise EditError(f"id already in use: {new_id!r}")
-            elem.set("id", new_id)
-            rewrite_references(root, {object_id: new_id})
-            changes.append(f"id {object_id!r} -> {new_id!r}")
+    if label is not None:
+        set_label(elem, label)
+        changes.append(f"label -> {label!r}")
 
-        if label is not None:
-            set_label(elem, label)
-            changes.append(f"label -> {label!r}")
-
-        return "renamed object: " + "; ".join(changes)
-
-    return mutate
+    return "renamed object: " + "; ".join(changes)
 
 
-def make_delete_objects(object_ids: list[str]) -> MutateFn:
-    """Build a ``mutate`` closure that removes objects by id from the DOM.
+def delete_objects(tree: etree._ElementTree, object_ids: list[str]) -> str:
+    """Remove objects by id from the DOM.
 
     Each id in ``object_ids`` (≥ 1 required, else :class:`EditError`) is looked up and detached from
     its parent. The document root itself cannot be deleted (it has no parent); attempting to delete
@@ -335,34 +313,29 @@ def make_delete_objects(object_ids: list[str]) -> MutateFn:
     """
     if not object_ids:
         raise EditError("delete_object requires at least one object id")
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        removed: list[str] = []
-        for oid in object_ids:
-            elem = find_by_id(root, oid)
-            if elem is None:
-                continue  # already absent — a successful no-op for this id
-            parent = elem.getparent()
-            if parent is None:
-                raise EditError(f"cannot delete the document root ({oid!r})")
-            parent.remove(elem)
-            removed.append(oid)
-        if not removed:
-            # None of the ids existed: leave the tree untouched so the pipeline sees a true no-op.
-            return "no matching objects to delete"
-        return f"deleted {len(removed)} object(s): {', '.join(repr(i) for i in removed)}"
-
-    return mutate
+    root = tree.getroot()
+    removed: list[str] = []
+    for oid in object_ids:
+        elem = find_by_id(root, oid)
+        if elem is None:
+            continue  # already absent — a successful no-op for this id
+        parent = elem.getparent()
+        if parent is None:
+            raise EditError(f"cannot delete the document root ({oid!r})")
+        parent.remove(elem)
+        removed.append(oid)
+    if not removed:
+        # None of the ids existed: leave the tree untouched so the pipeline sees a true no-op.
+        return "no matching objects to delete"
+    return f"deleted {len(removed)} object(s): {', '.join(repr(i) for i in removed)}"
 
 
 __all__ = [
     "FontCoverage",
+    "delete_objects",
+    "duplicate_object",
     "font_coverage_for_root",
-    "make_delete_objects",
-    "make_duplicate_object",
-    "make_rename_object",
-    "make_replace_text",
-    "make_set_font",
-    "resolve_first_family",
+    "rename_object",
+    "replace_text",
+    "set_font",
 ]

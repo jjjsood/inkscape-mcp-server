@@ -1,4 +1,4 @@
-"""Shrink the per-tool input schemas FastMCP generates, in place, after registration.
+"""Shrink the per-tool input schemas FastMCP generates, in place (`tool_tags.apply_tool_meta`).
 
 `tools/list` is resent every turn, so schema boilerplate costs tokens on every call. This pass
 removes what carries no information for a model:
@@ -14,10 +14,7 @@ rejected. The pass is idempotent.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from fastmcp import FastMCP
+from typing import Any
 
 _NULL = {"type": "null"}
 _SCHEMA_MAPS = ("properties", "$defs", "definitions", "patternProperties")
@@ -60,12 +57,3 @@ def compact_schema(node: Any, *, is_def: bool = False) -> None:
     for key in _SCHEMA_NODES:
         compact_schema(node.get(key))
     _fold_nullable(node)
-
-
-def apply_schema_compaction(app: FastMCP) -> None:
-    """Compact the input schema of every registered tool on `app`, in place."""
-    from fastmcp.tools import Tool
-
-    for component in app._local_provider._components.values():
-        if isinstance(component, Tool):
-            compact_schema(component.parameters)

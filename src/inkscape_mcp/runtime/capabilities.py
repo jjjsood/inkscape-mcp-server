@@ -40,8 +40,8 @@ _TOOL_RISK: dict[str, str] = {
 }
 
 
-def _one_line_purpose(description: str | None) -> str:
-    """First non-empty description line: the tool's one-line purpose."""
+def one_line_purpose(description: str | None) -> str:
+    """First non-empty description line: the tool/prompt's one-line purpose."""
     for line in (description or "").splitlines():
         stripped = line.strip()
         if stripped:
@@ -96,7 +96,7 @@ def _registry_tools() -> list[ToolInfo]:
         (
             ToolInfo(
                 name=t.name,
-                purpose=_one_line_purpose(t.description),
+                purpose=one_line_purpose(t.description),
                 risk=risk_for(t.name),
             )
             for t in tools

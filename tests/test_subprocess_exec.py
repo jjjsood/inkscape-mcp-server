@@ -23,6 +23,13 @@ def test_arg_list_echo_works() -> None:
     assert result.args[0] == sys.executable
 
 
+def test_shell_metacharacters_passed_literally() -> None:
+    """argv is never shell-interpreted: `$(id);rm x` reaches the child verbatim."""
+    payload = "$(id);rm x"
+    result = run_process([sys.executable, "-c", "import sys;print(sys.argv[1])", payload], 10)
+    assert result.stdout.rstrip("\n") == payload
+
+
 def test_nonzero_returncode_captured() -> None:
     result = run_process(
         [sys.executable, "-c", "import sys; sys.stderr.write('boom'); sys.exit(3)"],

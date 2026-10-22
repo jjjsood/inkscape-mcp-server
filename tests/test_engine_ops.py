@@ -21,11 +21,18 @@ from inkscape_mcp.config import (
 from inkscape_mcp.engine import ops as ops_mod
 from inkscape_mcp.engine.manager import EngineManager
 from inkscape_mcp.engine.ops import (
+    _assert_shell_safe_path,
     engine_export_document,
-    engine_mode_is_shell,
     engine_run_actions,
 )
-from inkscape_mcp.engine.process import EngineProcess, EngineUnavailable
+from inkscape_mcp.engine.process import (
+    EngineActionError,
+    EngineCrash,
+    EngineProcess,
+    EngineResponse,
+    EngineUnavailable,
+)
+from inkscape_mcp.workspace.xml_safety import UnsafeXMLError, parse_svg_bytes
 
 FAKE = [sys.executable, str(Path(__file__).parent / "fake_inkscape_shell.py")]
 
@@ -81,7 +88,10 @@ def test_engine_export_svg_writes_artifact(
 def test_engine_run_actions_returns_safe_svg_bytes(doc: Path, fake_manager: EngineManager) -> None:
     try:
         data = engine_run_actions(doc, "select-by-id:r1;path-union", settings=Settings())
-        assert data.strip().startswith(b"<svg") or b"<svg" in data
+        # Returned bytes are the EXPORTED result (fake's canned <rect id="r1">, absent from the
+        # input doc) and survive the safe parser.
+        root = parse_svg_bytes(data).getroot()
+        assert root.find(".//{http://www.w3.org/2000/svg}rect").get("id") == "r1"
     finally:
         fake_manager.shutdown_all()
 
@@ -100,11 +110,6 @@ def test_unsafe_working_path_refused(tmp_path: Path, fake_manager: EngineManager
         engine_run_actions(bad, "select-all;path-union", settings=Settings())
 
 
-def test_engine_mode_is_shell_reads_settings() -> None:
-    assert engine_mode_is_shell(Settings(engine_mode=ENGINE_MODE_SHELL)) is True
-    assert engine_mode_is_shell(Settings(engine_mode=ENGINE_MODE_PER_CALL)) is False
-
-
 def test_engine_mode_gate_defaults_and_floors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(ENV_ENGINE_MODE, raising=False)
     get_settings.cache_clear()
@@ -118,3 +123,53 @@ def test_engine_mode_gate_defaults_and_floors(monkeypatch: pytest.MonkeyPatch) -
     get_settings.cache_clear()
     assert get_settings().engine_mode == ENGINE_MODE_PER_CALL  # floors to the safe baseline
     get_settings.cache_clear()
+
+
+def test_unknown_action_aborts_before_export(
+    doc: Path, fake_manager: EngineManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing action must raise BEFORE the export runs (else the unmutated doc is persisted)."""
+    sent: list[str] = []
+    real = EngineProcess.execute
+
+    def spy(self: EngineProcess, command: str, **kw: object) -> EngineResponse:
+        sent.append(command)
+        return real(self, command, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(EngineProcess, "execute", spy)
+    try:
+        with pytest.raises(EngineActionError):
+            engine_run_actions(doc, "select-all;not-a-real-action", settings=Settings())
+        assert sent and not any("export-do" in c for c in sent)
+    finally:
+        fake_manager.shutdown_all()
+
+
+def test_run_actions_output_over_cap_is_engine_crash(
+    doc: Path, fake_manager: EngineManager
+) -> None:
+    try:
+        with pytest.raises(EngineCrash, match="size limit"):
+            engine_run_actions(doc, "select-all", settings=Settings(max_output_bytes=10))
+    finally:
+        fake_manager.shutdown_all()
+
+
+def test_run_actions_unsafe_output_is_engine_crash(
+    doc: Path, fake_manager: EngineManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def reject(_data: bytes) -> None:
+        raise UnsafeXMLError("blocked")
+
+    monkeypatch.setattr(ops_mod, "parse_svg_bytes", reject)
+    try:
+        with pytest.raises(EngineCrash, match="unsafe output"):
+            engine_run_actions(doc, "select-all", settings=Settings())
+    finally:
+        fake_manager.shutdown_all()
+
+
+@pytest.mark.parametrize("bad", ["a;b.svg", "a\nb.svg", "a\rb.svg"])
+def test_shell_unsafe_path_chars_refused(bad: str) -> None:
+    with pytest.raises(EngineUnavailable):
+        _assert_shell_safe_path(Path("/tmp") / bad)

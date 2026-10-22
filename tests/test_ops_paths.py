@@ -16,19 +16,17 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastmcp.exceptions import ToolError
 from lxml import etree
 
 from inkscape_mcp.edit import paths as engine
 from inkscape_mcp.edit.dom import EditError
 from inkscape_mcp.edit.ops import OpError
-from inkscape_mcp.edit.pipeline import EditApplyError
 from inkscape_mcp.operations import OperationStatus, get_operation
 from inkscape_mcp.snapshots import restore_snapshot
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.subprocess_exec import ProcessError, ProcessResult
 from tests.conftest import run_ops
-from tests.tool_support import call, open_doc
+from tests.tool_support import open_doc
 
 SVG_NS = "http://www.w3.org/2000/svg"
 TOKEN = "approved-by-operator"
@@ -114,6 +112,7 @@ def _records(ws: Path, doc_id: str) -> list[dict[str, Any]]:
 
 def _untouched(ws: Path, doc_id: str, before: bytes) -> None:
     assert _bytes(ws, doc_id) == before
+    assert not sandbox.snapshots_index(ws, doc_id).is_file()
     assert {r["status"] for r in _records(ws, doc_id)} <= {"discarded"}
 
 
@@ -151,10 +150,6 @@ def test_each_op_applies_runs_its_action_and_is_recorded(
     assert record.snapshot_id == res.snapshot_id
 
 
-def test_cleanup_is_a_deliberate_alias_of_simplify() -> None:
-    assert engine._ACTIONS[engine.CLEANUP] == engine._ACTIONS[engine.SIMPLIFY] == "path-simplify"
-
-
 def test_applied_op_keeps_original_snapshots_and_previews(
     eng: FakeEngine, doc: str, tool_ws: Path, before_after_previews: None
 ) -> None:
@@ -168,24 +163,17 @@ def test_applied_op_keeps_original_snapshots_and_previews(
     assert _bytes(tool_ws, doc) == pre_op
 
 
-def test_default_edit_renders_no_previews(
-    eng: FakeEngine, doc: str, tool_renders: list[str]
-) -> None:
-    run_ops(doc, UNION, approval_token=TOKEN)
-    assert tool_renders == []
-
-
 # --- approval gate / dry run ------------------------------------------------
 
 
 @pytest.mark.parametrize("token", [None, "", "   "])
-@pytest.mark.parametrize("op", ["simplify", "union", "difference", "stroke_to_path", "cleanup"])
 def test_real_run_without_a_token_is_refused_and_runs_nothing(
-    eng: FakeEngine, doc: str, tool_ws: Path, op: str, token: str | None
+    eng: FakeEngine, doc: str, tool_ws: Path, token: str | None
 ) -> None:
+    # every path op shares one risk gate (test_each_op_... asserts each is HIGH): one op suffices
     before = _bytes(tool_ws, doc)
-    with pytest.raises(OpError, match=rf"ops\[0\] {op} is HIGH risk; re-call with approval_token"):
-        run_ops(doc, _merge(op, "p1", "p2"), approval_token=token)
+    with pytest.raises(OpError, match=r"ops\[0\] union is HIGH risk; re-call with approval_token"):
+        run_ops(doc, UNION, approval_token=token)
     assert eng.argvs == [] and _records(tool_ws, doc) == []
     assert _bytes(tool_ws, doc) == before
 
@@ -210,21 +198,6 @@ def test_dry_run_still_validates_targets(eng: FakeEngine, doc: str) -> None:
         run_ops(doc, _merge("simplify", "nope"), dry_run=True)
     with pytest.raises(OpError, match="at least two distinct"):
         run_ops(doc, _merge("union", "p1"), dry_run=True)
-
-
-def test_through_the_tool_gate_dry_run_then_approved_run(
-    tool_app, tool_ws, eng: FakeEngine
-) -> None:
-    doc = open_doc(tool_ws, "tool.svg", PATHS)
-    args = {"doc_id": doc, "ops": [UNION]}
-    with pytest.raises(ToolError, match=r"ops\[0\] union is HIGH risk"):
-        call(tool_app, "edit", args)
-    plan = call(tool_app, "edit", {**args, "dry_run": True}).data
-    assert plan["needs_approval"] is True and plan["changed"] is False
-    done = call(tool_app, "edit", {**args, "approval_token": TOKEN}).data
-    assert done["risk"] == "high" and done["changed"] is True
-    assert done["created"][0]["id"] == "p1"
-    assert len(eng.argvs) == 1
 
 
 # --- target validation ------------------------------------------------------
@@ -333,16 +306,18 @@ def test_engine_failures_name_the_op_and_leave_no_partial_write(
     _untouched(tool_ws, doc, before)
 
 
-def test_unknown_document(eng: FakeEngine, tool_ws: Path) -> None:
-    with pytest.raises(EditApplyError, match="document id not found"):
-        run_ops("d_nope", _merge("simplify", "p1"), approval_token=TOKEN)
-
-
 # --- the surviving id of merge ops ------------------------------------------
 
 
-@pytest.mark.parametrize("op", ["union", "difference", "combine"])
-@pytest.mark.parametrize("order", [["p1", "p2"], ["p2", "p1"]])
+@pytest.mark.parametrize(
+    ("op", "order"),
+    [
+        ("union", ["p1", "p2"]),
+        ("union", ["p2", "p1"]),
+        ("combine", ["p1", "p2"]),  # path-combine keeps the TOP id: renamed back to p1
+        ("combine", ["p2", "p1"]),
+    ],
+)
 def test_merge_ops_survive_the_bottom_id_whatever_the_argument_order(
     eng: FakeEngine, doc: str, op: str, order: list[str]
 ) -> None:

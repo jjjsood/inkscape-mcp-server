@@ -1,17 +1,16 @@
 """Controlled Action chains and the raw Action, at engine level and through `actions`.
 
-Complements tests/test_actions_tool.py (happy paths of the tool) with the full validation matrix of
-the chain engine (allowlist, capability map, charsets, length caps), the argv/record/rollback
-guarantees of a run, and the gate order of `actions(action='raw')`.
+Covers the full validation matrix of the chain engine (allowlist, capability map, charsets, length
+caps), the argv/record/rollback guarantees of a run, the gate order of `actions(action='raw')`, and
+the read-only `list` / `extensions` discovery actions.
 
 Hermetic: `run_inkscape` of the chain engine is faked (it writes a canned SVG to the temp
-``--export-filename``) and `get_or_build_action_map` returns a synthetic capability map, so the
+``--export-filename``) and `build_action_map` returns a synthetic capability map, so the
 real validation, argv assembly, output re-parse and DOM-replace bridge run end to end.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +24,6 @@ from inkscape_mcp.actions.chains import (
     MAX_CHAIN_STEPS,
     MAX_STEP_ARGS,
     ActionChainError,
-    ActionEngineError,
     ActionStep,
     run_chain_op,
     validate_chain,
@@ -50,10 +48,7 @@ TOKEN = "approved-by-operator"
 #: `path-intersection` is on the default allowlist but deliberately ABSENT here (graceful degrade)
 _MAP = ActionCapabilityMap(
     inkscape_version="1.4.3",
-    inkscape_version_tuple=(1, 4, 3),
     actions=["select-by-id", "object-to-path", "path-union", "path-difference"],
-    action_count=4,
-    probed_at=datetime.now(UTC).isoformat(),
 )
 UNION_CHAIN = [{"action": "select-by-id", "args": ["p1", "p2"]}, {"action": "path-union"}]
 TO_PATH = [{"action": "object-to-path"}]
@@ -89,7 +84,7 @@ class FakeEngine:
 @pytest.fixture
 def eng(monkeypatch: pytest.MonkeyPatch, tool_ws: Path, tool_renders: list[str]) -> FakeEngine:
     fake = FakeEngine()
-    monkeypatch.setattr(chain_engine, "get_or_build_action_map", lambda **kw: _MAP)
+    monkeypatch.setattr(chain_engine, "build_action_map", lambda *a, **kw: _MAP)
     monkeypatch.setattr(chain_engine, "run_inkscape", fake)
     return fake
 
@@ -154,10 +149,12 @@ def test_invalid_chains_carry_a_machine_readable_code(
     assert exc.value.code == code
 
 
-def test_malformed_action_ids_are_refused(eng: FakeEngine) -> None:
+@pytest.mark.parametrize("action", ["bad action;rm -rf", "path-union;file-save", "path-union x"])
+def test_malformed_action_ids_are_refused(eng: FakeEngine, action: str) -> None:
+    # The charset check runs BEFORE the allowlist: an injection-shaped id never reaches it.
     with pytest.raises(ActionChainError) as exc:
-        validate_chain([_step("bad action;rm -rf")])
-    assert exc.value.code in {"malformed_action", "not_allowlisted"}
+        validate_chain([_step(action)])
+    assert exc.value.code == "malformed_action"
 
 
 def test_comma_joined_ids_get_an_actionable_hint_but_other_bad_args_do_not(eng: FakeEngine) -> None:
@@ -204,6 +201,7 @@ def test_validate_returns_argv_preview_and_version_and_writes_nothing(
         ([{"action": "effect.voronoi"}], "not_allowlisted"),
         ([{"action": "path-intersection"}], r"action_absent.*actions\(action='list'\)"),
         ([{"action": "select-by-id", "args": ["p_a,p_b"]}], "malformed_arg.*HINT.*SEPARATE arg"),
+        ([], "at least one"),
     ],
 )
 def test_validate_refuses_a_bad_chain_with_code_and_hint(
@@ -366,13 +364,22 @@ def test_raw_real_run_applies_one_recorded_reversible_step(
     assert _bytes(tool_ws, doc) == before
 
 
-def test_raw_needs_a_known_document_and_a_doc_id(tool_app, eng: FakeEngine) -> None:
+def test_raw_takes_exactly_one_step(tool_app, doc: str, eng: FakeEngine) -> None:
+    with pytest.raises(ToolError, match="exactly one step"):
+        _actions(tool_app, action="raw", doc_id=doc, steps=UNION_CHAIN)
+    assert eng.argvs == []
+
+
+@pytest.mark.parametrize("action", ["run", "raw"])
+def test_run_and_raw_need_a_known_document_and_a_doc_id(
+    tool_app, eng: FakeEngine, action: str
+) -> None:
     with pytest.raises(ToolError, match="requires doc_id"):
-        _actions(tool_app, action="raw", steps=TO_PATH)
+        _actions(tool_app, action=action, steps=TO_PATH, approval_token=TOKEN)
     with pytest.raises(ToolError, match="document id not found"):
         _actions(
             tool_app,
-            action="raw",
+            action=action,
             doc_id="doc_unknown",
             steps=TO_PATH,
             dry_run=False,
@@ -381,9 +388,15 @@ def test_raw_needs_a_known_document_and_a_doc_id(tool_app, eng: FakeEngine) -> N
     assert eng.argvs == []
 
 
-def test_engine_error_other_than_unavailable_keeps_its_own_message() -> None:
-    from inkscape_mcp.tools._result import to_tool_error
+# --- `list` / `extensions`: read-only discovery ---------------------------------------
 
-    assert (
-        str(to_tool_error(ActionEngineError("action chain timed out"))) == "action chain timed out"
-    )
+
+def test_list_and_extensions_report_the_server_side_allowlists(tool_app) -> None:
+    listing = _actions(tool_app, action="list", all=False)
+    assert "actions" not in listing  # all=False drops the full host Action list
+    assert "path-union" in listing["allowlisted"]
+    assert set(listing.get("available", [])) <= set(listing["allowlisted"])
+    ext = _actions(tool_app, action="extensions")
+    # Extension execution is opt-in: the default allowlist is empty and says so (sec.12).
+    assert not ext.get("allowlisted")
+    assert any("OFF by default" in note for note in ext["notes"])

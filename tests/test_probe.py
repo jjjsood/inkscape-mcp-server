@@ -12,7 +12,6 @@ import pytest
 from inkscape_mcp.runtime import probe as probe_mod
 from inkscape_mcp.runtime.probe import (
     MINIMUM_VERSION,
-    Capabilities,
     _parse_action_list,
     _parse_export_types,
     _parse_version,
@@ -57,17 +56,6 @@ def test_parse_action_list_basic() -> None:
     )
     actions = _parse_action_list(stdout)
     assert actions == ["export-do", "object-to-path", "effect.voronoi"]
-
-
-def test_probe_returns_capabilities_type() -> None:
-    caps = probe_capabilities()
-    assert isinstance(caps, Capabilities)
-    # Always-present fields regardless of Inkscape availability.
-    assert isinstance(caps.python_version, str) and caps.python_version
-    assert isinstance(caps.notes, list)
-    assert isinstance(caps.actions, list)
-    assert isinstance(caps.export_types, list)
-    assert caps.probed_at.endswith("+00:00") or "Z" in caps.probed_at
 
 
 @pytest.mark.inkscape
@@ -127,6 +115,7 @@ def test_missing_inkscape_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
     assert caps.font_count == 0
     # Python version is intrinsic and still reported.
     assert caps.python_version
+    assert caps.probed_at.endswith("+00:00")  # UTC timestamp
     # A degradation note must explain the missing binary.
     assert any("inkscape not found" in note for note in caps.notes)
 

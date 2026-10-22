@@ -65,18 +65,15 @@ def register_tools() -> None:
     from inkscape_mcp.resources import prompts as prompts_resources  # noqa: F401
     from inkscape_mcp.resources import runtime  # noqa: F401
 
-    # tools, then the post-registration passes (annotations, compact schemas, tags + flag gating).
+    # tools, then the post-registration passes (tags, annotations, compact schemas, flag gating).
     # Registration replaces an earlier one, so tests may call `register_tools()` repeatedly; the
     # gating pass is re-evaluatable, so the visible surface always matches the current flags.
-    from inkscape_mcp.schema_compact import apply_schema_compaction
-    from inkscape_mcp.tool_annotations import apply_annotations
-    from inkscape_mcp.tool_tags import apply_tags_and_disclosure
+    from inkscape_mcp.tool_tags import apply_disclosure, apply_tool_meta
     from inkscape_mcp.tools import register_all
 
     register_all(mcp)
-    apply_annotations(mcp)
-    apply_schema_compaction(mcp)
-    apply_tags_and_disclosure(mcp)
+    apply_tool_meta(mcp)
+    apply_disclosure(mcp)
 
 
 def main() -> None:

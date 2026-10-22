@@ -1,12 +1,12 @@
 """Direct-DOM element-creation / defs / grouping engines (, ADR-005).
 
-Pure ``mutate(tree) -> str`` builders for the authoring surface: one engine per shape primitive
+Pure ``fn(tree, ...) -> str`` edits for the authoring surface: one engine per shape primitive
 (``create_rect`` / ``create_circle`` / ``create_ellipse`` / ``create_line`` / ``create_polygon`` /
 ``create_polyline`` / ``create_path`` / ``create_text``), the gradient/defs builders
 (``add_linear_gradient`` / ``add_radial_gradient``), and the structural builders (``create_group`` /
 ``group_objects`` / ``reparent_object`` / ``create_use``). Each function validates its inputs up
-front (raising :class:`EditError` / :class:`TargetNotFound`), then returns a closure that edits the
-parsed working tree IN MEMORY and returns a short human summary. None carries an ``@mcp.tool``
+front (raising :class:`EditError` / :class:`TargetNotFound`), then edits the parsed working tree
+IN MEMORY and returns a short human summary. None carries an ``@mcp.tool``
 decorator; the thin tool layer wires them into the shared, reversible edit pipeline (`apply_edit`)
 so every change gets a snapshot + Operation Record + before/after preview (ADR-004).
 
@@ -31,7 +31,7 @@ import secrets
 
 from lxml import etree
 
-from inkscape_mcp.document.inspect import SVG_NS, XLINK_NS
+from inkscape_mcp.document.inspect import SVG_NS, XLINK_NS, is_element, local_name
 from inkscape_mcp.edit.dom import (
     SAFE_ID_RE,
     EditError,
@@ -46,19 +46,18 @@ from inkscape_mcp.edit.dom import (
     require_target,
     set_style_property,
 )
-from inkscape_mcp.edit.pipeline import MutateFn
 
 _SVG = f"{{{SVG_NS}}}"
 _XLINK_HREF = f"{{{XLINK_NS}}}href"
 
-#: Maximum length of a path ``d`` string accepted by :func:`make_create_path` (characters). Bounds
+#: Maximum length of a path ``d`` string accepted by :func:`create_path` (characters). Bounds
 #: an otherwise unbounded attribute write driven by client input; well above any realistic path.
 _MAX_PATH_LEN = 200_000
 
-#: Maximum text-content length accepted by :func:`make_create_text` (characters).
+#: Maximum text-content length accepted by :func:`create_text` (characters).
 _MAX_TEXT_LEN = 100_000
 
-#: Maximum number of points accepted by :func:`make_create_polygon` / :func:`make_create_polyline`.
+#: Maximum number of points accepted by :func:`create_polygon` / :func:`create_polyline`.
 _MAX_POINTS = 100_000
 
 #: Maximum number of gradient stops accepted by the gradient builders.
@@ -72,7 +71,7 @@ _FORBIDDEN_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 #: rejected so a ``d`` value can never carry markup or a function call. Geometry is NOT parsed.
 _PATH_D_RE = re.compile(r"^[\d\s,.+\-eEMmLlHhVvCcSsQqTtAaZz]+$")
 
-#: Maximum length of a ``transform`` value accepted by :func:`make_create_use` (characters).
+#: Maximum length of a ``transform`` value accepted by :func:`create_use` (characters).
 _MAX_TRANSFORM_LEN = 2_000
 
 #: A ``transform`` value: one or more allowed transform functions (numeric args only) separated by
@@ -86,17 +85,6 @@ _TRANSFORM_RE = re.compile(
 _INKSCAPE_GROUPMODE = "{http://www.inkscape.org/namespaces/inkscape}groupmode"
 _INKSCAPE_CURRENT_LAYER = "{http://www.inkscape.org/namespaces/inkscape}current-layer"
 _SODIPODI_INSENSITIVE = "{http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd}insensitive"
-
-
-def _is_element(elem: etree._Element) -> bool:
-    return isinstance(elem.tag, str)
-
-
-def _local_name(elem: etree._Element) -> str:
-    tag = elem.tag
-    if not isinstance(tag, str):
-        return ""
-    return etree.QName(tag).localname
 
 
 def _gen_id(prefix: str, existing: set[str]) -> str:
@@ -121,8 +109,8 @@ def _resolve_id(supplied: str | None, prefix: str, existing: set[str]) -> str:
 def _usable_layer(elem: etree._Element) -> bool:
     """A top-level Inkscape layer that is neither locked nor hidden."""
     return (
-        _is_element(elem)
-        and _local_name(elem) == "g"
+        is_element(elem)
+        and local_name(elem) == "g"
         and elem.get(_INKSCAPE_GROUPMODE) == "layer"
         and elem.get(_SODIPODI_INSENSITIVE) != "true"
         and "display:none" not in (elem.get("style") or "").replace(" ", "")
@@ -139,7 +127,7 @@ def _default_parent(root: etree._Element) -> etree._Element:
     Locked (``sodipodi:insensitive``) and hidden layers are skipped at every step.
     """
     for child in root:
-        if _is_element(child) and _local_name(child) == "namedview":
+        if is_element(child) and local_name(child) == "namedview":
             current = child.get(_INKSCAPE_CURRENT_LAYER)
             for layer in root.iter():  # sub-layers too
                 if current and layer.get("id") == current and _usable_layer(layer):
@@ -209,7 +197,7 @@ def _canon_inline_style(
     Mirrors how ``set_fill`` / ``set_stroke`` validate paint: ``fill`` / ``stroke`` go through
     :func:`dom.normalize_paint` (a colour OR a ``url(#id)`` paint-server reference; CSS-injection
     punctuation rejected), ``stroke_width`` through :func:`dom.normalize_length`. Each unset value
-    stays ``None`` (current behaviour). Raising HERE (before the closure runs) means an invalid
+    stays ``None`` (current behaviour). Raising HERE (before the tree is touched) means an invalid
     colour fails the call before any pipeline side effect, exactly like a bad geometry value.
     """
     safe_fill = None if fill is None else normalize_paint(fill)
@@ -238,7 +226,8 @@ def _apply_inline_style(
 # --- Shape primitives ----------------------------------------------
 
 
-def make_create_rect(
+def create_rect(
+    tree: etree._ElementTree,
     x: float,
     y: float,
     width: float,
@@ -251,8 +240,8 @@ def make_create_rect(
     fill: str | None = None,
     stroke: str | None = None,
     stroke_width: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that inserts a ``<rect>``.
+) -> str:
+    """Insert a ``<rect>``.
 
     ``x`` / ``y`` are the top-left corner, ``width`` / ``height`` the size (both must be > 0); the
     optional ``rx`` / ``ry`` are corner radii (≥ 0). The rect is appended to ``parent_id`` (must
@@ -266,24 +255,21 @@ def make_create_rect(
     srx = None if rx is None else _non_negative(rx, "rx")
     sry = None if ry is None else _non_negative(ry, "ry")
     style = _canon_inline_style(fill, stroke, stroke_width)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        parent = _resolve_parent(root, parent_id)
-        new_id = _resolve_id(object_id, "rect", all_ids(root))
-        attrs = {"id": new_id, "x": sx, "y": sy, "width": sw, "height": sh}
-        if srx is not None:
-            attrs["rx"] = srx
-        if sry is not None:
-            attrs["ry"] = sry
-        elem = _append(parent, "rect", attrs)
-        _apply_inline_style(elem, *style)
-        return f"created <rect> {new_id!r}"
-
-    return mutate
+    root = tree.getroot()
+    parent = _resolve_parent(root, parent_id)
+    new_id = _resolve_id(object_id, "rect", all_ids(root))
+    attrs = {"id": new_id, "x": sx, "y": sy, "width": sw, "height": sh}
+    if srx is not None:
+        attrs["rx"] = srx
+    if sry is not None:
+        attrs["ry"] = sry
+    elem = _append(parent, "rect", attrs)
+    _apply_inline_style(elem, *style)
+    return f"created <rect> {new_id!r}"
 
 
-def make_create_circle(
+def create_circle(
+    tree: etree._ElementTree,
     cx: float,
     cy: float,
     r: float,
@@ -293,24 +279,21 @@ def make_create_circle(
     fill: str | None = None,
     stroke: str | None = None,
     stroke_width: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that inserts a ``<circle>`` at ``(cx, cy)``, radius r (> 0)."""
+) -> str:
+    """Insert a ``<circle>`` at ``(cx, cy)``, radius r (> 0)."""
     scx, scy = _num(cx, "cx"), _num(cy, "cy")
     sr = _positive(r, "r")
     style = _canon_inline_style(fill, stroke, stroke_width)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        parent = _resolve_parent(root, parent_id)
-        new_id = _resolve_id(object_id, "circle", all_ids(root))
-        elem = _append(parent, "circle", {"id": new_id, "cx": scx, "cy": scy, "r": sr})
-        _apply_inline_style(elem, *style)
-        return f"created <circle> {new_id!r}"
-
-    return mutate
+    root = tree.getroot()
+    parent = _resolve_parent(root, parent_id)
+    new_id = _resolve_id(object_id, "circle", all_ids(root))
+    elem = _append(parent, "circle", {"id": new_id, "cx": scx, "cy": scy, "r": sr})
+    _apply_inline_style(elem, *style)
+    return f"created <circle> {new_id!r}"
 
 
-def make_create_ellipse(
+def create_ellipse(
+    tree: etree._ElementTree,
     cx: float,
     cy: float,
     rx: float,
@@ -321,25 +304,22 @@ def make_create_ellipse(
     fill: str | None = None,
     stroke: str | None = None,
     stroke_width: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that inserts an ``<ellipse>`` at ``(cx, cy)`` with radii rx/ry."""
+) -> str:
+    """Insert an ``<ellipse>`` at ``(cx, cy)`` with radii rx/ry."""
     scx, scy = _num(cx, "cx"), _num(cy, "cy")
     srx, sry = _positive(rx, "rx"), _positive(ry, "ry")
     style = _canon_inline_style(fill, stroke, stroke_width)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        parent = _resolve_parent(root, parent_id)
-        new_id = _resolve_id(object_id, "ellipse", all_ids(root))
-        attrs = {"id": new_id, "cx": scx, "cy": scy, "rx": srx, "ry": sry}
-        elem = _append(parent, "ellipse", attrs)
-        _apply_inline_style(elem, *style)
-        return f"created <ellipse> {new_id!r}"
-
-    return mutate
+    root = tree.getroot()
+    parent = _resolve_parent(root, parent_id)
+    new_id = _resolve_id(object_id, "ellipse", all_ids(root))
+    attrs = {"id": new_id, "cx": scx, "cy": scy, "rx": srx, "ry": sry}
+    elem = _append(parent, "ellipse", attrs)
+    _apply_inline_style(elem, *style)
+    return f"created <ellipse> {new_id!r}"
 
 
-def make_create_line(
+def create_line(
+    tree: etree._ElementTree,
     x1: float,
     y1: float,
     x2: float,
@@ -350,21 +330,17 @@ def make_create_line(
     fill: str | None = None,
     stroke: str | None = None,
     stroke_width: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that inserts a ``<line>`` from ``(x1, y1)`` to ``(x2, y2)``."""
+) -> str:
+    """Insert a ``<line>`` from ``(x1, y1)`` to ``(x2, y2)``."""
     sx1, sy1 = _num(x1, "x1"), _num(y1, "y1")
     sx2, sy2 = _num(x2, "x2"), _num(y2, "y2")
     style = _canon_inline_style(fill, stroke, stroke_width)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        parent = _resolve_parent(root, parent_id)
-        new_id = _resolve_id(object_id, "line", all_ids(root))
-        elem = _append(parent, "line", {"id": new_id, "x1": sx1, "y1": sy1, "x2": sx2, "y2": sy2})
-        _apply_inline_style(elem, *style)
-        return f"created <line> {new_id!r}"
-
-    return mutate
+    root = tree.getroot()
+    parent = _resolve_parent(root, parent_id)
+    new_id = _resolve_id(object_id, "line", all_ids(root))
+    elem = _append(parent, "line", {"id": new_id, "x1": sx1, "y1": sy1, "x2": sx2, "y2": sy2})
+    _apply_inline_style(elem, *style)
+    return f"created <line> {new_id!r}"
 
 
 def _validate_points(points: list[tuple[float, float]], field: str) -> tuple[str, list[float]]:
@@ -387,7 +363,8 @@ def _validate_points(points: list[tuple[float, float]], field: str) -> tuple[str
     return " ".join(parts), flat
 
 
-def make_create_polygon(
+def create_polygon(
+    tree: etree._ElementTree,
     points: list[tuple[float, float]],
     *,
     parent_id: str | None = None,
@@ -395,23 +372,20 @@ def make_create_polygon(
     fill: str | None = None,
     stroke: str | None = None,
     stroke_width: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that inserts a closed ``<polygon>`` from ``points``."""
+) -> str:
+    """Insert a closed ``<polygon>`` from ``points``."""
     points_attr, _ = _validate_points(points, "polygon")
     style = _canon_inline_style(fill, stroke, stroke_width)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        parent = _resolve_parent(root, parent_id)
-        new_id = _resolve_id(object_id, "polygon", all_ids(root))
-        elem = _append(parent, "polygon", {"id": new_id, "points": points_attr})
-        _apply_inline_style(elem, *style)
-        return f"created <polygon> {new_id!r}"
-
-    return mutate
+    root = tree.getroot()
+    parent = _resolve_parent(root, parent_id)
+    new_id = _resolve_id(object_id, "polygon", all_ids(root))
+    elem = _append(parent, "polygon", {"id": new_id, "points": points_attr})
+    _apply_inline_style(elem, *style)
+    return f"created <polygon> {new_id!r}"
 
 
-def make_create_polyline(
+def create_polyline(
+    tree: etree._ElementTree,
     points: list[tuple[float, float]],
     *,
     parent_id: str | None = None,
@@ -419,23 +393,20 @@ def make_create_polyline(
     fill: str | None = None,
     stroke: str | None = None,
     stroke_width: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that inserts an open ``<polyline>`` from ``points``."""
+) -> str:
+    """Insert an open ``<polyline>`` from ``points``."""
     points_attr, _ = _validate_points(points, "polyline")
     style = _canon_inline_style(fill, stroke, stroke_width)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        parent = _resolve_parent(root, parent_id)
-        new_id = _resolve_id(object_id, "polyline", all_ids(root))
-        elem = _append(parent, "polyline", {"id": new_id, "points": points_attr})
-        _apply_inline_style(elem, *style)
-        return f"created <polyline> {new_id!r}"
-
-    return mutate
+    root = tree.getroot()
+    parent = _resolve_parent(root, parent_id)
+    new_id = _resolve_id(object_id, "polyline", all_ids(root))
+    elem = _append(parent, "polyline", {"id": new_id, "points": points_attr})
+    _apply_inline_style(elem, *style)
+    return f"created <polyline> {new_id!r}"
 
 
-def make_create_path(
+def create_path(
+    tree: etree._ElementTree,
     d: str,
     *,
     parent_id: str | None = None,
@@ -443,8 +414,8 @@ def make_create_path(
     fill: str | None = None,
     stroke: str | None = None,
     stroke_width: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that inserts a ``<path>`` with the validated ``d``.
+) -> str:
+    """Insert a ``<path>`` with the validated ``d``.
 
     ``d`` is validated against a STRICT charset — digits, whitespace, ``,``, ``.``, sign, exponent,
     and the SVG path command letters (``MmLlHhVvCcSsQqTtAaZz``) only — and length-bounded; geometry
@@ -460,19 +431,16 @@ def make_create_path(
     if not _PATH_D_RE.match(raw):
         raise EditError("path d contains invalid characters")
     style = _canon_inline_style(fill, stroke, stroke_width)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        parent = _resolve_parent(root, parent_id)
-        new_id = _resolve_id(object_id, "path", all_ids(root))
-        elem = _append(parent, "path", {"id": new_id, "d": raw})
-        _apply_inline_style(elem, *style)
-        return f"created <path> {new_id!r}"
-
-    return mutate
+    root = tree.getroot()
+    parent = _resolve_parent(root, parent_id)
+    new_id = _resolve_id(object_id, "path", all_ids(root))
+    elem = _append(parent, "path", {"id": new_id, "d": raw})
+    _apply_inline_style(elem, *style)
+    return f"created <path> {new_id!r}"
 
 
-def make_create_text(
+def create_text(
+    tree: etree._ElementTree,
     x: float,
     y: float,
     text: str,
@@ -483,8 +451,8 @@ def make_create_text(
     stroke: str | None = None,
     stroke_width: str | None = None,
     anchor: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that inserts a ``<text>`` anchored at ``(x, y)``.
+) -> str:
+    """Insert a ``<text>`` anchored at ``(x, y)``.
 
     ``anchor`` (``start`` / ``middle`` / ``end``) sets ``text-anchor`` so ``x`` is the left edge,
     the centre or the right edge of the text.
@@ -502,19 +470,15 @@ def make_create_text(
     style = _canon_inline_style(fill, stroke, stroke_width)
     if anchor not in (None, "start", "middle", "end"):
         raise EditError("anchor must be 'start', 'middle' or 'end'")
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        parent = _resolve_parent(root, parent_id)
-        new_id = _resolve_id(object_id, "text", all_ids(root))
-        elem = _append(parent, "text", {"id": new_id, "x": sx, "y": sy})
-        if anchor is not None:
-            elem.set("text-anchor", anchor)
-        _apply_inline_style(elem, *style)
-        elem.text = text
-        return f"created <text> {new_id!r}"
-
-    return mutate
+    root = tree.getroot()
+    parent = _resolve_parent(root, parent_id)
+    new_id = _resolve_id(object_id, "text", all_ids(root))
+    elem = _append(parent, "text", {"id": new_id, "x": sx, "y": sy})
+    if anchor is not None:
+        elem.set("text-anchor", anchor)
+    _apply_inline_style(elem, *style)
+    elem.text = text
+    return f"created <text> {new_id!r}"
 
 
 # --- defs / gradients ----------------------------------------------
@@ -523,7 +487,7 @@ def make_create_text(
 def _ensure_defs(root: etree._Element) -> etree._Element:
     """Return the document's ``<defs>``, creating one as the FIRST child of the root if absent."""
     for child in root:
-        if _is_element(child) and _local_name(child) == "defs":
+        if is_element(child) and local_name(child) == "defs":
             return child
     defs = etree.Element(f"{_SVG}defs")
     root.insert(0, defs)
@@ -604,7 +568,8 @@ def _build_stops(grad: etree._Element, stops: list[dict[str, object]]) -> None:
         stop_el.set("style", ";".join(decls))
 
 
-def make_add_linear_gradient(
+def add_linear_gradient(
+    tree: etree._ElementTree,
     stops: list[dict[str, object]],
     *,
     x1: str = "0%",
@@ -612,8 +577,8 @@ def make_add_linear_gradient(
     x2: str = "100%",
     y2: str = "0%",
     object_id: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that adds a ``<linearGradient>`` to ``<defs>``.
+) -> str:
+    """Add a ``<linearGradient>`` to ``<defs>``.
 
     The vector is ``(x1, y1) -> (x2, y2)`` (each a number or percentage, default a left-to-right
     horizontal sweep). ``stops`` is a list of ``{offset, color, opacity?}`` (≥ 1). The gradient is
@@ -622,26 +587,21 @@ def make_add_linear_gradient(
     """
     sx1, sy1 = _coordinate(x1, "x1"), _coordinate(y1, "y1")
     sx2, sy2 = _coordinate(x2, "x2"), _coordinate(y2, "y2")
-    # Validate stops eagerly so a bad input fails before any pipeline side effect.
-    _build_stops(etree.Element(f"{_SVG}linearGradient"), stops)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        new_id = _resolve_id(object_id, "lg", all_ids(root))
-        defs = _ensure_defs(root)
-        grad = etree.SubElement(defs, f"{_SVG}linearGradient")
-        grad.set("id", new_id)
-        grad.set("x1", sx1)
-        grad.set("y1", sy1)
-        grad.set("x2", sx2)
-        grad.set("y2", sy2)
-        _build_stops(grad, stops)
-        return f"created <linearGradient> {new_id!r}"
-
-    return mutate
+    grad = etree.Element(f"{_SVG}linearGradient")
+    _build_stops(grad, stops)  # validate before touching the tree
+    root = tree.getroot()
+    new_id = _resolve_id(object_id, "lg", all_ids(root))
+    _ensure_defs(root).append(grad)
+    grad.set("id", new_id)
+    grad.set("x1", sx1)
+    grad.set("y1", sy1)
+    grad.set("x2", sx2)
+    grad.set("y2", sy2)
+    return f"created <linearGradient> {new_id!r}"
 
 
-def make_add_radial_gradient(
+def add_radial_gradient(
+    tree: etree._ElementTree,
     stops: list[dict[str, object]],
     *,
     cx: str = "50%",
@@ -650,8 +610,8 @@ def make_add_radial_gradient(
     fx: str | None = None,
     fy: str | None = None,
     object_id: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that adds a ``<radialGradient>`` to ``<defs>``.
+) -> str:
+    """Add a ``<radialGradient>`` to ``<defs>``.
 
     The gradient is centred at ``(cx, cy)`` with radius ``r`` (each a number or percentage, default
     a centred 50%/50% circle); ``fx`` / ``fy`` optionally set the focal point. ``stops`` is a list
@@ -661,58 +621,51 @@ def make_add_radial_gradient(
     scx, scy, sr = _coordinate(cx, "cx"), _coordinate(cy, "cy"), _coordinate(r, "r")
     sfx = None if fx is None else _coordinate(fx, "fx")
     sfy = None if fy is None else _coordinate(fy, "fy")
-    _build_stops(etree.Element(f"{_SVG}radialGradient"), stops)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        new_id = _resolve_id(object_id, "rg", all_ids(root))
-        defs = _ensure_defs(root)
-        grad = etree.SubElement(defs, f"{_SVG}radialGradient")
-        grad.set("id", new_id)
-        grad.set("cx", scx)
-        grad.set("cy", scy)
-        grad.set("r", sr)
-        if sfx is not None:
-            grad.set("fx", sfx)
-        if sfy is not None:
-            grad.set("fy", sfy)
-        _build_stops(grad, stops)
-        return f"created <radialGradient> {new_id!r}"
-
-    return mutate
+    grad = etree.Element(f"{_SVG}radialGradient")
+    _build_stops(grad, stops)
+    root = tree.getroot()
+    new_id = _resolve_id(object_id, "rg", all_ids(root))
+    _ensure_defs(root).append(grad)
+    grad.set("id", new_id)
+    grad.set("cx", scx)
+    grad.set("cy", scy)
+    grad.set("r", sr)
+    if sfx is not None:
+        grad.set("fx", sfx)
+    if sfy is not None:
+        grad.set("fy", sfy)
+    return f"created <radialGradient> {new_id!r}"
 
 
 # --- grouping / symbols --------------------------------------------
 
 
-def make_create_group(
+def create_group(
+    tree: etree._ElementTree,
     *,
     parent_id: str | None = None,
     object_id: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that inserts an empty ``<g>`` group.
+) -> str:
+    """Insert an empty ``<g>`` group.
 
     The group is appended to ``parent_id`` (must exist) or the document default parent. Use
-    :func:`make_group_objects` to wrap EXISTING objects in a new group; this creates an empty one to
+    :func:`group_objects` to wrap EXISTING objects in a new group; this creates an empty one to
     populate later (e.g. by re-parenting objects into it).
     """
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        parent = _resolve_parent(root, parent_id)
-        new_id = _resolve_id(object_id, "g", all_ids(root))
-        _append(parent, "g", {"id": new_id})
-        return f"created <g> {new_id!r}"
-
-    return mutate
+    root = tree.getroot()
+    parent = _resolve_parent(root, parent_id)
+    new_id = _resolve_id(object_id, "g", all_ids(root))
+    _append(parent, "g", {"id": new_id})
+    return f"created <g> {new_id!r}"
 
 
-def make_group_objects(
+def group_objects(
+    tree: etree._ElementTree,
     object_ids: list[str],
     *,
     object_id: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that wraps existing objects in a NEW ``<g>``.
+) -> str:
+    """Wrap existing objects in a NEW ``<g>``.
 
     Every id in ``object_ids`` must exist (≥ 1) and they are moved (in document order) into a fresh
     group inserted at the position of the FIRST target in that target's parent — so the group takes
@@ -721,33 +674,30 @@ def make_group_objects(
     """
     if not object_ids:
         raise EditError("group_objects requires at least one object id")
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        targets = [require_target(root, oid) for oid in object_ids]
-        first = targets[0]
-        anchor_parent = first.getparent()
-        if anchor_parent is None:
-            raise EditError("cannot group the document root")
-        new_id = _resolve_id(object_id, "g", all_ids(root))
-        group = etree.Element(f"{_SVG}g")
-        group.set("id", new_id)
-        anchor_parent.insert(anchor_parent.index(first), group)
-        for elem in targets:
-            parent = elem.getparent()
-            if parent is not None:
-                parent.remove(elem)
-            group.append(elem)
-        return f"grouped {len(targets)} object(s) into {new_id!r}"
-
-    return mutate
+    root = tree.getroot()
+    targets = [require_target(root, oid) for oid in object_ids]
+    first = targets[0]
+    anchor_parent = first.getparent()
+    if anchor_parent is None:
+        raise EditError("cannot group the document root")
+    new_id = _resolve_id(object_id, "g", all_ids(root))
+    group = etree.Element(f"{_SVG}g")
+    group.set("id", new_id)
+    anchor_parent.insert(anchor_parent.index(first), group)
+    for elem in targets:
+        parent = elem.getparent()
+        if parent is not None:
+            parent.remove(elem)
+        group.append(elem)
+    return f"grouped {len(targets)} object(s) into {new_id!r}"
 
 
-def make_reparent_object(
+def reparent_object(
+    tree: etree._ElementTree,
     object_id: str,
     new_parent_id: str,
-) -> MutateFn:
-    """Build a ``mutate`` closure that moves an object under a new parent.
+) -> str:
+    """Move an object under a new parent.
 
     ``object_id`` is detached from its current parent and APPENDED to ``new_parent_id`` (both must
     exist). The move is rejected if the new parent is the object itself or one of its descendants
@@ -755,27 +705,24 @@ def make_reparent_object(
     parent changes. NOTE: re-parenting changes the inherited coordinate space — an object's visual
     position can shift if the old and new parents carry different transforms.
     """
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        elem = require_target(root, object_id)
-        new_parent = require_target(root, new_parent_id)
-        if new_parent is elem:
-            raise EditError("cannot reparent an object under itself")
-        for node in elem.iter():
-            if node is new_parent:
-                raise EditError("cannot reparent an object under its own descendant")
-        old_parent = elem.getparent()
-        if old_parent is None:
-            raise EditError("cannot reparent the document root")
-        old_parent.remove(elem)
-        new_parent.append(elem)
-        return f"reparented {object_id!r} under {new_parent_id!r}"
-
-    return mutate
+    root = tree.getroot()
+    elem = require_target(root, object_id)
+    new_parent = require_target(root, new_parent_id)
+    if new_parent is elem:
+        raise EditError("cannot reparent an object under itself")
+    for node in elem.iter():
+        if node is new_parent:
+            raise EditError("cannot reparent an object under its own descendant")
+    old_parent = elem.getparent()
+    if old_parent is None:
+        raise EditError("cannot reparent the document root")
+    old_parent.remove(elem)
+    new_parent.append(elem)
+    return f"reparented {object_id!r} under {new_parent_id!r}"
 
 
-def make_create_use(
+def create_use(
+    tree: etree._ElementTree,
     href_id: str,
     *,
     parent_id: str | None = None,
@@ -783,8 +730,8 @@ def make_create_use(
     x: float | None = None,
     y: float | None = None,
     transform: str | None = None,
-) -> MutateFn:
-    """Build a ``mutate`` closure that inserts a ``<use href="#id">`` to an existing object.
+) -> str:
+    """Insert a ``<use href="#id">`` to an existing object.
 
     ``href_id`` is the id of the element to reference; it MUST be a same-document id (validated
     against the safe-id charset and required to exist). External / ``javascript:`` / ``url(...)``
@@ -805,41 +752,37 @@ def make_create_use(
     sx = None if x is None else _num(x, "x")
     sy = None if y is None else _num(y, "y")
     st = None if transform is None else _validate_transform(transform)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        if find_by_id(root, href_id) is None:
-            raise EditError(f"href target {href_id!r} not found in document")
-        parent = _resolve_parent(root, parent_id)
-        new_id = _resolve_id(object_id, "use", all_ids(root))
-        use = etree.SubElement(parent, f"{_SVG}use")
-        use.set("id", new_id)
-        use.set(_XLINK_HREF, f"#{href_id}")
-        use.set("href", f"#{href_id}")
-        if sx is not None:
-            use.set("x", sx)
-        if sy is not None:
-            use.set("y", sy)
-        if st is not None:
-            use.set("transform", st)
-        return f"created <use> {new_id!r} -> #{href_id}"
-
-    return mutate
+    root = tree.getroot()
+    if find_by_id(root, href_id) is None:
+        raise EditError(f"href target {href_id!r} not found in document")
+    parent = _resolve_parent(root, parent_id)
+    new_id = _resolve_id(object_id, "use", all_ids(root))
+    use = etree.SubElement(parent, f"{_SVG}use")
+    use.set("id", new_id)
+    use.set(_XLINK_HREF, f"#{href_id}")
+    use.set("href", f"#{href_id}")
+    if sx is not None:
+        use.set("x", sx)
+    if sy is not None:
+        use.set("y", sy)
+    if st is not None:
+        use.set("transform", st)
+    return f"created <use> {new_id!r} -> #{href_id}"
 
 
 __all__ = [
-    "make_add_linear_gradient",
-    "make_add_radial_gradient",
-    "make_create_circle",
-    "make_create_ellipse",
-    "make_create_group",
-    "make_create_line",
-    "make_create_path",
-    "make_create_polygon",
-    "make_create_polyline",
-    "make_create_rect",
-    "make_create_text",
-    "make_create_use",
-    "make_group_objects",
-    "make_reparent_object",
+    "add_linear_gradient",
+    "add_radial_gradient",
+    "create_circle",
+    "create_ellipse",
+    "create_group",
+    "create_line",
+    "create_path",
+    "create_polygon",
+    "create_polyline",
+    "create_rect",
+    "create_text",
+    "create_use",
+    "group_objects",
+    "reparent_object",
 ]

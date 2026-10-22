@@ -1,10 +1,10 @@
 """Adopt agent-composed SVG into a tracked working copy (ADR-004/005, sec.12).
 
-Two ``mutate(tree) -> str`` builders plus the SVG-string safe-parse + STRICT allowlist scrubber:
+Two ``fn(tree, ...) -> str`` edits plus the SVG-string safe-parse + STRICT allowlist scrubber:
 
-- :func:`make_set_document_svg` replaces the WHOLE working-copy document with an agent-composed SVG
+- :func:`set_document_svg` replaces the WHOLE working-copy document with an agent-composed SVG
   string (the root must be ``<svg>``).
-- :func:`make_insert_svg_fragment` inserts an agent-composed fragment under a parent (by id) or the
+- :func:`insert_svg_fragment` inserts an agent-composed fragment under a parent (by id) or the
   document root.
 
 Both go through the shared, reversible edit pipeline (`apply_edit`) at ``RiskClass.HIGH`` —
@@ -43,7 +43,6 @@ from inkscape_mcp.edit.dom import (
     parse_viewbox,
     require_target,
 )
-from inkscape_mcp.edit.pipeline import MutateFn
 from inkscape_mcp.workspace.xml_safety import UnsafeXMLError, parse_svg_string
 
 #: Allowed SVG element local-names (the safe authoring vocabulary). Deliberately EXCLUDES `script`,
@@ -407,37 +406,33 @@ def _positive_finite(value: float) -> bool:
     return num > 0 and num == num and num not in (float("inf"), float("-inf"))
 
 
-def make_set_document_svg(svg: str) -> MutateFn:
-    """Build a `mutate` closure that REPLACES the whole document with an agent-composed SVG string.
+def set_document_svg(tree: etree._ElementTree, svg: str) -> str:
+    """Replace the whole document with an agent-composed SVG string.
 
     The incoming `svg` is safe-parsed + allowlist-scrubbed up front (so a bad input fails before any
     pipeline side effect), and its root MUST be an `<svg>` element (a fragment is rejected — use
-    :func:`make_insert_svg_fragment` for that). On apply, the working tree's root element is
+    :func:`insert_svg_fragment` for that). On apply, the working tree's root element is
     replaced wholesale with the validated root. Reversible via the pipeline's pre-mutation snapshot.
     """
     new_root = parse_and_scrub(svg)
     if _local_name(new_root.tag) != "svg":
         raise ComposeError("set_document_svg requires the SVG root element to be <svg>")
-
-    def mutate(tree: etree._ElementTree) -> str:
-        old_root = tree.getroot()
-        # Replace the tree's root in place: graft the validated root over the parsed tree's root by
-        # swapping the underlying element. lxml has no setroot on a parsed tree, so we re-point the
-        # tree by replacing the old root with the new one at the document level.
-        parent = old_root.getparent()
-        if parent is not None:  # pragma: no cover - a document root has no parent
-            parent.replace(old_root, new_root)
-        else:
-            tree._setroot(new_root)
-        return "replaced document with composed svg"
-
-    return mutate
+    old_root = tree.getroot()
+    # Replace the tree's root in place: graft the validated root over the parsed tree's root by
+    # swapping the underlying element. lxml has no setroot on a parsed tree, so we re-point the
+    # tree by replacing the old root with the new one at the document level.
+    parent = old_root.getparent()
+    if parent is not None:  # pragma: no cover - a document root has no parent
+        parent.replace(old_root, new_root)
+    else:
+        tree._setroot(new_root)
+    return "replaced document with composed svg"
 
 
-def make_insert_svg_fragment(
-    svg: str, parent_id: str | None = None, unwrap: bool = True
-) -> MutateFn:
-    """Build a `mutate` closure that inserts an agent-composed SVG fragment under a parent.
+def insert_svg_fragment(
+    tree: etree._ElementTree, svg: str, parent_id: str | None = None, unwrap: bool = True
+) -> str:
+    """Insert an agent-composed SVG fragment under a parent.
 
     The incoming `svg` is safe-parsed + allowlist-scrubbed up front (so a bad/disallowed fragment
     fails before any pipeline side effect). XML requires a single root element, so the fragment is
@@ -459,36 +454,29 @@ def make_insert_svg_fragment(
     `<svg>` wrapper when `unwrap=True`) and `TargetNotFound` for an absent `parent_id`.
     """
     frag_root = parse_and_scrub(svg)
-
-    def mutate(tree: etree._ElementTree) -> str:
-        root = tree.getroot()
-        parent = require_target(root, parent_id) if parent_id is not None else root
-        # With `unwrap` on, a wrapper <svg> is unwrapped (graft its children); with it off, the
-        # <svg> is kept as an explicit nested container. Any non-<svg> single element is inserted
-        # as-is regardless. This lets a caller pass `<svg>…multiple shapes…</svg>` and get the
-        # shapes (default), opt to keep the nested `<svg>`, or pass one `<g>`/`<rect>`/… intact.
-        if unwrap and _local_name(frag_root.tag) == "svg":
-            children = [c for c in frag_root if isinstance(c.tag, str)]
-            if not children:
-                raise ComposeError("composed fragment <svg> wrapper is empty")
-            for child in children:
-                parent.append(child)
-            return f"inserted {len(children)} element(s) from composed fragment"
-        parent.append(frag_root)
-        return f"inserted <{_local_name(frag_root.tag)}> from composed fragment"
-
-    return mutate
+    root = tree.getroot()
+    parent = require_target(root, parent_id) if parent_id is not None else root
+    # With `unwrap` on, a wrapper <svg> is unwrapped (graft its children); with it off, the
+    # <svg> is kept as an explicit nested container. Any non-<svg> single element is inserted
+    # as-is regardless. This lets a caller pass `<svg>…multiple shapes…</svg>` and get the
+    # shapes (default), opt to keep the nested `<svg>`, or pass one `<g>`/`<rect>`/… intact.
+    if unwrap and _local_name(frag_root.tag) == "svg":
+        children = [c for c in frag_root if isinstance(c.tag, str)]
+        if not children:
+            raise ComposeError("composed fragment <svg> wrapper is empty")
+        for child in children:
+            parent.append(child)
+        return f"inserted {len(children)} element(s) from composed fragment"
+    parent.append(frag_root)
+    return f"inserted <{_local_name(frag_root.tag)}> from composed fragment"
 
 
 __all__ = [
-    "ALLOWED_ATTRS",
-    "ALLOWED_ELEMENTS",
     "ComposeError",
     "EditError",
     "TargetNotFound",
     "build_blank_svg",
-    "make_insert_svg_fragment",
-    "make_set_document_svg",
+    "insert_svg_fragment",
     "parse_and_scrub",
-    "scrub_tree",
+    "set_document_svg",
 ]

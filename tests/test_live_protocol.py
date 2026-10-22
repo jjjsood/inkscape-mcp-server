@@ -47,11 +47,6 @@ def test_command_surface_is_fixed_and_has_no_code_passthrough() -> None:
         assert hostile not in names
 
 
-def test_protocol_version_is_five() -> None:
-    # bumped the wire schema to v5 (cheap change-detection read); client refuses a mismatch.
-    assert PROTOCOL_VERSION == 5
-
-
 def test_helper_extension_mirrors_protocol_version_in_lockstep() -> None:
     # The shipped helper cannot import protocol.py; its mirrored constant MUST match (lock-step).
     import ast
@@ -140,3 +135,14 @@ def test_parse_response_rejects_error_frame() -> None:
 def test_parse_response_requires_ok_discriminator() -> None:
     with pytest.raises(ProtocolError):
         parse_response({"v": PROTOCOL_VERSION, "result": {}})
+
+
+def test_recv_message_deeply_nested_json_is_a_protocol_error() -> None:
+    a, b = socket.socketpair()
+    try:
+        a.sendall(b"[" * 100_000 + b"\n")  # RecursionError in json must not escape the contract
+        with pytest.raises(ProtocolError):
+            recv_message(b)
+    finally:
+        a.close()
+        b.close()

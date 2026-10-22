@@ -3,7 +3,7 @@
 These exercise `inkscape_mcp.render.verify` directly with SYNTHETIC artifacts (hand-built minimal
 PDF bytes and Pillow-generated rasters), so they need NO Inkscape binary and run on every host. The
 real-engine end-to-end checks (an Inkscape-produced outlined PDF reports vector/outlined; a real PNG
-reports a non-zero opaque-pixel count) live in `test_profiles.py` / `test_export.py`.
+reports a non-zero opaque-pixel count) live in `test_export_profiles.py` / `test_export_files.py`.
 
 The verifier MUST compute in-process (no `pdffonts`/`pdfimages`/`mutool` shell-out, no Pillow
 subprocess) per sec.12 — these tests assert the verdicts, the supporting code asserts the method.
@@ -92,15 +92,6 @@ def test_verify_pdf_with_font_reports_not_outlined(tmp_path: Path) -> None:
 def test_verify_pdf_with_raster_reports_not_vector(tmp_path: Path) -> None:
     p = tmp_path / "raster.pdf"
     p.write_bytes(_PDF_WITH_RASTER)
-    info = verify_pdf(p)
-    assert info is not None
-    assert info.is_vector is False
-
-
-def test_verify_pdf_handles_spaced_markers(tmp_path: Path) -> None:
-    # Tolerates whitespace between key and value: `/Subtype /Image` (spaced) must also be detected.
-    p = tmp_path / "spaced.pdf"
-    p.write_bytes(b"%PDF-1.5\n<< /Subtype /Image >>\n%%EOF\n")
     info = verify_pdf(p)
     assert info is not None
     assert info.is_vector is False

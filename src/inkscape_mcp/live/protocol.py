@@ -136,7 +136,7 @@ def recv_message(sock: socket.socket, max_bytes: int = MAX_MESSAGE_BYTES) -> dic
     raw = b"".join(chunks).rstrip(b"\n")
     try:
         obj = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise ProtocolError("message is not valid UTF-8 JSON") from exc
     if not isinstance(obj, dict):
         raise ProtocolError("message is not a JSON object")

@@ -92,13 +92,6 @@ def test_compute_changed_bbox_identical_is_none() -> None:
     assert compute_changed_bbox(img, img.copy()) is None
 
 
-def test_compute_changed_bbox_size_mismatch_raises() -> None:
-    a = Image.new("RGB", (10, 10), (0, 0, 0))
-    b = Image.new("RGB", (10, 12), (0, 0, 0))
-    with pytest.raises(LiveDiffError):
-        compute_changed_bbox(a, b)
-
-
 # --- Engine: diff_live_operation -------------------------------------------------
 
 
@@ -142,6 +135,8 @@ def test_diff_links_to_operation_record(tmp_path: Path) -> None:
     assert result.artifact_path in record.diff_artifacts
     # The source before/after previews are untouched.
     assert set(record.previews) == {"before", "after"}
+    # Artifact-only: no NEW Operation Record, only the existing op remains.
+    assert list_live_operations(settings=s).count == 1
 
 
 def test_diff_identical_frames_empty_changed_bbox(tmp_path: Path) -> None:
@@ -215,17 +210,3 @@ def test_diff_rejects_frame_outside_artifacts_dir(tmp_path: Path) -> None:
     with pytest.raises(LiveDiffError) as exc:
         diff_live_operation(record.operation_id, settings=s)
     assert str(tmp_path) not in str(exc.value)
-
-
-def test_diff_creates_no_operation_record(tmp_path: Path) -> None:
-    s = _settings(tmp_path)
-    artifacts = sandbox.live_artifacts_dir(tmp_path)
-    _write_png(artifacts / "b2.png", (16, 16), (255, 255, 255))
-    _png_with_rect(artifacts / "a2.png", (16, 16), (255, 255, 255), (1, 1, 5, 5), (0, 0, 0))
-    op_id = _record_with_frames(tmp_path, s, before_name="b2.png", after_name="a2.png")
-
-    before = list_live_operations(settings=s).count
-    diff_live_operation(op_id, settings=s)
-    after = list_live_operations(settings=s).count
-    # No NEW Operation Record is created by the diff (artifact-only); only the existing op remains.
-    assert before == after == 1

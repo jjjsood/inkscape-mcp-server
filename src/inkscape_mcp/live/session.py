@@ -12,12 +12,11 @@ it; the public `LiveSession` model never exposes the live socket or any host-int
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from threading import Lock
 
 from pydantic import BaseModel, Field
 
-from inkscape_mcp.config import Settings, get_settings
+from inkscape_mcp.config import Settings, get_settings, utc_iso
 from inkscape_mcp.live.cache import RenderCache
 from inkscape_mcp.live.records import clear_live_operations
 from inkscape_mcp.live.selection import (
@@ -26,6 +25,7 @@ from inkscape_mcp.live.selection import (
     probe_transports,
     select_transport,
 )
+from inkscape_mcp.live.socket_backend import ExtensionSocketTransport
 from inkscape_mcp.live.transport import (
     LiveChange,
     LiveDisabled,
@@ -38,12 +38,6 @@ from inkscape_mcp.live.transport import (
 from inkscape_mcp.logging_setup import get_logger
 
 _logger = get_logger("live.session")
-
-#: Stable identifier of the extension-socket transport (`ExtensionSocketTransport.name`). Held as a
-#: local constant so `status()` can reconcile `available_transports` (R10) WITHOUT importing the
-#: socket backend module directly — keeping this module's import graph minimal. It must stay in
-#: lockstep with the backend's `name` class attribute.
-_EXTENSION_SOCKET_NAME = "extension-socket"
 
 
 class LiveSession(BaseModel):
@@ -60,10 +54,6 @@ class LiveSession(BaseModel):
     )
     connected_at: str | None = Field(default=None, description="UTC ISO-8601 connect timestamp.")
     notes: list[str] = Field(default_factory=list, description="Clean human-readable status notes.")
-
-
-def _utc_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _extension_socket_installed() -> bool:
@@ -96,7 +86,7 @@ class LiveSessionManager:
         #: every connect/disconnect so a stale token can never survive a new session.
         self._last_token: LiveStateToken | None = None
         self._last_change: LiveChange | None = None
-        #: Per-session bounded render-frame cache + coalescing state. Built on connect from
+        #: Per-session bounded render-frame cache. Built on connect from
         #: the settings bounds and reset on every connect/disconnect so a frame from one session can
         #: never leak into another. None while disconnected.
         self._render_cache: RenderCache | None = None
@@ -114,8 +104,8 @@ class LiveSessionManager:
             # that installed-but-no-session transport here too, so `available_transports` agrees
             # with `diagnose_runtime`'s `live_extension_socket_available` (the socket bridge is the
             # cross-platform primary per the live-mode rule and must not be hidden from the list).
-            if _extension_socket_installed() and _EXTENSION_SOCKET_NAME not in available:
-                available.append(_EXTENSION_SOCKET_NAME)
+            if _extension_socket_installed() and ExtensionSocketTransport.name not in available:
+                available.append(ExtensionSocketTransport.name)
             connected = self._transport is not None and self._transport.is_connected()
             notes: list[str] = []
             if not self._settings.live_enabled:
@@ -211,12 +201,11 @@ class LiveSessionManager:
                 transport.disconnect()
                 raise
             self._transport = transport
-            self._connected_at = _utc_iso()
+            self._connected_at = utc_iso()
             self._active_document = active_document
             self._render_cache = RenderCache(
                 max_entries=self._settings.live_cache_max_entries,
                 max_bytes=self._settings.live_cache_max_bytes,
-                coalesce_budget_ms=self._settings.live_coalesce_budget_ms,
             )
             _logger.info(
                 "live session opened",

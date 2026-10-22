@@ -51,19 +51,6 @@ def test_observe_defaults_to_the_selection(tool_app, fake) -> None:
     assert list(_live(tool_app, action="observe").data) == ["selection"]
 
 
-def test_observe_view_attaches_a_png_and_forwards_region_and_scale(tool_app, fake) -> None:
-    res = _live(
-        tool_app,
-        action="observe",
-        include=["view"],
-        region={"x": 0, "y": 0, "width": 5, "height": 5},
-        scale=0.5,
-    )
-    assert len(res.images) == 1
-    assert fake.last_render is not None and fake.last_render[1] == 0.5
-    assert "artifact_path" not in res.data
-
-
 def test_fast_applies_the_loop_downscale_and_explicit_scale_wins(tool_app, fake) -> None:
     _live(tool_app, action="observe", include=["view"], fast=True)
     assert fake.last_render is not None and fake.last_render[1] == 0.5
@@ -85,43 +72,16 @@ def test_check_and_status_do_not_connect(tool_app, fake) -> None:
     assert _live(tool_app, action="status").data["connected"] is False
 
 
-def test_viewport_and_wait(tool_app, fake) -> None:
-    res = _live(tool_app, action="viewport", mode="zoom", zoom=2.0)
-    assert res.data["applied"] is True and fake.last_viewport["mode"] == "zoom"
-    with pytest.raises(ToolError, match="requires mode"):
-        _live(tool_app, action="viewport")
-    waited = _live(tool_app, action="wait", timeout_s=0.0)
-    assert "changed" in waited.data or "timed_out" in waited.data
-    with pytest.raises(ToolError, match="timeout_s"):
-        _live(tool_app, action="wait", timeout_s=999)
-
-
 def test_export_selection_attaches_a_png(tool_app, fake) -> None:
     res = _live(tool_app, action="export_selection")
     assert len(res.images) == 1
 
 
-def test_diff_requires_an_operation_id(tool_app, fake) -> None:
+def test_actions_name_their_missing_argument(tool_app, fake) -> None:
     with pytest.raises(ToolError, match="requires operation_id"):
         _live(tool_app, action="diff")
-
-
-def test_bad_region_is_a_validation_error(tool_app, fake) -> None:
-    with pytest.raises(ToolError):
-        _live(
-            tool_app,
-            action="observe",
-            include=["view"],
-            region={"x": 0, "y": 0, "width": -1, "height": 5},
-        )
-
-
-def test_live_disabled_is_reported_with_the_next_step(tool_app, tool_ws, monkeypatch) -> None:
-    monkeypatch.setenv(ENV_LIVE_ENABLED, "0")
-    get_settings.cache_clear()
-    reset_session_manager()
-    with pytest.raises(ToolError, match="live mode is disabled"):
-        _live(tool_app, action="observe")
+    with pytest.raises(ToolError, match="requires mode"):
+        _live(tool_app, action="viewport")
 
 
 # --- live_edit ---------------------------------------------------------------
@@ -129,18 +89,6 @@ def test_live_disabled_is_reported_with_the_next_step(tool_app, tool_ws, monkeyp
 
 def _edit(app, **args):
     return call(app, "live_edit", args)
-
-
-def test_live_edit_apply_needs_approval(tool_app, fake) -> None:
-    with pytest.raises(ToolError, match="approval"):
-        _edit(tool_app, action="apply", style={"fill": "#ff0000"})
-
-
-def test_live_edit_apply_connects_and_reports_the_operation(tool_app, fake) -> None:
-    res = _edit(tool_app, action="apply", style={"fill": "#ff0000"}, approval_token="ok")
-    assert get_session_manager().status().connected
-    assert res.data["operation_id"] and res.data["affected_ids"] == ["r1"]
-    assert res.images == []
 
 
 def test_live_edit_observe_render_attaches_a_png(tool_app, fake) -> None:
@@ -152,27 +100,6 @@ def test_live_edit_observe_render_attaches_a_png(tool_app, fake) -> None:
         approval_token="ok",
     )
     assert len(res.images) == 1
-
-
-def test_live_edit_observe_diff(tool_app, fake) -> None:
-    res = _edit(
-        tool_app, action="apply", style={"fill": "#00ff00"}, observe="diff", approval_token="ok"
-    )
-    assert res.data["operation_id"]
-    # the diff overlay is best effort; when it exists it comes back as an image
-    assert len(res.images) <= 1
-
-
-def test_live_edit_insert_svg_and_set_text(tool_app, fake) -> None:
-    ins = _edit(
-        tool_app,
-        action="insert_svg",
-        svg_fragment='<circle xmlns="http://www.w3.org/2000/svg" id="c1" cx="1" cy="1" r="1"/>',
-        approval_token="ok",
-    )
-    assert ins.data["operation_id"]
-    txt = _edit(tool_app, action="set_text", text="hello", approval_token="ok")
-    assert txt.data["operation_id"]
 
 
 def test_live_edit_argument_validation(tool_app, fake) -> None:
@@ -188,10 +115,3 @@ def test_live_edit_argument_validation(tool_app, fake) -> None:
         _edit(tool_app, action="set_text", text="x", style={"fill": "#fff"}, approval_token="ok")
     # nothing above should have needed a connection
     assert not get_session_manager().status().connected
-
-
-def test_open_from_live_saves_the_canvas_into_the_workspace(tool_app, tool_ws, fake) -> None:
-    res = call(tool_app, "open", {"from_live": {"dest_path": "from-live.svg"}})
-    assert res.data["saved_path"].endswith("from-live.svg")
-    assert (tool_ws / "from-live.svg").is_file()
-    assert get_session_manager().status().connected

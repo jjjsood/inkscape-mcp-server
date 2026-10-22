@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 from fastmcp import Client
-from fastmcp.exceptions import ResourceError
+from mcp.shared.exceptions import McpError
 
 from inkscape_mcp.document.inspect import (
     DocAssets,
@@ -35,7 +35,7 @@ from inkscape_mcp.document.inspect import (
 from inkscape_mcp.live.records import LiveOperationLog
 from inkscape_mcp.live.session import LiveSession
 from inkscape_mcp.live.transport import LiveChange, LiveScene, LiveSelection
-from inkscape_mcp.resources.document import document_summary, document_tree, documents_index
+from inkscape_mcp.resources.document import documents_index
 from inkscape_mcp.runtime.probe import Capabilities
 from inkscape_mcp.server import mcp, register_tools
 from tests.tool_support import open_doc
@@ -115,10 +115,11 @@ def test_all_seven_templates_are_registered() -> None:
     assert {f"inkscape://document/{{doc_id}}/{leaf}" for leaf in DOC_RESOURCES} <= templates
 
 
-@pytest.mark.parametrize("fn", [document_summary, document_tree])
-def test_unknown_id_is_a_resource_error(fn, doc: str) -> None:
-    with pytest.raises(ResourceError, match="not found"):
-        fn("d_does_not_exist")
+@pytest.mark.parametrize("leaf", ["summary", "tree"])
+def test_unknown_id_is_a_resource_error(leaf: str, tool_ws) -> None:
+    with pytest.raises(McpError, match="not found") as exc:
+        _read(f"inkscape://document/d_does_not_exist/{leaf}")
+    assert str(tool_ws) not in str(exc.value) and "/tmp" not in str(exc.value)
 
 
 def test_objects_resource_carries_bbox_and_paint(doc: str) -> None:
@@ -147,10 +148,10 @@ def test_tree_bbox_matches_objects_and_leaks_no_host_path(doc: str) -> None:
     assert "/tmp" not in text and "working" not in text
 
 
-def test_fonts_resource_flags_availability_and_user(doc: str) -> None:
+def test_fonts_resource_names_the_user(doc: str) -> None:
     fonts = DocFonts.model_validate_json(_read(f"inkscape://document/{doc}/fonts"))
     arial = next(f for f in fonts.fonts if f.family == "Arial")
-    assert arial.used_by == "t1" and arial.available in (True, False, None)
+    assert arial.used_by == "t1"
 
 
 # --- the documents index: how an agent discovers concrete per-doc URIs ---------------------------

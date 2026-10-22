@@ -59,25 +59,6 @@ def test_new_operation_writes_proposed_record(
     assert on_disk["tool"] == "set_style"
 
 
-def test_update_operation_transitions_and_links_snapshot(
-    reg_with_doc: tuple[Registry, str, Settings],
-) -> None:
-    reg, doc_id, _ = reg_with_doc
-    rec = new_operation(
-        doc_id, tool="set_style", risk_class=RiskClass.MEDIUM, params={}, registry=reg
-    )
-    updated = update_operation(
-        rec,
-        registry=reg,
-        status=OperationStatus.APPLIED,
-        snapshot_id="0001-op_x",
-    )
-    assert updated.status is OperationStatus.APPLIED
-    assert updated.snapshot_id == "0001-op_x"
-    assert updated.updated_at >= rec.updated_at
-    assert updated.operation_id == rec.operation_id
-
-
 def test_get_operation_round_trips(
     reg_with_doc: tuple[Registry, str, Settings],
 ) -> None:
@@ -91,13 +72,19 @@ def test_get_operation_round_trips(
         approval_token="approved-once",
     )
     update_operation(
-        rec, registry=reg, status=OperationStatus.APPLIED, artifacts=["preview-after.png"]
+        rec,
+        registry=reg,
+        status=OperationStatus.APPLIED,
+        snapshot_id="0001-op_x",
+        artifacts=["preview-after.png"],
     )
     loaded = get_operation(doc_id, rec.operation_id, registry=reg)
     assert loaded.operation_id == rec.operation_id
     assert loaded.status is OperationStatus.APPLIED
     assert loaded.artifacts == ["preview-after.png"]
     assert loaded.risk_class is RiskClass.HIGH
+    assert loaded.snapshot_id == "0001-op_x"
+    assert loaded.updated_at >= rec.updated_at
 
 
 def test_get_operation_unknown_raises(

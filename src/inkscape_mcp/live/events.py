@@ -32,6 +32,7 @@ import math
 import time
 from typing import Any
 
+from inkscape_mcp.live.scene import opt_float
 from inkscape_mcp.live.session import LiveSessionManager, get_session_manager
 from inkscape_mcp.live.transport import LiveChange, LiveStateToken, LiveTransport
 from inkscape_mcp.logging_setup import get_logger, log_event
@@ -61,31 +62,15 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
-def _opt_number(value: Any) -> float | None:
-    """Coerce a JSON number to a finite float, or None (rejects NaN/inf, bools, non-numbers)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    num = float(value)
-    return num if math.isfinite(num) else None
-
-
 def _revision_digest(raw: Any) -> str:
     """Digest the document revision marker (a string/number the helper supplies, e.g. a content or
     undo-counter hash). A missing/odd value digests to a stable empty marker rather than raising."""
     if isinstance(raw, str):
         return _digest(raw)
-    num = _opt_number(raw)
+    num = opt_float(raw)
     if num is not None:
         return _digest(repr(num))
     return _digest("")
-
-
-def _selection_digest(raw: Any) -> str:
-    """Digest the ORDERED selection ids (order matters: a reordered selection is a change)."""
-    if not isinstance(raw, list):
-        return _digest("")
-    ids = [str(i) for i in raw[:_MAX_SELECTION_IDS] if isinstance(i, str)]
-    return _digest("\x1f".join(ids))
 
 
 def _viewport_digest(raw: Any) -> str:
@@ -93,11 +78,11 @@ def _viewport_digest(raw: Any) -> str:
     placeholder so a buggy peer cannot inject untyped data into the digest input."""
     if not isinstance(raw, dict):
         return _digest("")
-    zoom = _opt_number(raw.get("zoom"))
+    zoom = opt_float(raw.get("zoom"))
     center = raw.get("center")
     cx = cy = None
     if isinstance(center, (list, tuple)) and len(center) == 2:
-        cx, cy = _opt_number(center[0]), _opt_number(center[1])
+        cx, cy = opt_float(center[0]), opt_float(center[1])
     parts = "|".join("" if v is None else repr(round(v, 4)) for v in (zoom, cx, cy))
     return _digest(parts)
 
@@ -116,12 +101,14 @@ def token_from_result(result: dict[str, Any]) -> tuple[LiveStateToken, list[str]
     to a stable empty digest rather than raising, so a buggy peer can never inject untyped data into
     the token. Returns the token plus the (coerced) selection ids for the `LiveChange` convenience.
     """
+    ids = _selection_ids(result.get("selection"))
     token = LiveStateToken(
         revision=_revision_digest(result.get("revision")),
-        selection=_selection_digest(result.get("selection")),
+        # ORDERED: a reordered selection is a change.
+        selection=_digest("\x1f".join(ids)),
         viewport=_viewport_digest(result.get("viewport")),
     )
-    return token, _selection_ids(result.get("selection"))
+    return token, ids
 
 
 def classify_change(

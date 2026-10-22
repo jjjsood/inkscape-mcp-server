@@ -5,8 +5,7 @@ channel and any stray write there corrupts the wire. `configure_logging()` is id
 installs a single stderr handler that serializes each record (plus any structured extra
 fields) as one JSON object per line.
 
-Event emitters cover the event classes — each writes a record with an `event` field:
-tool_call, policy_decision, file_io, process_exec, export, preview, error, approval.
+Event emitters write a record with an `event` field: tool_call, file_io, export, preview.
 """
 
 from __future__ import annotations
@@ -19,41 +18,12 @@ from typing import Any
 LOGGER_NAMESPACE = "inkscape_mcp"
 
 # Standard LogRecord attributes excluded when collecting structured `extra` fields.
-_RESERVED_LOGRECORD_KEYS = frozenset(
-    {
-        "name",
-        "msg",
-        "args",
-        "levelname",
-        "levelno",
-        "pathname",
-        "filename",
-        "module",
-        "exc_info",
-        "exc_text",
-        "stack_info",
-        "lineno",
-        "funcName",
-        "created",
-        "msecs",
-        "relativeCreated",
-        "thread",
-        "threadName",
-        "processName",
-        "process",
-        "taskName",
-    }
-)
+_RESERVED_LOGRECORD_KEYS = frozenset(vars(logging.makeLogRecord({})))
 
-# Valid event classes.
 EVENT_TOOL_CALL = "tool_call"
-EVENT_POLICY_DECISION = "policy_decision"
 EVENT_FILE_IO = "file_io"
-EVENT_PROCESS_EXEC = "process_exec"
 EVENT_EXPORT = "export"
 EVENT_PREVIEW = "preview"
-EVENT_ERROR = "error"
-EVENT_APPROVAL = "approval"
 
 
 class _JsonLinesFormatter(logging.Formatter):
@@ -113,8 +83,7 @@ def get_logger(name: str) -> logging.Logger:
 
 def log_event(logger: logging.Logger, event: str, **fields: Any) -> None:
     """Emit a structured record carrying an `event` field plus arbitrary machine fields."""
-    level = logging.ERROR if event == EVENT_ERROR else logging.INFO
-    logger.log(level, event, extra={"event": event, **fields})
+    logger.info(event, extra={"event": event, **fields})
 
 
 def log_tool_call(logger: logging.Logger, **fields: Any) -> None:
@@ -122,19 +91,9 @@ def log_tool_call(logger: logging.Logger, **fields: Any) -> None:
     log_event(logger, EVENT_TOOL_CALL, **fields)
 
 
-def log_policy_decision(logger: logging.Logger, **fields: Any) -> None:
-    """Emit a `policy_decision` event."""
-    log_event(logger, EVENT_POLICY_DECISION, **fields)
-
-
 def log_file_io(logger: logging.Logger, **fields: Any) -> None:
     """Emit a `file_io` event."""
     log_event(logger, EVENT_FILE_IO, **fields)
-
-
-def log_process_exec(logger: logging.Logger, **fields: Any) -> None:
-    """Emit a `process_exec` event."""
-    log_event(logger, EVENT_PROCESS_EXEC, **fields)
 
 
 def log_export(logger: logging.Logger, **fields: Any) -> None:
@@ -145,13 +104,3 @@ def log_export(logger: logging.Logger, **fields: Any) -> None:
 def log_preview(logger: logging.Logger, **fields: Any) -> None:
     """Emit a `preview` event."""
     log_event(logger, EVENT_PREVIEW, **fields)
-
-
-def log_error(logger: logging.Logger, **fields: Any) -> None:
-    """Emit an `error` event (logged at ERROR level)."""
-    log_event(logger, EVENT_ERROR, **fields)
-
-
-def log_approval(logger: logging.Logger, **fields: Any) -> None:
-    """Emit an `approval` event."""
-    log_event(logger, EVENT_APPROVAL, **fields)

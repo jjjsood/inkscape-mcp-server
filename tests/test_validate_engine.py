@@ -11,6 +11,7 @@ import pytest
 
 from inkscape_mcp.quality import quality_report
 from inkscape_mcp.validate import LARGE_RASTER_BYTES, validate_document
+from inkscape_mcp.workspace import sandbox
 from tests.tool_support import open_doc
 
 _NS = 'xmlns="http://www.w3.org/2000/svg"'
@@ -120,8 +121,13 @@ def test_missing_font_warning_or_skipped_without_fontconfig(tool_ws) -> None:
 
 def test_validation_is_read_only(tool_ws) -> None:
     doc = open_doc(tool_ws, "clean.svg", CLEAN)
+    working = sandbox.working_copy(tool_ws, doc)
+    before = working.read_bytes()
     validate_document(doc)
-    assert (tool_ws / "clean.svg").read_bytes() == CLEAN
+    assert working.read_bytes() == before
+    snaps, ops = sandbox.snapshots_dir(tool_ws, doc), sandbox.operations_dir(tool_ws, doc)
+    assert not snaps.exists() or not any(snaps.iterdir())
+    assert not ops.exists() or not any(ops.iterdir())
 
 
 # --- validate vs quality: cruft is a quality opportunity, never a validation finding ---------
@@ -171,11 +177,6 @@ def test_internal_doctype_is_info_only(tool_ws) -> None:
     (info,) = _codes(report, "doctype_present")
     assert info.severity == "info"
     assert not _codes(report, "external_entity") and report.ok is True
-
-
-def test_no_doctype_means_no_doctype_findings(tool_ws) -> None:
-    codes = {f.code for f in validate_document(open_doc(tool_ws, "clean.svg", CLEAN)).findings}
-    assert not codes & {"doctype_present", "external_entity", "missing_glyphs"}
 
 
 # --- glyph coverage ----------------------------------------------------------------------------

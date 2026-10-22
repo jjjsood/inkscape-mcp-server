@@ -44,7 +44,7 @@ _MAX_SCENE_ITEMS = 10_000
 # --- Defensive coercion of the wire payload --------------------------------
 
 
-def _opt_float(value: Any) -> float | None:
+def opt_float(value: Any) -> float | None:
     """Coerce a JSON number to a finite float, or None (rejects NaN/inf, bools, non-numbers)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -59,13 +59,13 @@ def _opt_str(value: Any) -> str | None:
 def _bbox(raw: Any) -> BBox | None:
     """Coerce a ``[x, y, w, h]`` list (or ``{x,y,width,height}`` dict) to a `BBox`, else None."""
     if isinstance(raw, (list, tuple)) and len(raw) == 4:
-        nums = [_opt_float(v) for v in raw]
+        nums = [opt_float(v) for v in raw]
         if all(n is not None for n in nums):
             return BBox(x=nums[0], y=nums[1], width=nums[2], height=nums[3])  # type: ignore[arg-type]
         return None
     if isinstance(raw, dict):
-        x, y = _opt_float(raw.get("x")), _opt_float(raw.get("y"))
-        w, h = _opt_float(raw.get("width")), _opt_float(raw.get("height"))
+        x, y = opt_float(raw.get("x")), opt_float(raw.get("y"))
+        w, h = opt_float(raw.get("width")), opt_float(raw.get("height"))
         if None not in (x, y, w, h):
             return BBox(x=x, y=y, width=w, height=h)  # type: ignore[arg-type]
     return None
@@ -94,11 +94,11 @@ def _viewport(raw: Any) -> SceneViewport:
     center_raw = raw.get("center")
     center: tuple[float, float] | None = None
     if isinstance(center_raw, (list, tuple)) and len(center_raw) == 2:
-        cx, cy = _opt_float(center_raw[0]), _opt_float(center_raw[1])
+        cx, cy = opt_float(center_raw[0]), opt_float(center_raw[1])
         if cx is not None and cy is not None:
             center = (cx, cy)
     return SceneViewport(
-        zoom=_opt_float(raw.get("zoom")),
+        zoom=opt_float(raw.get("zoom")),
         center=center,
         visible_region=_bbox(raw.get("visible_region")),
     )
@@ -108,8 +108,8 @@ def _canvas(raw: Any) -> SceneCanvas:
     if not isinstance(raw, dict):
         return SceneCanvas()
     return SceneCanvas(
-        width=_opt_float(raw.get("width")),
-        height=_opt_float(raw.get("height")),
+        width=opt_float(raw.get("width")),
+        height=opt_float(raw.get("height")),
         units=_opt_str(raw.get("units")),
     )
 

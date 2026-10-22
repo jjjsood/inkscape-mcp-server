@@ -87,6 +87,24 @@ def engine_export_document(
         raise EngineCrash("warm engine produced no output")
 
 
+def read_checked_output(
+    out_path: Path, settings: Settings, error: type[Exception], what: str
+) -> bytes:
+    """Read an engine-written temp file: enforce the size cap, reject empty output (sec.12).
+
+    Raises `error("<what> output exceeds size limit")` / `error("<what> produced empty output")`.
+    The caller still owns the exists-check, the safe parse, and temp-file cleanup.
+    """
+    try:
+        check_output_size(out_path, settings)
+    except LimitExceeded as exc:
+        raise error(f"{what} output exceeds size limit") from exc
+    data = out_path.read_bytes()
+    if not data.strip():
+        raise error(f"{what} produced empty output")
+    return data
+
+
 def engine_run_actions(
     working_path: Path,
     actions_argument: str,
@@ -123,14 +141,7 @@ def engine_run_actions(
         if not out_path.exists():
             raise EngineCrash("warm engine produced no output")
 
-        try:
-            check_output_size(out_path, s)
-        except LimitExceeded as exc:
-            raise EngineCrash("warm engine output exceeds size limit") from exc
-
-        data = out_path.read_bytes()
-        if not data.strip():
-            raise EngineCrash("warm engine produced empty output")
+        data = read_checked_output(out_path, s, EngineCrash, "warm engine")
         try:
             parse_svg_bytes(data)
         except UnsafeXMLError as exc:
@@ -149,11 +160,3 @@ def engine_mode_is_shell(settings: Settings | None = None) -> bool:
 
     s = settings if settings is not None else get_settings()
     return s.engine_mode == ENGINE_MODE_SHELL
-
-
-__all__ = [
-    "ENGINE_EXPORT_FORMATS",
-    "engine_export_document",
-    "engine_mode_is_shell",
-    "engine_run_actions",
-]

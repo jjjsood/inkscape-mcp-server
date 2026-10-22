@@ -21,7 +21,10 @@ from inkscape_mcp.live.socket_backend import ExtensionSocketTransport
 from inkscape_mcp.live.transport import LiveTransport, TransportProbe
 
 #: Registered backend classes (the plug-in seam). Order is irrelevant — ranking decides.
-_BACKENDS: tuple[type[LiveTransport], ...] = (ExtensionSocketTransport, DBusTransport)
+_BACKENDS: tuple[type[ExtensionSocketTransport] | type[DBusTransport], ...] = (
+    ExtensionSocketTransport,
+    DBusTransport,
+)
 
 #: The semantic read commands the live read tools require. A transport must support all of
 #: these to be eligible for a read-mode connection; this is what keeps DBus (action-only) from
@@ -85,7 +88,7 @@ def best_available(
             continue
         if no_freeze and not probe.no_freeze:
             continue
-        if req <= {LiveCommand(c) for c in probe.supported_commands if _is_command(c)}:
+        if req <= set(probe.supported_commands):  # StrEnum members hash/compare as their str value
             return probe
     return None
 
@@ -105,16 +108,7 @@ def select_transport(
     chosen = best_available(s, required, no_freeze)
     if chosen is None:
         return None
-    if chosen.name == ExtensionSocketTransport.name:
-        return ExtensionSocketTransport(s)
-    if chosen.name == DBusTransport.name:
-        return DBusTransport(s)
+    for backend in _BACKENDS:
+        if backend.name == chosen.name:
+            return backend(s)
     return None  # pragma: no cover - chosen always corresponds to a registered backend
-
-
-def _is_command(value: str) -> bool:
-    try:
-        LiveCommand(value)
-    except ValueError:
-        return False
-    return True

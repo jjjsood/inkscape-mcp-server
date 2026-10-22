@@ -21,6 +21,7 @@ dimensions to diff; a mismatch is a stable, host-path-free error. No network.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
@@ -33,7 +34,8 @@ from inkscape_mcp.live.records import (
     get_live_operation,
     update_live_operation,
 )
-from inkscape_mcp.live.transport import BBox, LiveError, SceneSelectionItem
+from inkscape_mcp.live.scene import get_live_scene
+from inkscape_mcp.live.transport import BBox, LiveError, SceneSelectionItem, first_root
 from inkscape_mcp.logging_setup import get_logger, log_preview
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.limits import LimitExceeded, check_input_size, check_output_size
@@ -68,12 +70,6 @@ class LiveDiffResult(BaseModel):
     highlighted_ids: list[str] = Field(
         default_factory=list, description="Selection ids whose outline was drawn on the overlay."
     )
-
-
-def _first_root(settings: Settings) -> Path:
-    if not settings.workspace_roots:
-        raise LiveDiffError("no workspace root configured to store the live diff")
-    return settings.workspace_roots[0]
 
 
 def _resolve_frame(root: Path, rel: str) -> Path:
@@ -179,13 +175,22 @@ def diff_live_operation(
     the operation id, and the pixel-space changed bbox. The diff path is appended to the record's
     `diff_artifacts` so it is linkable to the operation. Artifact-only — no document mutation, no
     Operation Record routing, no approval.
+
+    When neither `selection` nor `canvas` is given, they default (best-effort, no session required)
+    to the live scene's current selection and canvas size, used for the overlay annotation only.
     """
     s = settings if settings is not None else get_settings()
+    if selection is None and canvas is None:
+        with contextlib.suppress(Exception):
+            scene = get_live_scene()
+            selection = scene.selection
+            if scene.canvas.width is not None and scene.canvas.height is not None:
+                canvas = BBox(x=0.0, y=0.0, width=scene.canvas.width, height=scene.canvas.height)
     # Validate the id shape up front so the output filename (live-diff-<id>.png) is independently
     # safe — never coupled to the record lookup raising first (defence in depth, no traversal).
     if not _OPERATION_ID_RE.match(operation_id):
         raise LiveDiffError("no live operation with that id")
-    root = _first_root(s).resolve()
+    root = first_root(s, LiveDiffError, "store the live diff").resolve()
     try:
         record: LiveOperationRecord = get_live_operation(operation_id, settings=s)
     except KeyError:

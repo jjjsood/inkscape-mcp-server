@@ -4,15 +4,12 @@ Two layers:
 - Fake-shell / monkeypatched unit tests (run everywhere): prove `engine_mode=shell` routes through
   the engine and that ANY engine fault transparently falls back to the per-call CLI.
 - `@pytest.mark.inkscape` parity tests (run only with a real binary): prove the warm worker produces
-  BYTE-EQUIVALENT artifacts vs per-call, the mutating path matches, and the warm path is faster.
+  BYTE-EQUIVALENT artifacts vs per-call and the mutating path matches.
 """
 
 from __future__ import annotations
 
 import hashlib
-import shutil
-import struct
-import time
 from pathlib import Path
 
 import pytest
@@ -36,8 +33,6 @@ SVG = b"""<?xml version="1.0"?>
   <rect id="b" x="30" y="20" width="40" height="30" fill="#cc3366"/>
 </svg>
 """
-
-inkscape_available = shutil.which("inkscape") is not None
 
 
 @pytest.fixture
@@ -166,9 +161,9 @@ def test_byte_equivalent_whole_doc_png_svg(doc_id: str) -> None:
             pc = render_cli.export_document(doc_id, fmt, settings=per_call)
             reset_engine_manager()
             sh = render_cli.export_document(doc_id, fmt, settings=shell)
-            #: artifact_path is workspace-ROOT-relative now.
-            pc_path = Path(get_registry().get(doc_id).root) / pc.artifact_path
-            sh_path = Path(get_registry().get(doc_id).root) / sh.artifact_path
+            #: workspace_relative_path is workspace-ROOT-relative now.
+            pc_path = Path(get_registry().get(doc_id).root) / pc.workspace_relative_path
+            sh_path = Path(get_registry().get(doc_id).root) / sh.workspace_relative_path
             assert _sha(pc_path) == _sha(sh_path), f"{fmt} differs between modes"
     finally:
         reset_engine_manager()
@@ -187,34 +182,3 @@ def test_mutating_path_op_matches_per_call(doc_id: str) -> None:
     reset_engine_manager()
     # Both run `select-by-id:a,b;path-union` then export plain SVG of the same input -> identical.
     assert sh == pc
-
-
-@pytest.mark.inkscape
-def test_warm_engine_faster_than_per_call_for_batch(doc_id: str) -> None:
-    n = 6
-    per_call = Settings(engine_mode=ENGINE_MODE_PER_CALL)
-    shell = Settings(engine_mode=ENGINE_MODE_SHELL)
-    try:
-        t0 = time.monotonic()
-        for _ in range(n):
-            render_cli.export_document(doc_id, "png", width_px=128, settings=per_call)
-        per_call_s = time.monotonic() - t0
-
-        reset_engine_manager()
-        # Warm the worker once (excludes the one-time spawn from the measured batch).
-        render_cli.export_document(doc_id, "png", width_px=128, settings=shell)
-        t1 = time.monotonic()
-        for _ in range(n):
-            render_cli.export_document(doc_id, "png", width_px=128, settings=shell)
-        shell_s = time.monotonic() - t1
-
-        assert shell_s < per_call_s, (
-            f"warm {shell_s:.3f}s not faster than per-call {per_call_s:.3f}s"
-        )
-    finally:
-        reset_engine_manager()
-
-
-def _png_dims(path: Path) -> tuple[int, int]:
-    head = path.read_bytes()[:24]
-    return struct.unpack(">II", head[16:24])

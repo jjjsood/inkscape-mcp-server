@@ -16,6 +16,7 @@ can map it cleanly and a live fault never escapes as an opaque traceback.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import ClassVar
 
 from pydantic import BaseModel, Field
@@ -27,6 +28,13 @@ from inkscape_mcp.live.protocol import LiveCommand
 
 class LiveError(Exception):
     """Base class for all live-mode failures (stable, host-path-free public message)."""
+
+
+def first_root(settings: Settings, error: type[LiveError], purpose: str) -> Path:
+    """The first workspace root, or `error("no workspace root configured to <purpose>")`."""
+    if not settings.workspace_roots:
+        raise error(f"no workspace root configured to {purpose}")
+    return settings.workspace_roots[0]
 
 
 class LiveNotAvailable(LiveError):
@@ -213,10 +221,6 @@ class LiveStateToken(BaseModel):
     )
     selection: str = Field(default="", description="Stable digest of the ordered selection ids.")
     viewport: str = Field(default="", description="Stable digest of the coarse viewport state.")
-
-    def combined(self) -> str:
-        """A single digest of all three components (the whole-state fingerprint)."""
-        return f"{self.revision}:{self.selection}:{self.viewport}"
 
 
 class LiveChange(BaseModel):

@@ -20,16 +20,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+from inkscape_mcp.runtime.capabilities import one_line_purpose
 from inkscape_mcp.server import mcp
-
-
-def _one_line_purpose(description: str | None) -> str:
-    """First non-empty docstring line — the prompt's one-line purpose (mirrors gen_llms_txt)."""
-    for line in (description or "").splitlines():
-        stripped = line.strip()
-        if stripped:
-            return stripped
-    return "(no description)"
 
 
 def _prompt_index() -> list[dict[str, object]]:
@@ -53,7 +45,7 @@ def _prompt_index() -> list[dict[str, object]]:
         index.append(
             {
                 "name": p.name,
-                "purpose": _one_line_purpose(p.description),
+                "purpose": one_line_purpose(p.description),
                 "arguments": arguments,
             }
         )

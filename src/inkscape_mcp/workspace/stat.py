@@ -17,10 +17,6 @@ from inkscape_mcp.config import get_settings
 from inkscape_mcp.workspace.limits import check_input_size
 from inkscape_mcp.workspace.paths import anchor_to_root, owning_root, resolve_read_path
 
-#: Chunk size for the streaming sha256 read. Bounds peak memory so hashing a large (but
-#: under-limit) artifact never loads the whole file at once (sec.12 memory hygiene).
-_HASH_CHUNK_BYTES = 1024 * 1024
-
 
 class ArtifactStat(BaseModel):
     """On-disk facts about one sandboxed artifact.
@@ -65,10 +61,8 @@ def stat_one(raw_path: str) -> ArtifactStat:
     # Enforce the input-size cap BEFORE hashing (sec.12) — never hash an over-limit file.
     size = check_input_size(resolved, settings)
 
-    digest = hashlib.sha256()
     with resolved.open("rb") as handle:
-        while chunk := handle.read(_HASH_CHUNK_BYTES):
-            digest.update(chunk)
+        digest = hashlib.file_digest(handle, "sha256")
 
     return ArtifactStat(
         path=_workspace_relative(resolved, settings.workspace_roots),

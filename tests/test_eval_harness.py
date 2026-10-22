@@ -18,6 +18,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 # The harness lives under evals/ (ruff-checked, not in mypy `files` — mirrors scripts/). Add it to
 # the path so the test can import it directly.
 _EVALS_DIR = Path(__file__).resolve().parent.parent / "evals"
@@ -41,8 +43,12 @@ def test_dataset_is_non_trivial_and_well_formed() -> None:
     assert {"Create", "Edit", "Inspect", "Export", "Live"} <= groups
 
 
-def test_overall_tool_selection_accuracy_meets_threshold() -> None:
-    report = run_eval()
+@pytest.fixture(scope="module")
+def report() -> dict:
+    return run_eval()
+
+
+def test_overall_tool_selection_accuracy_meets_threshold(report: dict) -> None:
     acc = report["in_scope"]["accuracy"]
     assert acc >= _ACCURACY_THRESHOLD, (
         f"in-scope tool-selection accuracy {acc:.2%} < {_ACCURACY_THRESHOLD:.0%}; "
@@ -50,8 +56,7 @@ def test_overall_tool_selection_accuracy_meets_threshold() -> None:
     )
 
 
-def test_all_out_of_scope_scenarios_flagged() -> None:
-    report = run_eval()
+def test_all_out_of_scope_scenarios_flagged(report: dict) -> None:
     oos = report["out_of_scope"]
     assert oos["total"] >= 3
     assert oos["all_flagged"], (
@@ -69,7 +74,7 @@ def test_every_expected_tool_is_a_real_tool_and_op(tool_app) -> None:
             tool, _, op = expected.partition(":")
             if tool not in schemas:
                 bad.append(f"{expected}: unknown tool")
-            elif op and op not in target_ops(tool, schemas[tool]):
+            elif op and op not in target_ops(tool, schemas):
                 bad.append(f"{expected}: unknown op")
     assert not bad, f"scenarios reference non-existent tools/ops: {bad}"
 

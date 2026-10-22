@@ -9,8 +9,7 @@ from typing import Any
 from inkscape_mcp.edit.op_docs import OP_EXAMPLES, OP_GROUPS, op_models
 from inkscape_mcp.edit.ops import parse_ops
 from inkscape_mcp.server import mcp, register_tools
-from inkscape_mcp.tool_annotations import _ANNOTATIONS
-from inkscape_mcp.tool_tags import TOOL_TAGS
+from inkscape_mcp.tool_tags import TOOL_META
 
 CORE = {"open", "inspect", "edit", "render", "export", "history", "help"}
 LIVE = {"live", "live_edit"}
@@ -49,7 +48,7 @@ def test_tools_list_payload_is_small() -> None:
 
 def test_every_tool_has_annotations_and_a_tag() -> None:
     tools = _tools()
-    assert set(_ANNOTATIONS) == set(TOOL_TAGS) == set(tools)
+    assert set(TOOL_META) == set(tools)
     for name, tool in tools.items():
         assert tool.annotations is not None, name
         assert tool.annotations.title, name

@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import re
 import secrets
-from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from inkscape_mcp.config import utc_iso
 from inkscape_mcp.registry import Registry, get_registry
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.risk import RiskClass, enforce_risk_policy
@@ -34,7 +34,6 @@ class OperationStatus(StrEnum):
     PROPOSED = "proposed"
     APPLIED = "applied"
     DISCARDED = "discarded"
-    REVERTED = "reverted"
 
 
 class OperationRecord(BaseModel):
@@ -54,10 +53,6 @@ class OperationRecord(BaseModel):
     status: OperationStatus = OperationStatus.PROPOSED
     created_at: str
     updated_at: str
-
-
-def _utc_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _mint_operation_id() -> str:
@@ -101,7 +96,7 @@ def new_operation(
     """
     reg = registry if registry is not None else get_registry()
     policy_decision = enforce_risk_policy(risk_class, approval_token=approval_token)
-    now = _utc_iso()
+    now = utc_iso()
     record = OperationRecord(
         operation_id=_mint_operation_id(),
         doc_id=doc_id,
@@ -128,7 +123,7 @@ def update_operation(
     reg = registry if registry is not None else get_registry()
     data = record.model_dump()
     data.update(changes)
-    data["updated_at"] = _utc_iso()
+    data["updated_at"] = utc_iso()
     updated = OperationRecord.model_validate(data)
     _persist(updated, reg)
     return updated

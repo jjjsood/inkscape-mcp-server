@@ -81,20 +81,6 @@ def live_operations_dir(root: Path) -> Path:
     return live_dir(root) / "operations"
 
 
-def action_maps_dir(root: Path) -> Path:
-    """`<root>/.inkscape-mcp/action-maps/` — root-scoped versioned Action capability maps.
-
-    The Action surface is host-wide (not per document), so the version-keyed capability maps live
-    here rather than under a document folder. One file per detected Inkscape version.
-    """
-    return root / STATE_DIR / "action-maps"
-
-
-def ensure_action_maps_dir(root: Path) -> None:
-    """Create the root-scoped action-maps directory (real dir only, never a symlink). Idempotent."""
-    action_maps_dir(root).mkdir(parents=True, exist_ok=True)
-
-
 def ensure_live_dirs(root: Path) -> None:
     """Create the root-scoped live-mode directory tree (real dirs only). Idempotent."""
     for path in (live_dir(root), live_artifacts_dir(root), live_operations_dir(root)):

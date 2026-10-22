@@ -41,7 +41,7 @@ from pathlib import Path
 
 from lxml import etree
 
-from inkscape_mcp.config import Settings, get_settings
+from inkscape_mcp.config import Settings, resolve_settings
 from inkscape_mcp.edit.dom import (
     EditError,
     TargetNotFound,
@@ -52,11 +52,10 @@ from inkscape_mcp.edit.dom import (
     rewrite_references,
     set_style_property,
 )
-from inkscape_mcp.engine.ops import engine_mode_is_shell, engine_run_actions
+from inkscape_mcp.engine.ops import engine_mode_is_shell, engine_run_actions, read_checked_output
 from inkscape_mcp.engine.process import EngineError
 from inkscape_mcp.logging_setup import get_logger
 from inkscape_mcp.render.cli import is_safe_object_id
-from inkscape_mcp.workspace.limits import LimitExceeded, check_output_size
 from inkscape_mcp.workspace.subprocess_exec import ProcessError, ProcessResult, run_inkscape
 from inkscape_mcp.workspace.xml_safety import UnsafeXMLError, parse_svg_bytes
 
@@ -68,8 +67,6 @@ _logger = get_logger("edit.paths")
 SIMPLIFY = "simplify_path"
 UNION = "boolean_union"
 DIFFERENCE = "boolean_difference"
-INTERSECTION = "boolean_intersection"
-EXCLUSION = "boolean_exclusion"
 COMBINE = "combine_paths"
 BREAK_APART = "break_apart"
 STROKE_TO_PATH = "stroke_to_path"
@@ -80,8 +77,6 @@ _ACTIONS: dict[str, str] = {
     SIMPLIFY: "path-simplify",
     UNION: "path-union",
     DIFFERENCE: "path-difference",
-    INTERSECTION: "path-intersection",
-    EXCLUSION: "path-exclusion",
     COMBINE: "path-combine",
     BREAK_APART: "path-break-apart",
     STROKE_TO_PATH: "object-stroke-to-path",
@@ -91,15 +86,13 @@ _ACTIONS: dict[str, str] = {
     CLEANUP: "path-simplify",
 }
 
-#: Ops that operate on a SET of paths and need at least two distinct targets to mean anything.
-_BINARY_OPS = frozenset({UNION, DIFFERENCE, INTERSECTION, EXCLUSION, COMBINE})
-
-#: Merge ops that collapse 2+ targets into ONE result element. For these the engine guarantees a
+#: Merge ops: operate on a SET of paths (need at least two distinct targets to mean anything) and
+#: collapse 2+ targets into ONE result element. For these the engine guarantees a
 #: single, documented surviving id (see :func:`_surviving_target_id`): the BOTTOM-most target — the
 #: one painted first, i.e. first in document order. Inkscape's ``path-union`` / ``path-difference``
 #: already keep the bottom id, but ``path-combine`` keeps the TOP id (last in document order); the
 #: engine normalizes that case so all merge ops survive the SAME (bottom) id. (.)
-_MERGE_OPS = frozenset({UNION, DIFFERENCE, INTERSECTION, EXCLUSION, COMBINE})
+_MERGE_OPS = frozenset({UNION, DIFFERENCE, COMBINE})
 
 
 class PathOpError(Exception):
@@ -107,10 +100,6 @@ class PathOpError(Exception):
 
     Carries a stable, host-path-free public message; the tool layer maps it to `ToolError`.
     """
-
-
-def _settings(settings: Settings | None) -> Settings:
-    return settings if settings is not None else get_settings()
 
 
 def validate_targets(root: etree._Element, object_ids: list[str], op: str) -> list[str]:
@@ -126,10 +115,7 @@ def validate_targets(root: etree._Element, object_ids: list[str], op: str) -> li
         raise EditError("no target object ids supplied")
 
     # De-dupe while preserving order (a repeated id is meaningless to a boolean op).
-    seen: dict[str, None] = {}
-    for oid in object_ids:
-        seen.setdefault(oid, None)
-    ids = list(seen)
+    ids = list(dict.fromkeys(object_ids))
 
     for oid in ids:
         if not is_safe_object_id(oid):
@@ -144,7 +130,7 @@ def validate_targets(root: etree._Element, object_ids: list[str], op: str) -> li
         if oid not in present:
             raise TargetNotFound("object id not found in document")
 
-    if op in _BINARY_OPS and len(ids) < 2:
+    if op in _MERGE_OPS and len(ids) < 2:
         raise EditError(f"{op} requires at least two distinct object ids")
 
     return ids
@@ -335,7 +321,7 @@ def run_path_op(
     if action is None:  # pragma: no cover - guarded by the tool layer
         raise PathOpError(f"unsupported path op: {op!r}")
 
-    s = _settings(settings)
+    s = resolve_settings(settings)
 
     #: when the warm shell engine is enabled, run the op on the stateful worker (reloads the
     # on-disk working copy first, so its document never diverges from disk) and return the result
@@ -371,15 +357,8 @@ def run_path_op(
             _logger.error("path op failed", extra={"op": op, "returncode": result.returncode})
             raise PathOpError("path operation failed")
 
-        # Bound the engine output before reading it into memory (same cap as render/export).
-        try:
-            check_output_size(out_path, s)
-        except LimitExceeded as exc:
-            raise PathOpError("path operation output exceeds size limit") from exc
-
-        data = out_path.read_bytes()
-        if not data.strip():
-            raise PathOpError("path operation produced empty output")
+        # Size-cap (same as render/export) and reject empty output before parsing.
+        data = read_checked_output(out_path, s, PathOpError, "path operation")
 
         # Re-parse through the SAFE parser: a malformed/unsafe engine output never reaches disk.
         try:
@@ -471,8 +450,6 @@ __all__ = [
     "CLEANUP",
     "COMBINE",
     "DIFFERENCE",
-    "EXCLUSION",
-    "INTERSECTION",
     "SIMPLIFY",
     "STROKE_TO_PATH",
     "UNION",

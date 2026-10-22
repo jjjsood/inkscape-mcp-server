@@ -8,15 +8,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from inkscape_mcp.config import Settings, get_settings
+from inkscape_mcp.config import Settings, resolve_settings
 
 
 class LimitExceeded(Exception):
     """A request exceeds a configured workspace limit."""
-
-
-def _settings(settings: Settings | None) -> Settings:
-    return settings if settings is not None else get_settings()
 
 
 def check_input_size(path: Path, settings: Settings | None = None) -> int:
@@ -24,7 +20,7 @@ def check_input_size(path: Path, settings: Settings | None = None) -> int:
 
     Returns the size in bytes. Raises `LimitExceeded` if it exceeds the cap.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     size = path.stat().st_size
     if size > s.max_input_bytes:
         raise LimitExceeded(f"input file exceeds max size: {size} > {s.max_input_bytes} bytes")
@@ -38,7 +34,7 @@ def check_input_bytes_size(data: bytes, settings: Settings | None = None) -> int
     first (`create_document`, `set_document_svg`/`insert_svg_fragment` adopt an SVG
     string). Returns the size in bytes. Raises `LimitExceeded` if it exceeds the cap.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     size = len(data)
     if size > s.max_input_bytes:
         raise LimitExceeded(f"input exceeds max size: {size} > {s.max_input_bytes} bytes")
@@ -52,7 +48,7 @@ def check_export_dimensions(
 
     Raises `LimitExceeded` if either dimension exceeds the cap.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     if width_px > s.max_export_px or height_px > s.max_export_px:
         raise LimitExceeded(
             f"export dimensions exceed cap: {width_px}x{height_px} > {s.max_export_px}px per side"
@@ -64,7 +60,7 @@ def check_output_size(path: Path, settings: Settings | None = None) -> None:
 
     Raises `LimitExceeded` if the produced file exceeds the cap.
     """
-    s = _settings(settings)
+    s = resolve_settings(settings)
     size = path.stat().st_size
     if size > s.max_output_bytes:
         raise LimitExceeded(f"output file exceeds max size: {size} > {s.max_output_bytes} bytes")

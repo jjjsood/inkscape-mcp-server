@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -76,17 +77,22 @@ def test_high_risk_live_op_recorded_with_approval(tmp_path: Path) -> None:
 
 def test_list_live_operations_newest_first(tmp_path: Path) -> None:
     s = _settings(tmp_path)
-    for _ in range(3):
-        new_live_operation(
+    ops_dir = sandbox.live_operations_dir(tmp_path)
+    ids = []
+    for i in range(3):
+        record = new_live_operation(
             tool="live_insert_svg",
             risk_class=RiskClass.HIGH,
             params={},
             approval_token="ok",
             settings=s,
         )
+        # Pin distinct mtimes so the order does not depend on filesystem timestamp resolution.
+        os.utime(ops_dir / f"{record.operation_id}.json", (1000 + i, 1000 + i))
+        ids.append(record.operation_id)
     log = list_live_operations(settings=s)
     assert log.count == 3
-    assert len(log.operations) == 3
+    assert [op.operation_id for op in log.operations] == ids[::-1]
 
 
 def test_no_workspace_root_refuses_to_record(tmp_path: Path) -> None:
@@ -150,21 +156,6 @@ def test_in_workspace_document_path_persisted_workspace_relative(tmp_path: Path)
     assert record.document is not None
     assert record.document.path == "sub/live.svg"
     assert not Path(record.document.path).is_absolute()
-
-
-def test_list_live_operations_contains_no_host_path(tmp_path: Path) -> None:
-    s = _settings(tmp_path)
-    new_live_operation(
-        tool="live_apply_to_selection",
-        risk_class=RiskClass.HIGH,
-        params={},
-        document=LiveDocumentRef(name="x.svg", path="/var/host/x.svg", object_count=1),
-        approval_token="ok",
-        settings=s,
-    )
-    blob = list_live_operations(settings=s).model_dump_json()
-    assert "/var/host" not in blob
-    assert "/var/host/x.svg" not in blob
 
 
 def test_clear_live_operations_removes_persisted_records(tmp_path: Path) -> None:

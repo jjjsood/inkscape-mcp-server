@@ -14,8 +14,6 @@ from inkscape_mcp.actions import chains as chain_engine
 from inkscape_mcp.actions.capability_map import (
     discover_actions,
     discover_extensions,
-    get_or_build_action_map,
-    persist_action_map,
 )
 from inkscape_mcp.actions.chains import ActionStep
 from inkscape_mcp.config import get_settings
@@ -86,10 +84,6 @@ def actions(
         payload = discover_actions()
         if not all:
             payload = payload.model_copy(update={"actions": []})
-        try:
-            persist_action_map(get_or_build_action_map())
-        except Exception:  # pragma: no cover - persistence is best effort
-            _logger.warning("action map persistence failed", extra={"event": "file_io"})
     elif action == "extensions":
         payload = discover_extensions()
     elif action == "validate":

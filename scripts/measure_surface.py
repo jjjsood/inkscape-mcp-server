@@ -3,7 +3,7 @@
 
 Registers the server with the CURRENT environment flags, lists the tools the way a client
 sees them, and reports bytes per tool plus totals (description vs. input/output schema). Used to
-track the payload budget across the surface rework (docs/rework-plan.md).
+track the payload budget (pre-rework baseline: 87 tools, 325,717 B; target <= 45 KB).
 
 Usage::
 

@@ -29,14 +29,12 @@ from inkscape_mcp.live.edit import (
 from inkscape_mcp.live.protocol import LiveCommand
 from inkscape_mcp.live.records import get_live_operation, list_live_operations
 from inkscape_mcp.live.session import LiveSessionManager, get_session_manager, reset_session_manager
-from inkscape_mcp.live.sync import sync_live_to_workspace
 from inkscape_mcp.live.transport import (
     LiveCapabilityUnsupported,
     LiveConnectionError,
     LiveMutationResult,
 )
 from inkscape_mcp.operations import OperationStatus
-from inkscape_mcp.registry import Registry
 from inkscape_mcp.workspace.risk import PolicyViolation
 from tests.conftest import FakeTransport
 from tests.tool_support import call
@@ -189,19 +187,6 @@ def test_failed_mutation_is_discarded_not_applied(
         _mutate(mgr, settings, op=boom)
     log = list_live_operations(settings=settings)
     assert [r.status for r in log.operations] == [OperationStatus.DISCARDED]
-
-
-def test_mutated_live_state_syncs_to_a_workspace_snapshot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    mgr, settings = _connected(tmp_path, monkeypatch)
-    _mutate(mgr, settings, op=_apply(fill="#123456"))
-    dest = tmp_path / "after-edit.svg"
-    sync = sync_live_to_workspace(
-        str(dest), manager=mgr, registry=Registry(settings), settings=settings
-    )
-    assert "#123456" in dest.read_text()
-    assert sync.snapshot_id
 
 
 def test_export_live_selection_writes_png_without_a_record(

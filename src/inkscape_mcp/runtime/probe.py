@@ -14,12 +14,11 @@ import os
 import platform
 import re
 import shutil
-from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from inkscape_mcp.config import Settings, get_settings
+from inkscape_mcp.config import Settings, get_settings, utc_iso
 from inkscape_mcp.intents import IntentMatch, intents_summary
 from inkscape_mcp.logging_setup import get_logger
 from inkscape_mcp.workspace.subprocess_exec import ProcessError, run_process
@@ -176,10 +175,6 @@ class Capabilities(BaseModel):
             "probe."
         ),
     )
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def _parse_version(text: str) -> tuple[int, int, int] | None:
@@ -465,7 +460,7 @@ def probe_capabilities(settings: Settings | None = None) -> Capabilities:
         dbus_inkscape_present=dbus_inkscape_present,
         live_extension_socket_available=live_extension_socket_available,
         font_count=font_count,
-        probed_at=_utc_now_iso(),
+        probed_at=utc_iso(),
         notes=notes,
     )
     logger.info(

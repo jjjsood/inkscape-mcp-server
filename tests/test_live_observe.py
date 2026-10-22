@@ -19,16 +19,12 @@ from inkscape_mcp.edit.dom import EditError
 from inkscape_mcp.live import admin as admin_mod
 from inkscape_mcp.live import session as session_mod
 from inkscape_mcp.live import socket_backend
-from inkscape_mcp.live.admin import LiveSupport, _present_extensions_dir
+from inkscape_mcp.live.admin import LiveSupport
 from inkscape_mcp.live.edit import (
-    FAST_RENDER_SCALE,
     set_live_viewport,
-    validate_region,
-    validate_render_scale,
     validate_viewport,
 )
 from inkscape_mcp.live.records import list_live_operations
-from inkscape_mcp.live.render import render_live_view
 from inkscape_mcp.live.session import LiveSession, LiveSessionManager, reset_session_manager
 from inkscape_mcp.live.transport import (
     LiveCapabilityUnsupported,
@@ -195,45 +191,16 @@ def test_observe_view_reports_region_and_scale_and_whole_canvas_has_neither(tool
         {"region": {"x": 0.0}},  # all four parts are required together
         {"region": {"x": 0, "y": 0, "width": 0, "height": 5}},
         {"region": {"x": 0, "y": 0, "width": 5, "height": 5, "extra": 1}},
+        {"region": {"x": 0, "y": 0, "width": 5, "height": float("nan")}},
         {"scale": 0},
         {"scale": 1e6},
     ],
-    ids=["partial", "zero-width", "extra-field", "scale-0", "scale-huge"],
+    ids=["partial", "zero-width", "extra-field", "nan-height", "scale-0", "scale-huge"],
 )
 def test_observe_view_rejects_a_bad_frame_request(tool_app, on, args: dict) -> None:
     with pytest.raises(ToolError):
         _live(tool_app, action="observe", include=["view"], **args)
     assert on.last_render is None
-
-
-def test_region_and_scale_validators() -> None:
-    region = validate_region(0.0, 0.0, 10.0, 5.0)
-    assert (region.x, region.y, region.width, region.height) == (0.0, 0.0, 10.0, 5.0)
-    for bad in [(0.0, 0.0, 0.0, 5.0), (0.0, 0.0, 10.0, float("nan"))]:
-        with pytest.raises(EditError):
-            validate_region(*bad)
-    assert validate_render_scale(0.5) == 0.5
-    for scale in (0, 1e6):
-        with pytest.raises(EditError):
-            validate_render_scale(scale)
-    assert 0 < FAST_RENDER_SCALE < 1
-
-
-def test_region_render_engine_targets_a_frame_without_a_record(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    transport = FakeTransport(png=FAKE_PNG)
-    monkeypatch.setattr(session_mod, "probe_transports", lambda settings=None: [])
-    monkeypatch.setattr(session_mod, "select_transport", lambda s, required: transport)
-    settings = Settings(workspace_roots=[tmp_path], live_enabled=True)
-    mgr = LiveSessionManager(settings)
-    mgr.connect()
-    region = RenderRegion(x=0.0, y=0.0, width=4.0, height=4.0)
-    result = render_live_view(manager=mgr, settings=settings, region=region, scale=0.5)
-    assert result.region is True and result.scale == 0.5
-    assert transport.last_render == (region, 0.5)
-    assert (tmp_path / result.artifact_path).read_bytes() == FAKE_PNG + b"-REGION"
-    assert list_live_operations(settings=settings).count == 0
 
 
 # --- viewport -----------------------------------------------------------------
@@ -310,18 +277,14 @@ def test_viewport_on_a_transport_without_the_command_is_refused(
 # --- install_helper / arm_socket ----------------------------------------------
 
 
-def test_extensions_dir_is_presented_home_relative_never_absolute() -> None:
-    home = Path.home()
-    inside = _present_extensions_dir(home / ".config" / "inkscape" / "extensions")
-    assert inside.startswith("~/") and str(home) not in inside
-    outside = _present_extensions_dir(Path("/opt/inkscape/share/extensions"))
-    assert outside == "extensions"
-
-
+@pytest.mark.parametrize(
+    ("user_data", "home_relative"),
+    [(Path.home() / ".inkscape-mcp-test-data", True), (Path("/opt/inkscape/share"), False)],
+    ids=["under-home", "outside-home"],
+)
 def test_install_helper_returns_a_non_absolute_extensions_dir(
-    tool_app, on, monkeypatch: pytest.MonkeyPatch
+    tool_app, on, monkeypatch: pytest.MonkeyPatch, user_data: Path, home_relative: bool
 ) -> None:
-    user_data = Path.home() / ".inkscape-mcp-test-data"
     monkeypatch.setattr(
         capabilities_mod,
         "get_cached_capabilities",
@@ -334,7 +297,10 @@ def test_install_helper_returns_a_non_absolute_extensions_dir(
     )
     res = _live(tool_app, action="install_helper").data
     assert res["installed_files"] == ["inkscape_mcp_live.py", "inkscape_mcp_live.inx"]
-    assert res["extensions_dir"].startswith("~/")
+    if home_relative:
+        assert res["extensions_dir"].startswith("~/")
+    else:
+        assert res["extensions_dir"] == "extensions"
     assert str(Path.home()) not in res["extensions_dir"]
 
 

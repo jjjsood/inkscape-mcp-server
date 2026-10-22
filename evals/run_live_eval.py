@@ -9,7 +9,7 @@ scenario, plus the turn count and whether the task succeeded.
 It consumes the SAME dataset and the SAME scoring + reporting helpers as ``run_eval.py`` — there is
 no second copy of ``tool_selection_scenarios.json`` and no forked scorer. The only thing that
 differs is the *discovery* step: instead of the deterministic matcher we plug in an agent "driver"
-that returns the real tool trace. The shared scorer in :mod:`run_eval` then decides HIT/MISS with
+that returns the tool trace. The shared scorer in :mod:`run_eval` then decides HIT/MISS with
 identical rules, so the live numbers are directly comparable to the deterministic ones.
 
 REPORT-ONLY — NOT a CI gate
@@ -21,25 +21,19 @@ touches this file (``tests/test_live_eval_runner.py``) uses the deterministic FA
 no model. Exit code here is informational (0 unless the runner itself errored) — never a pass/fail
 quality bar.
 
-Driver abstraction
-------------------
-The pluggable boundary is :class:`AgentDriver` (a ``Protocol``): given a scenario ``task`` and the
-catalogue of available tool names, it must return an :class:`AgentTrace` — the ordered list of tools
-it called, the turn count, and whether it judged the task complete. Two implementations ship here:
-
-* :class:`ReplayDriver` — a deterministic FAKE. It replays a canned ``{task: trace}`` map, or, when
-  no canned trace exists, falls back to the deterministic discovery surface so the runner is always
-  exercisable. This is what the test uses; no model required.
-* :func:`build_real_driver` — the place to plug in a real MCP + LLM client. It is OPTIONAL and
-  OFF BY DEFAULT: selected only via ``--driver real`` (or ``INKSCAPE_MCP_EVAL_DRIVER=real``), and it
-  raises a clear ``NotImplementedError`` describing the wiring until a real client is supplied. CI
-  never selects it.
+Driver
+------
+:class:`ReplayDriver` is a deterministic FAKE: given a scenario ``task`` it returns an
+:class:`AgentTrace` — the ordered list of tools "called", the turn count, and whether the task was
+judged complete. It replays a canned ``{task: trace}`` map, or, when no canned trace exists, falls
+back to the deterministic discovery surface so the runner is always exercisable. No model required.
+To measure a real agent, replace :class:`ReplayDriver` with a client exposing the same ``run``
+method (``run(task, tool_names) -> AgentTrace``).
 
 Usage (run inside ``inkscape-mcp-server/``)::
 
     uv run python evals/run_live_eval.py               # FAKE replay driver, human summary
     uv run python evals/run_live_eval.py --json        # machine-readable report dict on stdout
-    uv run python evals/run_live_eval.py --driver real # real agent (must be wired; off by default)
 """
 
 from __future__ import annotations
@@ -51,7 +45,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 # Reuse the deterministic harness wholesale: the dataset loader, the per-scenario scorer, and the
 # aggregator are all runner-agnostic by design (they take a discovery callable). Importing them here
@@ -62,10 +56,6 @@ try:
     from run_eval import _discover, load_scenarios, run_eval
 except ModuleNotFoundError:  # pragma: no cover - exercised only via the package-import path
     from evals.run_eval import _discover, load_scenarios, run_eval
-
-#: Env var that selects the driver when ``--driver`` is omitted. Defaults to the FAKE replay driver
-#: so nothing here ever reaches for a model unless explicitly asked.
-DRIVER_ENV_VAR = "INKSCAPE_MCP_EVAL_DRIVER"
 
 #: Env var pointing at an optional canned-trace JSON file for the replay driver (``{task: [...]}``
 #: or ``{task: {"tools": [...], "turns": int, "success": bool}}``). Lets you record a real run once
@@ -87,19 +77,6 @@ class AgentTrace:
     tools: list[str] = field(default_factory=list)
     turns: int = 0
     success: bool | None = None
-
-
-@runtime_checkable
-class AgentDriver(Protocol):
-    """The pluggable agent boundary.
-
-    An implementation drives whatever it likes (a real MCP+LLM loop, a recorded replay, a stub) and
-    must return an :class:`AgentTrace`. ``tool_names`` is the catalogue the agent may call, so a
-    real driver can advertise exactly the server's tool surface to the model.
-    """
-
-    def run(self, task: str, tool_names: list[str]) -> AgentTrace:  # pragma: no cover - protocol
-        ...
 
 
 class ReplayDriver:
@@ -150,40 +127,6 @@ def load_replay(path: Path) -> dict[str, AgentTrace]:
     return {str(task): _coerce_trace(raw) for task, raw in mapping.items()}
 
 
-def build_real_driver() -> AgentDriver:
-    """Construct the REAL MCP + LLM driver. OPTIONAL, OFF BY DEFAULT, never used in CI.
-
-    This is the single place to wire a live agent. A real implementation would:
-
-    1. boot/connect the inkscape-mcp STDIO server and list its tools,
-    2. hand those tools to an LLM agent (Anthropic SDK + MCP, or any MCP client),
-    3. run the scenario ``task`` to completion, recording every tool call in order plus the turn
-       count, and return an :class:`AgentTrace`.
-
-    It is intentionally unimplemented so that selecting ``--driver real`` without supplying a client
-    fails LOUDLY and EARLY rather than silently degrading or hanging in an environment without a
-    model. Replace the body with your client wiring (and keep the FAKE driver as the CI/test path).
-    """
-    raise NotImplementedError(
-        "The real live-agent driver is not wired in this environment. It is intentionally "
-        "off-by-default and never runs in CI. Implement build_real_driver() with your MCP+LLM "
-        "client (see the docstring), or run with the default FAKE replay driver "
-        "(`uv run python evals/run_live_eval.py`)."
-    )
-
-
-def select_driver(name: str, replay: dict[str, AgentTrace] | None = None) -> AgentDriver:
-    """Pick a driver by name. ``fake``/``replay`` -> :class:`ReplayDriver`; ``real`` -> wired LLM.
-
-    ``real`` requires :func:`build_real_driver` to be wired; it is OFF BY DEFAULT and never CI.
-    """
-    if name in ("fake", "replay"):
-        return ReplayDriver(replay)
-    if name == "real":
-        return build_real_driver()
-    raise ValueError(f"unknown driver {name!r} (expected 'fake', 'replay', or 'real')")
-
-
 def _tool_catalogue() -> list[str]:
     """Best-effort list of registered MCP tool names to advertise to the driver.
 
@@ -203,7 +146,7 @@ def _tool_catalogue() -> list[str]:
 
 
 def run_live_eval(
-    driver: AgentDriver,
+    driver: ReplayDriver,
     scenarios: list[dict[str, Any]] | None = None,
     tool_names: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -308,15 +251,6 @@ def format_live_summary(report: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--driver",
-        choices=["fake", "replay", "real"],
-        default=os.environ.get(DRIVER_ENV_VAR, "fake"),
-        help=(
-            "agent driver: 'fake'/'replay' = deterministic FAKE (default, no model); "
-            "'real' = live MCP+LLM (off by default, must be wired). Env: " + DRIVER_ENV_VAR
-        ),
-    )
-    parser.add_argument(
         "--replay",
         type=Path,
         default=(
@@ -332,8 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     replay = load_replay(args.replay) if args.replay else None
-    driver = select_driver(args.driver, replay)
-    report = run_live_eval(driver, tool_names=_tool_catalogue())
+    report = run_live_eval(ReplayDriver(replay), tool_names=_tool_catalogue())
 
     if args.json:
         print(json.dumps(report, indent=2))

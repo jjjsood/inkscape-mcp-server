@@ -41,7 +41,6 @@ def main() -> int:
     export_filename: str | None = None
     export_type = "png"
     export_width = 0
-    opened = "100 60"  # tracks intrinsic size of the open doc (cosmetic)
 
     for raw in sys.stdin:
         cmd = raw.rstrip("\n")
@@ -64,9 +63,7 @@ def main() -> int:
                 continue
             if verb == "__sleep__":
                 time.sleep(float(arg or "0"))
-            elif verb == "file-open":
-                opened = "100 60"
-            elif verb in ("select-by-id", "select-all", "select-clear"):
+            elif verb in ("file-open", "select-by-id", "select-all", "select-clear"):
                 pass
             elif verb in (
                 "path-union",
@@ -114,7 +111,6 @@ def main() -> int:
                     f"InkscapeApplication::parse_actions: could not find action for: {verb}\n"
                 )
                 sys.stderr.flush()
-        _ = opened
         sys.stdout.write(cmd + "\n")
         for line in echoed:
             sys.stdout.write(line + "\n")

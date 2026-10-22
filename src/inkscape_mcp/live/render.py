@@ -8,10 +8,9 @@ document is touched, so no Operation Record is required (render is read-only fee
 the result is cached on the per-session `RenderCache` keyed on
 ``(doc_revision, viewport, scale)``. ``doc_revision`` is the document-revision digest pulled
 cheaply via `get_state_token`, so a cache hit can NEVER serve a stale frame after the document
-changes (a changed document yields a new revision digest → a different key). Within the coalescing
-latency budget a repeated identical-key request returns the just-cached frame instead of thrashing
-the renderer. When the transport cannot supply a revision marker, caching is safely SKIPPED (every
-call re-renders) — correctness over speed.
+changes (a changed document yields a new revision digest → a different key). When the transport
+cannot supply a revision marker, caching is safely SKIPPED (every call re-renders) — correctness
+over speed.
 """
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ from __future__ import annotations
 import contextlib
 import secrets
 from datetime import UTC, datetime
-from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -30,6 +28,7 @@ from inkscape_mcp.live.transport import (
     LiveError,
     LiveNotAvailable,
     RenderRegion,
+    first_root,
 )
 from inkscape_mcp.logging_setup import get_logger, log_preview
 from inkscape_mcp.workspace import sandbox
@@ -66,12 +65,6 @@ class LiveRenderResult(BaseModel):
     scale: float | None = None
 
 
-def _first_root(settings: Settings) -> Path:
-    if not settings.workspace_roots:
-        raise LiveNotAvailable("no workspace root configured to store the live render")
-    return settings.workspace_roots[0]
-
-
 def render_live_view(
     manager: LiveSessionManager | None = None,
     settings: Settings | None = None,
@@ -89,9 +82,8 @@ def render_live_view(
 
     When ``use_cache`` and a session-scoped `RenderCache` exists, the result is served from /
     stored in a cache keyed on ``(doc_revision, viewport, scale)``. ``doc_revision`` is the
-    revision digest, so a hit can never return a stale frame after the document changes. Within
-    the coalescing budget a repeated identical-key request returns the just-cached frame instead
-    of re-rendering. Caching is skipped (re-render every call) when the transport supplies no
+    revision digest, so a hit can never return a stale frame after the document changes. Caching
+    is skipped (re-render every call) when the transport supplies no
     revision marker — correctness over speed.
     """
     s = settings if settings is not None else get_settings()
@@ -101,17 +93,12 @@ def render_live_view(
     cache = mgr.render_cache() if use_cache else None
     key = _cache_key(mgr, region, scale) if cache is not None else None
     if cache is not None and key is not None:
-        # Coalescing first: a same-key request inside the latency budget returns the just-made
-        # frame without re-rendering. Falls through to a plain hit (no re-render) past the budget.
-        coalesced = cache.within_budget(key)
-        if coalesced is not None:
-            return coalesced  # type: ignore[no-any-return]
         hit = cache.get(key)
         if hit is not None:
             return hit  # type: ignore[no-any-return]
 
     png = transport.render_view(region=region, scale=scale)
-    root = _first_root(s).resolve()
+    root = first_root(s, LiveNotAvailable, "store the live render").resolve()
     sandbox.ensure_live_dirs(root)
     # Random suffix: two renders that land in the same microsecond can't collide on the final name
     # (a collision would leave the cache pointing at an overwritten file → stale bytes).

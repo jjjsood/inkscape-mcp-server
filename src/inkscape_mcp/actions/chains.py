@@ -27,12 +27,11 @@ from pathlib import Path
 from lxml import etree
 from pydantic import BaseModel, Field
 
-from inkscape_mcp.actions.capability_map import ActionCapabilityMap, get_or_build_action_map
+from inkscape_mcp.actions.capability_map import ActionCapabilityMap, build_action_map
 from inkscape_mcp.config import Settings, get_settings
-from inkscape_mcp.engine.ops import engine_mode_is_shell, engine_run_actions
+from inkscape_mcp.engine.ops import engine_mode_is_shell, engine_run_actions, read_checked_output
 from inkscape_mcp.engine.process import EngineError
 from inkscape_mcp.logging_setup import get_logger
-from inkscape_mcp.workspace.limits import LimitExceeded, check_output_size
 from inkscape_mcp.workspace.subprocess_exec import ProcessError, ProcessResult, run_inkscape
 from inkscape_mcp.workspace.xml_safety import UnsafeXMLError, parse_svg_bytes
 
@@ -192,7 +191,7 @@ def validate_chain(
     first invalid step; the caller never reaches argv assembly for a bad chain.
     """
     s = settings if settings is not None else get_settings()
-    cmap = cap_map if cap_map is not None else get_or_build_action_map(settings=s)
+    cmap = cap_map if cap_map is not None else build_action_map()
 
     if not steps:
         raise ActionChainError("empty_chain", "action chain has no steps")
@@ -253,19 +252,18 @@ def run_chain_op(
     data = _run_engine(working_path, plan.actions_argument, s)
     try:
         new_root = parse_svg_bytes(data).getroot()
-    except UnsafeXMLError as exc:  # pragma: no cover - _run_engine already rejected unsafe output
+    except UnsafeXMLError as exc:
         raise ActionEngineError("action chain produced unsafe output") from exc
     tree._setroot(new_root)
     return f"applied action chain ({len(plan.steps)} step(s)): {plan.actions_argument}"
 
 
 def _run_engine(working_path: Path, actions_argument: str, settings: Settings) -> bytes:
-    """Run the assembled chain through Inkscape and return the mutated, safe-parsed SVG bytes.
+    """Run the assembled chain through Inkscape and return the mutated SVG bytes.
 
     The working copy is NOT modified here — Inkscape emits to a private temp file that is always
-    removed; the bytes are returned for the pipeline to persist. Output is size-capped and re-parsed
-    through the safe parser. A non-zero exit, timeout, missing/empty/oversized/unsafe output raises
-    `ActionEngineError`.
+    removed; the bytes are returned for `run_chain_op` to safe-parse. A non-zero exit, timeout, or
+    missing/empty/oversized output raises `ActionEngineError`.
     """
     #: route the validated chain through the warm shell worker when enabled; ANY engine fault
     # falls back to the per-call CLI below so correctness can never regress.
@@ -295,19 +293,7 @@ def _run_engine(working_path: Path, actions_argument: str, settings: Settings) -
             logger.error("action chain failed", extra={"returncode": result.returncode})
             raise ActionEngineError("action chain failed")
 
-        try:
-            check_output_size(out_path, settings)
-        except LimitExceeded as exc:
-            raise ActionEngineError("action chain output exceeds size limit") from exc
-
-        data = out_path.read_bytes()
-        if not data.strip():
-            raise ActionEngineError("action chain produced empty output")
-        try:
-            parse_svg_bytes(data)
-        except UnsafeXMLError as exc:
-            raise ActionEngineError("action chain produced unsafe output") from exc
-        return data
+        return read_checked_output(out_path, settings, ActionEngineError, "action chain")
     finally:
         try:
             out_path.unlink(missing_ok=True)

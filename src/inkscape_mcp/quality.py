@@ -13,9 +13,9 @@ composes its single-doc engine over a SET of documents and adds per-doc results,
 cross-doc CONSISTENCY VERDICT.
 
 READ-ONLY by contract (sec.12): nothing here mutates the working copy or the original. No MCP
-decorators; the tool layer (`inkscape_mcp.tools.quality`) wraps `quality_report` and maps errors to
-`ToolError`. The returned `QualityReport` is a structured pydantic model — machine-readable, not
-prose.
+decorators; the `inspect` tool (`inkscape_mcp.tools.inspect_`) wraps `quality_report` and maps
+errors to `ToolError`. The returned `QualityReport` is a structured pydantic model —
+machine-readable, not prose.
 """
 
 from __future__ import annotations

@@ -12,6 +12,9 @@ import asyncio
 import importlib.util
 import sys
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from inkscape_mcp.server import mcp, register_tools
 
@@ -24,7 +27,7 @@ _LLMS_TXT = _SERVER_ROOT / "llms.txt"
 _LLMS_FULL_TXT = _SERVER_ROOT / "llms-full.txt"
 
 
-def _load_generator() -> object:
+def _load_generator() -> Any:
     """Import ``scripts/gen_llms_txt.py`` as a module (it lives outside the package)."""
     path = _SERVER_ROOT / "scripts" / "gen_llms_txt.py"
     spec = importlib.util.spec_from_file_location("gen_llms_txt", path)
@@ -33,6 +36,17 @@ def _load_generator() -> object:
     sys.modules["gen_llms_txt"] = module
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture(scope="module")
+def gen() -> Any:
+    return _load_generator()
+
+
+@pytest.fixture(scope="module")
+def out(gen: Any, tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
+    """One fresh regeneration shared by every test in the module."""
+    return gen.generate(dest=tmp_path_factory.mktemp("llms"))
 
 
 def _live_tool_names() -> set[str]:
@@ -47,43 +61,31 @@ def _live_counts() -> tuple[int, int, int]:
     return len(tools), len(prompts), len(resources) + len(templates)
 
 
-def test_generator_produces_both_files(tmp_path: Path) -> None:
-    gen = _load_generator()
-    out = gen.generate(dest=tmp_path)  # type: ignore[attr-defined]
-    assert set(out) == {"llms.txt", "llms-full.txt"}
-    assert (tmp_path / "llms.txt").is_file()
-    assert (tmp_path / "llms-full.txt").is_file()
-
-
-def test_every_tool_appears_in_full_manifest(tmp_path: Path) -> None:
-    gen = _load_generator()
-    full = gen.generate(dest=tmp_path)["llms-full.txt"]  # type: ignore[attr-defined]
+def test_every_tool_appears_in_full_manifest(out: dict[str, str]) -> None:
+    full = out["llms-full.txt"]
     missing = sorted(n for n in _live_tool_names() if f"#### {n}\n" not in full)
     assert not missing, f"tools missing from llms-full.txt: {missing}"
 
 
-def test_manifest_tool_count_matches_live_surface(tmp_path: Path) -> None:
+def test_manifest_tool_count_matches_live_surface(out: dict[str, str]) -> None:
     """The tool count stated in the manifest equals the live tool count (drift guard)."""
-    gen = _load_generator()
-    index = gen.generate(dest=tmp_path)["llms.txt"]  # type: ignore[attr-defined]
+    index = out["llms.txt"]
     n_tools, n_prompts, n_resources = _live_counts()
     assert f"Surface: {n_tools} tools, {n_prompts} prompts, {n_resources} resources." in index
 
 
-def test_every_tool_listed_in_index(tmp_path: Path) -> None:
-    gen = _load_generator()
-    index = gen.generate(dest=tmp_path)["llms.txt"]  # type: ignore[attr-defined]
+def test_every_tool_listed_in_index(out: dict[str, str]) -> None:
+    index = out["llms.txt"]
     # Each tool appears once in the grouped one-line list: "- <name> [risk: ...] — ...".
     missing = sorted(n for n in _live_tool_names() if f"- {n} [risk:" not in index)
     assert not missing, f"tools missing from llms.txt index: {missing}"
 
 
-def test_risk_classes_present(tmp_path: Path) -> None:
+def test_risk_classes_present(gen: Any, out: dict[str, str]) -> None:
     """The manifest tags risk classes, and every tag is a canonical risk vocabulary token."""
-    gen = _load_generator()
-    full = gen.generate(dest=tmp_path)["llms-full.txt"]  # type: ignore[attr-defined]
+    full = out["llms-full.txt"]
     n_tools = _live_counts()[0]
-    vocab = set(gen._RISK_VOCAB)  # type: ignore[attr-defined]
+    vocab = set(gen._RISK_VOCAB)
     # The per-tool risk field is an exact ``Risk class: <canonical token>`` line at column 0. (Some
     # prompt/resource DESCRIPTIONS also contain the phrase "Risk class:" with trailing prose; those
     # are excluded by requiring the whole line to be exactly the field.)
@@ -95,29 +97,25 @@ def test_risk_classes_present(tmp_path: Path) -> None:
     assert len(risk_tokens) == n_tools, "expected one canonical 'Risk class:' field per tool"
 
 
-def test_committed_files_are_up_to_date(tmp_path: Path) -> None:
+def test_committed_files_are_up_to_date(out: dict[str, str]) -> None:
     """The committed llms.txt / llms-full.txt match a fresh regeneration (drift guard).
 
     If this fails the surface changed without regenerating the manifest — re-run the generator.
     """
-    gen = _load_generator()
-    fresh = gen.generate(dest=tmp_path)  # type: ignore[attr-defined]
     for name, committed_path in (("llms.txt", _LLMS_TXT), ("llms-full.txt", _LLMS_FULL_TXT)):
         assert committed_path.is_file(), f"{name} is not committed at {committed_path}"
         committed = committed_path.read_text(encoding="utf-8")
-        assert committed == fresh[name], (
+        assert committed == out[name], (
             f"{name} is STALE — regenerate it with:\n"
             f"    uv run python scripts/gen_llms_txt.py\n"
             f"then commit the updated {name}."
         )
 
 
-def test_every_edit_op_is_documented_in_both_files(tmp_path: Path) -> None:
+def test_every_edit_op_is_documented_in_both_files(out: dict[str, str]) -> None:
     """The op reference comes from the op union, so a new op shows up without hand edits."""
     from inkscape_mcp.edit.op_docs import op_models
 
-    gen = _load_generator()
-    out = gen.generate(dest=tmp_path)  # type: ignore[attr-defined]
     missing_full = sorted(op for op in op_models() if f"#### {op}\n" not in out["llms-full.txt"])
     assert not missing_full, f"ops missing from llms-full.txt: {missing_full}"
     ops_section = out["llms.txt"].split("## Edit ops", 1)[1]

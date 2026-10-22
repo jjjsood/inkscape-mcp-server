@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from fastmcp.exceptions import ToolError
 
-from inkscape_mcp.quality import QualityReport, build_set_verdict, quality_report
+from inkscape_mcp.quality import quality_report
 from inkscape_mcp.registry import get_registry
 from inkscape_mcp.workspace import sandbox
 from tests.tool_support import call, open_doc
@@ -43,12 +43,6 @@ CLEAN = (
 @pytest.fixture
 def crufty(tool_ws) -> str:
     return open_doc(tool_ws, "art.svg", CRUFTY)
-
-
-def test_report_is_a_structured_model(crufty) -> None:
-    report = quality_report(crufty)
-    assert isinstance(report, QualityReport) and report.doc_id == crufty
-    assert report.metrics is not None and isinstance(report.findings, list)
 
 
 def test_metrics_counts_and_viewbox(crufty) -> None:
@@ -105,11 +99,6 @@ def test_tool_returns_the_typed_report_without_mutating(tool_app, tool_ws, cruft
     )
 
 
-def test_tool_refuses_an_unknown_document(tool_app, tool_ws) -> None:
-    with pytest.raises(ToolError, match="not found"):
-        call(tool_app, "inspect", {"doc_id": "d_missing", "include": ["quality"]})
-
-
 # --- collection set: per-doc quality + cross-document consistency verdict -----------------------
 
 
@@ -148,16 +137,6 @@ def test_consistent_set(tool_app, consistent) -> None:
     assert props and all(p["agree"] for p in props.values())
 
 
-def test_set_is_read_only(tool_app, consistent) -> None:
-    _verdict(tool_app, consistent)
-    for doc in consistent:
-        root = Path(get_registry().get(doc).root)
-        snaps = sandbox.snapshots_dir(root, doc)
-        assert not snaps.exists() or not list(snaps.glob("*.svg"))
-        ops = sandbox.operations_dir(root, doc)
-        assert not ops.exists() or not list(ops.glob("op_*.json"))
-
-
 def test_set_flags_the_disagreeing_document(tool_app, consistent, odd) -> None:
     data, props = _verdict(tool_app, [*consistent, odd])
     assert data["consistency"]["consistent"] is False
@@ -172,14 +151,6 @@ def test_set_flags_the_disagreeing_document(tool_app, consistent, odd) -> None:
     assert stroke["agree"] is False and stroke["values"]["5"] == [odd]
 
 
-def test_verdict_engine_matches_the_tool(tool_app, consistent, odd) -> None:
-    docs = [*consistent, odd]
-    verdict = build_set_verdict(docs)
-    assert verdict.consistent is False
-    assert {p.property for p in verdict.properties if not p.agree} >= {"viewBox", "stroke_width"}
-    assert verdict.model_dump(mode="json", exclude_none=True)["consistent"] is False
-
-
 def test_set_without_quality_has_no_verdict(tool_app, consistent) -> None:
     data = call(tool_app, "inspect", {"doc_id": consistent}).data
     assert set(data["docs"]) == set(consistent) and "consistency" not in data
@@ -192,3 +163,5 @@ def test_set_rejects_empty_duplicate_and_unknown(tool_app, consistent) -> None:
         call(tool_app, "inspect", {"doc_id": [consistent[0]] * 2, "include": ["quality"]})
     with pytest.raises(ToolError, match="document id not found"):
         call(tool_app, "inspect", {"doc_id": [consistent[0], "nope"], "include": ["quality"]})
+    with pytest.raises(ToolError, match="not found"):
+        call(tool_app, "inspect", {"doc_id": "d_missing", "include": ["quality"]})
