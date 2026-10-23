@@ -108,7 +108,7 @@ The core flow is **open → edit → look → export**. A complete logo, rendere
 calls:
 
 ```python
-open(canvas={"width": 400, "height": 400, "background": "#ffffff"},
+open(canvas={"width": 400, "height": 400},
      ops=[{"op": "create_circle", "cx": 200, "cy": 200, "r": 150, "fill": "#3366ff", "id": "disc"},
           {"op": "create_text", "x": 130, "y": 215, "text": "ink", "fill": "#ffffff"},
           {"op": "group", "ids": ["disc", "$1"], "id": "logo"}],
@@ -147,7 +147,7 @@ an example. The [agent usage guide](docs/agent-usage-guide.md) covers the full w
 | `edit` | Apply many typed ops in one atomic call. Supports `$n` references, `dry_run`, and `render='inline'`. |
 | `render` | Return an inline PNG of the page, one object, or the next frame of a numbered series. |
 | `export` | Write PNG/PDF/SVG files, export profiles (`web`, `icons`, `print`), or `save_as` a new file. Supports batches, dry runs, and byte budgets. |
-| `history` | List, checkpoint, restore, or prune snapshots; reload the source file. |
+| `history` | List, checkpoint, restore, or prune snapshots; undo a `save_as` overwrite; reload the source file. |
 | `help` | Goal-to-call lookup, per-op reference with examples, capability matrix, runtime diagnostics. |
 | `live` | Observe and navigate a running Inkscape: selection, scene, rendered view, change waits, visual diffs. *Live mode.* |
 | `live_edit` | Apply style, transform, SVG, or text changes to the live selection. Always high-risk. *Live mode.* |

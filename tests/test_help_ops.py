@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastmcp.exceptions import ToolError
 
-from inkscape_mcp.edit.op_docs import OP_EXAMPLES
+from inkscape_mcp.edit.op_docs import OP_EXAMPLES, op_reference
 from inkscape_mcp.edit.ops import parse_ops
 from tests.tool_support import call
 
@@ -32,6 +32,7 @@ def test_op_reference_shape(tool_app) -> None:
     assert ref["risk"] == "high" and ref["needs_approval"] is True
     rect = _help(tool_app, op="create_rect")["op"]
     assert rect["creates_id"] is True
+    assert _help(tool_app, op="break_apart")["op"]["creates_id"] is True
     assert rect["fields"]["width"] == "float" and rect["fields"]["rx"].endswith("?")
 
 
@@ -49,3 +50,18 @@ def test_topic_ops_lists_every_group(tool_app) -> None:
 def test_parts_combine(tool_app) -> None:
     data = _help(tool_app, op="fill", topic="ops")
     assert set(data) == {"op", "ops"}
+
+
+def test_selector_notes_name_the_bbox_and_max_matches_rules() -> None:
+    note = op_reference("move")["note"]
+    assert "INTERSECTS" in note and "max_matches goes INSIDE select" in note
+    assert "select=" not in op_reference("create_rect")["note"]
+
+
+def test_grid_note_warns_about_copies() -> None:
+    assert "COPIES" in op_reference("grid")["note"]
+
+
+def test_combine_union_notes_name_surviving_style() -> None:
+    assert "TOP-most object's style" in op_reference("combine")["note"]
+    assert "bottom-most object's id and style" in op_reference("union")["note"]

@@ -28,6 +28,8 @@ configured root and operation records via `op_*.json` globs; it never trusts a c
 
 from __future__ import annotations
 
+import re
+import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -36,12 +38,17 @@ from pydantic import BaseModel, Field
 from inkscape_mcp.config import Settings, get_settings
 from inkscape_mcp.live.records import LiveOperationRecord
 from inkscape_mcp.logging_setup import get_logger, log_file_io
-from inkscape_mcp.operations import OperationRecord
+from inkscape_mcp.operations import OperationRecord, OperationStatus
 from inkscape_mcp.registry import Registry, get_registry
 from inkscape_mcp.snapshots import SnapshotInfo, _read_index, _write_index
 from inkscape_mcp.workspace import sandbox
 
 _logger = get_logger("retention")
+
+#: Registry doc ids are `d_<8 hex>`; the boot sweep ignores any other directory name.
+_DOC_ID_RE = re.compile(r"d_[0-9a-f]{8}")
+#: A backup younger than this may belong to an in-flight save: never pruned.
+_BACKUP_GRACE_S = 60
 
 
 class LivePruneResult(BaseModel):
@@ -167,6 +174,84 @@ def _prune_orphaned_operations(
     return pruned
 
 
+def _prune_backups(root: Path, doc_id: str, settings: Settings, now: datetime) -> int:
+    """Delete `save_as` overwrite backups beyond the snapshot policy; returns the bytes freed.
+
+    Keeps the newest `keep_n` and any younger than `keep_days`, then applies the same absolute
+    hard caps as snapshots (`snapshot_hard_max_n` / `snapshot_hard_max_bytes`, newest kept). Real
+    files only (no symlinks). A pruned backup is unlinked from its Operation Record
+    (`backup_file=None`), so a later `restore_file` reports it as no longer available.
+    """
+    folder = sandbox.backups_dir(root, doc_id)
+    if not folder.is_dir() or folder.is_symlink():
+        return 0
+    files: list[tuple[Path, float, int]] = []  # (path, mtime, size)
+    for p in folder.glob("op_*.bak"):
+        try:
+            st = p.lstat()
+        except OSError:  # vanished (or unreadable) since the glob
+            continue
+        if not stat.S_ISREG(st.st_mode) or now.timestamp() - st.st_mtime < _BACKUP_GRACE_S:
+            continue
+        try:  # only an APPLIED save's backup (or an orphan with no record) may be pruned
+            rec = _read_backup_record(root, doc_id, p)
+        except (OSError, ValueError):
+            continue
+        if rec is None or rec.status == OperationStatus.APPLIED:
+            files.append((p, st.st_mtime, st.st_size))
+    files.sort(key=lambda f: f[1], reverse=True)
+    cutoff = now.timestamp() - settings.snapshot_keep_days * 86400
+    kept = [
+        f
+        for i, f in enumerate(files)
+        if i < settings.snapshot_keep_n or (settings.snapshot_keep_days > 0 and f[1] >= cutoff)
+    ]
+    if settings.snapshot_hard_max_n >= 0:
+        kept = kept[: settings.snapshot_hard_max_n]
+    if settings.snapshot_hard_max_bytes >= 0:
+        total = 0
+        for i, f in enumerate(kept):
+            total += f[2]
+            if total > settings.snapshot_hard_max_bytes:
+                kept = kept[:i]
+                break
+    keep_paths = {f[0] for f in kept}
+    freed = 0
+    for path, _mtime, size in files:
+        if path in keep_paths:
+            continue
+        if not _unlink_backup_from_record(root, doc_id, path):
+            continue  # record still links the file: keep both
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        freed += size
+    return freed
+
+
+def _read_backup_record(root: Path, doc_id: str, backup: Path) -> OperationRecord | None:
+    """The Operation Record named like `backup`, or None if it is gone."""
+    rec_path = sandbox.operations_dir(root, doc_id) / f"{backup.stem}.json"
+    try:
+        return OperationRecord.model_validate_json(rec_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+
+
+def _unlink_backup_from_record(root: Path, doc_id: str, backup: Path) -> bool:
+    """Clear `backup_file` on the record that points at `backup`; False if that failed."""
+    rec_path = sandbox.operations_dir(root, doc_id) / f"{backup.stem}.json"
+    try:
+        record = _read_backup_record(root, doc_id, backup)
+        if record is not None and record.backup_file == backup.name:
+            record.backup_file = None
+            rec_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def prune_snapshots_at(
     root: Path,
     doc_id: str,
@@ -184,6 +269,7 @@ def prune_snapshots_at(
     s = settings if settings is not None else get_settings()
     stamp = now if now is not None else datetime.now(UTC)
 
+    freed = _prune_backups(root, doc_id, s, stamp)
     entries = _read_index(root, doc_id)
     if not entries:
         return PruneResult(
@@ -191,7 +277,7 @@ def prune_snapshots_at(
             pruned_snapshot_ids=[],
             pruned_operation_ids=[],
             retained_count=0,
-            freed_bytes=0,
+            freed_bytes=freed,
         )
 
     retained_ids = _select_retained(entries, s, stamp)
@@ -199,7 +285,6 @@ def prune_snapshots_at(
 
     kept: list[SnapshotInfo] = []
     pruned_snap_ids: list[str] = []
-    freed = 0
     for entry in entries:
         if entry.snapshot_id in retained_ids:
             kept.append(entry)
@@ -381,7 +466,8 @@ def prune_live_frames_at(
 def sweep_all_roots(settings: Settings | None = None, now: datetime | None = None) -> SweepResult:
     """Sweep every on-disk document under every configured root (the boot-time pass).
 
-    Enumerates real `documents/<doc_id>/` directories that carry a `snapshots/index.json` and
+    Enumerates real `documents/<doc_id>/` directories that carry a `snapshots/index.json` or a
+    `backups/` dir and
     prunes each — independent of the in-process registry, so a freshly booted server still
     reclaims superseded snapshots from prior sessions. A single document's failure is logged and
     skipped; the sweep never aborts and never touches a working copy or original.
@@ -395,9 +481,12 @@ def sweep_all_roots(settings: Settings | None = None, now: datetime | None = Non
         docs_dir = sandbox.documents_dir(root)
         if docs_dir.is_dir():
             for child in sorted(docs_dir.iterdir()):
-                if not child.is_dir():
+                if child.is_symlink() or not child.is_dir() or not _DOC_ID_RE.fullmatch(child.name):
                     continue
-                if not sandbox.snapshots_index(root, child.name).is_file():
+                if not (
+                    sandbox.snapshots_index(root, child.name).is_file()
+                    or sandbox.backups_dir(root, child.name).is_dir()
+                ):
                     continue
                 try:
                     results.append(prune_snapshots_at(root, child.name, s, now=stamp))

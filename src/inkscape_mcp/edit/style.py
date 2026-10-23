@@ -250,6 +250,11 @@ def _plural(count: int) -> str:
     return "object" if count == 1 else "objects"
 
 
+def _already(value: str, ids: list[str]) -> str:
+    """` (already <value>: 'a', 'b')` for targets the edit left as they were, else `""`."""
+    return f" (already {value}: {', '.join(ids)})" if ids else ""
+
+
 def set_fill(
     tree: etree._ElementTree, object_ids: list[str], color: str, opacity: float | None = None
 ) -> str:
@@ -266,12 +271,15 @@ def set_fill(
     fill_key = None if is_url_paint(fill) else color_key
     fill_opacity = None if opacity is None else _check_opacity(opacity)
     targets = require_targets(tree.getroot(), object_ids)
+    same: list[str] = []
     for elem in targets:
-        set_style_property(elem, "fill", fill, key=fill_key)
+        did = set_style_property(elem, "fill", fill, key=fill_key)
         if fill_opacity is not None:
-            set_style_property(elem, "fill-opacity", fmt_num(fill_opacity))
+            did |= set_style_property(elem, "fill-opacity", fmt_num(fill_opacity))
+        if not did:
+            same.append(repr(elem.get("id")))
     count = len(targets)
-    return f"set fill on {count} {_plural(count)}"
+    return f"set fill on {count} {_plural(count)}" + _already(fill, same)
 
 
 def set_stroke(
@@ -297,13 +305,17 @@ def set_stroke(
     stroke_opacity = None if opacity is None else _check_opacity(opacity)
     targets = require_targets(tree.getroot(), object_ids)
     changed: list[str] = []
+    same: list[str] = []
     for elem in targets:
+        did = False
         if stroke is not None:
-            set_style_property(elem, "stroke", stroke, key=stroke_key)
+            did |= set_style_property(elem, "stroke", stroke, key=stroke_key)
         if stroke_width is not None:
-            set_style_property(elem, "stroke-width", stroke_width)
+            did |= set_style_property(elem, "stroke-width", stroke_width)
         if stroke_opacity is not None:
-            set_style_property(elem, "stroke-opacity", fmt_num(stroke_opacity))
+            did |= set_style_property(elem, "stroke-opacity", fmt_num(stroke_opacity))
+        if not did:
+            same.append(repr(elem.get("id")))
     if stroke is not None:
         changed.append("color")
     if stroke_width is not None:
@@ -311,7 +323,9 @@ def set_stroke(
     if stroke_opacity is not None:
         changed.append("opacity")
     count = len(targets)
-    return f"set stroke {'/'.join(changed)} on {count} {_plural(count)}"
+    return f"set stroke {'/'.join(changed)} on {count} {_plural(count)}" + _already(
+        stroke or "the given values", same
+    )
 
 
 def set_opacity(tree: etree._ElementTree, object_ids: list[str], opacity: float) -> str:

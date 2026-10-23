@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from inkscape_mcp.config import Settings, get_settings, utc_iso
 from inkscape_mcp.intents import IntentMatch, intents_summary
 from inkscape_mcp.logging_setup import get_logger
-from inkscape_mcp.workspace.subprocess_exec import ProcessError, run_process
+from inkscape_mcp.workspace.subprocess_exec import ProcessError, inkscape_env, run_process
 
 logger = get_logger("runtime.probe")
 
@@ -235,7 +235,7 @@ def _probe_inkscape_cli(args: list[str], timeout_s: float, notes: list[str]) -> 
     if binary is None:
         return None
     try:
-        result = run_process([binary, *args], timeout_s=timeout_s)
+        result = run_process([binary, *args], timeout_s=timeout_s, env=inkscape_env())
     except ProcessError as exc:
         notes.append(f"inkscape {' '.join(args)} failed to launch: {exc}")
         return None

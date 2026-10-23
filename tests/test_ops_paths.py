@@ -188,6 +188,10 @@ def test_dry_run_plans_without_the_engine_or_a_token(
     assert res.outcomes[0].matched == ["p1", "p2"]
     assert res.outcomes[0].summary.startswith("dry-run: would apply boolean_union")
     assert res.created[0].id == "p1"  # the predicted surviving id
+    assert res.outcomes[0].summary.endswith("result keeps id p1, style from p1")
+    comb = run_ops(doc, _merge("combine", "p1", "p2"), dry_run=True).outcomes[0].summary
+    assert "result keeps id p1, style from p2" in comb  # combine keeps the TOP input's style
+    assert comb.endswith("(fill red \u2192 blue)")  # ...and the visible change is spelled out
     assert eng.argvs == [] and _records(tool_ws, doc) == []
     assert _bytes(tool_ws, doc) == before
     assert (tool_ws / "shapes.svg").read_bytes() == PATHS
@@ -340,9 +344,78 @@ def test_dry_run_predicts_the_same_surviving_id(eng: FakeEngine, doc: str, op: s
     assert run_ops(doc, _merge(op, "p1", "p2"), dry_run=True).created[0].id == "p1"
 
 
-def test_non_merge_ops_report_no_created_id(eng: FakeEngine, doc: str) -> None:
-    for op in ("simplify", "break_apart", "stroke_to_path"):
-        assert run_ops(doc, _merge(op, "p1"), approval_token=TOKEN).created == []
+@pytest.mark.parametrize("op", ["simplify", "cleanup"])
+def test_simplify_and_cleanup_report_no_created_id(eng: FakeEngine, doc: str, op: str) -> None:
+    assert run_ops(doc, _merge(op, "p1"), approval_token=TOKEN).created == []
+
+
+def test_stroke_to_path_group_result_is_listed_once(eng: FakeEngine, doc: str) -> None:
+    eng.output = (
+        HEAD + b'<g id="p1"><path id="n1" d="M0 0 L1 1"/><path id="n2" d="M0 0"/></g></svg>'
+    )
+    res = run_ops(doc, _merge("stroke_to_path", "p1"), approval_token=TOKEN)
+    assert [c.id for c in res.created] == ["p1"]
+
+
+def test_break_apart_reports_every_piece_not_defs(eng: FakeEngine, doc: str) -> None:
+    eng.output = (
+        HEAD + b'<defs id="defs1"><path id="in-defs" d="M0 0"/></defs>'
+        b'<path id="p1" d="M0 0 h1"/><path id="path9" d="M2 2 h1"/>'
+        b'<path id="path10" d="M4 4 h1"/></svg>'
+    )
+    res = run_ops(doc, _merge("break_apart", "p1"), approval_token=TOKEN)
+    assert [c.id for c in res.created] == ["p1", "path9", "path10"]
+
+
+def test_break_apart_pieces_chain_as_dollar_refs(eng: FakeEngine, doc: str) -> None:
+    eng.output = HEAD + b'<path id="p1" d="M0 0 h1"/><path id="path9" d="M2 2 h1"/></svg>'
+    res = run_ops(
+        doc,
+        _merge("break_apart", "p1"),
+        {"op": "fill", "ids": ["$0"], "color": "#fff"},
+        approval_token=TOKEN,
+    )
+    assert [(c.op, c.id) for c in res.created] == [(0, "p1"), (0, "path9")]
+
+
+def test_dry_run_stroke_to_path_predicts_the_id_without_the_engine(
+    eng: FakeEngine, doc: str
+) -> None:
+    res = run_ops(doc, _merge("stroke_to_path", "p1"), dry_run=True)
+    assert res.created[0].id == "p1" and eng.argvs == []
+
+
+def test_dry_run_break_apart_cannot_predict_pieces(eng: FakeEngine, doc: str) -> None:
+    res = run_ops(doc, _merge("break_apart", "p1"), dry_run=True)
+    assert res.created == [] and eng.argvs == []
+
+
+def test_stroke_to_path_result_chains_into_simplify(eng: FakeEngine, doc: str) -> None:
+    eng.output = _outlined()
+    run_ops(
+        doc,
+        _merge("stroke_to_path", "p1"),
+        {"op": "simplify", "ids": ["$0"]},
+        approval_token=TOKEN,
+    )
+    assert eng.actions == "--actions=select-by-id:p1;path-simplify"
+
+
+@pytest.mark.inkscape
+def test_real_break_apart_and_stroke_to_path_report_ids(tool_ws: Path) -> None:
+    doc = open_doc(
+        tool_ws,
+        "real.svg",
+        HEAD + b'<path id="cp" d="M0,0 h10 v10 h-10 Z M20,0 h10 v10 h-10 Z"/>'
+        b'<circle id="ring" cx="60" cy="60" r="20" fill="none" stroke="#f4a261" '
+        b'stroke-width="3"/></svg>',
+    )
+    apart = run_ops(doc, _merge("break_apart", "cp"), approval_token=TOKEN)
+    ids = [c.id for c in apart.created]
+    root = _working(tool_ws, doc)
+    assert len(ids) == 2 and len(set(ids)) == 2 and set(ids) <= _ids(root)
+    ring = run_ops(doc, _merge("stroke_to_path", "ring"), approval_token=TOKEN)
+    assert [c.id for c in ring.created] == ["ring"]
 
 
 def test_the_result_id_chains_into_the_next_boolean_in_one_call(eng: FakeEngine, doc: str) -> None:
@@ -396,12 +469,46 @@ def test_stroke_to_path_writes_an_explicit_fill(
 
 def test_stroke_to_path_drops_empty_marker_stubs(eng: FakeEngine, doc: str, tool_ws: Path) -> None:
     eng.output = _outlined(b'<g id="empty-markers"></g><path id="empty-marker-path"/>')
-    run_ops(doc, _merge("stroke_to_path", "p1"), approval_token=TOKEN)
+    res = run_ops(doc, _merge("stroke_to_path", "p1"), approval_token=TOKEN)
     ids = _ids(_working(tool_ws, doc))
     assert "p1" in ids and not {"empty-markers", "empty-marker-path"} & ids
+    assert [c.id for c in res.created] == ["p1"]
 
 
 def test_stroke_to_path_keeps_a_real_marker(eng: FakeEngine, doc: str, tool_ws: Path) -> None:
     eng.output = _outlined(b'<g id="real-markers"><path id="m" d="M0 0 L1 1"/></g>')
     run_ops(doc, _merge("stroke_to_path", "p1"), approval_token=TOKEN)
     assert {"real-markers", "m"} <= _ids(_working(tool_ws, doc))
+
+
+@pytest.mark.parametrize(("op", "style_from"), [("union", "p1"), ("combine", "p2")])
+def test_merge_summary_names_kept_id_and_style_source(
+    eng: FakeEngine, doc: str, op: str, style_from: str
+) -> None:
+    res = run_ops(doc, _merge(op, "p1", "p2"), approval_token=TOKEN)
+    assert f"kept id p1, style from {style_from}" in res.outcomes[0].summary
+
+
+def test_real_run_warnings_surface_style_effects(eng: FakeEngine, doc: str, tool_ws: Path) -> None:
+    other = open_doc(tool_ws, "o.svg", PATHS)
+    quiet = run_ops(other, _merge("union", "p1", "p2"), approval_token=TOKEN)
+    assert quiet.warnings == []  # union keeps its own style: nothing surprising
+    res = run_ops(doc, _merge("combine", "p1", "p2"), approval_token=TOKEN)
+    assert "combine: result 'p1' now has the style of 'p2' (fill red \u2192 blue)" in res.warnings
+    assert res.removed == ["p2"]  # the engine's top input is gone; the bottom id survives
+    assert quiet.removed == ["p2"]  # union drops the other target too
+
+
+def test_real_run_warnings_for_stroke_to_path_and_break_apart(
+    eng: FakeEngine, tool_ws: Path
+) -> None:
+    doc = open_doc(
+        tool_ws, "s.svg", HEAD + b'<path id="p1" d="M0,10 L20,10" stroke="#0000ff"/></svg>'
+    )
+    eng.output = _outlined()
+    res = run_ops(doc, _merge("stroke_to_path", "p1"), approval_token=TOKEN)
+    assert res.warnings == ["stroke_to_path: stroke colour is now the fill of p1"]
+    eng.output = HEAD + b'<path id="p1" d="M0 0 h1"/><path id="path9" d="M2 2 h1"/></svg>'
+    res = run_ops(doc, _merge("break_apart", "p1"), approval_token=TOKEN)
+    assert any("holes are now separate filled pieces" in w for w in res.warnings)
+    assert any("'p1' stays on the first piece (of 2, document order)" in w for w in res.warnings)

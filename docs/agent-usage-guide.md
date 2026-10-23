@@ -28,7 +28,7 @@ per-op manifest), both **generated from the live registry** by `scripts/gen_llms
 | `edit` | Change a document with **typed ops** in ONE atomic call (≤ 64 ops, one snapshot, one Operation Record). |
 | `render` | Look at the page, one object or a numbered frame as an inline PNG. |
 | `export` | Write files (png/pdf/svg), profiles (web/icons/print) or `save_as`, for one document or a set. |
-| `history` | `list` / `create` / `restore` snapshots, `prune`, `reload` from the source file. |
+| `history` | `undo` the last edit(s), `list` / `create` / `restore` snapshots, `restore_file` (undo an overwriting `save_as`), `prune`, `reload` from the source file. |
 | `help` | `goal=…` → the right `tool:op` + an example; `op=…` → an op's fields, risk and a valid example; `topic=ops\|capabilities\|diagnose`; `stat_paths=[…]`. |
 | `live`, `live_edit` | Observe and steer a **running** Inkscape (only when live mode is enabled). |
 | `actions` | *Advanced mode only.* Allow-listed Inkscape Actions (see §6). |
@@ -45,7 +45,7 @@ All writes land on a **working copy**, never the original file.
 1. **Open.** One call returns the `doc_id` every other tool takes — and can already draw:
 
    ```json
-   open(canvas={"width": 800, "height": 600, "background": "#ffffff"},
+   open(canvas={"width": 800, "height": 600},
         ops=[{"op": "create_circle", "cx": 400, "cy": 300, "r": 100, "fill": "#ff6633", "id": "sun"}],
         render="inline")
    ```
@@ -62,14 +62,24 @@ All writes land on a **working copy**, never the original file.
 
    - **`$<n>` references.** `"$0"` names the id that op 0 of *this call* created, so an object can
      be styled, grouped or moved in the op right after it is made — the whole drawing is one call.
+   - **Locked layers.** Locks (`sodipodi:insensitive`) do not block server edits. When a call changes
+     objects inside a locked layer, the result (and the `dry_run` plan) carries
+     `locked_layers_touched: {layer_id: [ids]}`. Tell the human, or check with `dry_run` first and
+     undo if it wasn't intended.
    - **Selectors instead of lookups.** An op that acts on objects takes `ids=[…]` **or**
      `select={tag, fill, stroke, text, id_prefix, bbox}`. The selector is resolved when the op runs,
-     against the tree including objects created earlier in the same call.
+     against the tree including objects created earlier in the same call. `bbox` matches objects
+     whose box intersects it (touching counts); `max_matches` sits inside `select` (default 64, up
+     to 1024) and more matches reject the op: `select matched 80 objects, more than
+     max_matches=64; … raise select.max_matches …`.
+   - **Order.** Ops run in order and each sees the document as the previous ops left it (op 0
+     recolours the red rects in a bbox, then op 1 `select: {fill: red}` matches only the rest).
    - **Atomic.** Every op is validated before anything changes; one bad op rejects the whole call
      and the document stays byte-identical. Errors say what to do:
      `ops[2] fill: id 'logo2' not found (similar: logo, logo-bg)`. When the id came from the
-     human, send it as given; if it fails, fix it from the `similar` list, re-send the whole call
-     once and tell the human which id you used. Don't silently swap in a guess beforehand.
+     human, send it EXACTLY as they wrote it, even if you suspect a typo (`brand-nam` for
+     `brand-name`): never pre-correct it. Only after the server's `not found (similar: …)` error,
+     re-send the whole call once with the match and tell the human which id you used.
    - **`dry_run=true`** returns the plan (matched ids, risk, whether approval is needed) without
      changing anything. **`detail`** = `ids` (default) | `summary` (one line per op) | `full`.
    - The op families: **create** (shapes, text, groups, gradients, `use`), **style** (`fill`,
@@ -77,6 +87,8 @@ All writes land on a **working copy**, never the original file.
      `duplicate`, `rename`, `delete`), **transform** (`move`, `scale`, `rotate`, `tile`,
      `resize_canvas`, `normalize_viewbox`, `fit_to_content`), **compose** (`set_svg`, `insert_svg`,
      `place`, `grid`), **path** (HIGH, advanced mode) and **optimize** (`optimize_web`).
+     `place`/`grid` copy their sources; after editing a source, its edit result warns which sheet
+     now holds a stale copy. Rebuild the sheet, don't patch the copy.
      The `edit` `ops` field lists every op with its fields (`?` = optional), so no lookup is
      needed first; `help(op="fill")` adds a valid example and `help(topic="ops")` / the
      `inkscape://ops` resource the full reference. `open(path, render="inline")` returns a picture
@@ -85,7 +97,7 @@ All writes land on a **working copy**, never the original file.
 3. **Look before you trust the edit (a loud default).** `render="inline"` returns the PNG as an MCP
    image block, so the agent *sees* what it made and decides the next edit — no file, no extra
    call. `render(doc_id, target="object", object_id="logo")` zooms to one object. Close every
-   mutating step with a look; if it is wrong, `history(action="restore")`. In live mode the
+   mutating step with a look; if it is wrong, `history(action="undo")`. In live mode the
    equivalent is `live_edit(observe="render")`.
 
 4. **Export.** One call can write several artifacts:
@@ -98,8 +110,12 @@ All writes land on a **working copy**, never the original file.
 
    `profile` targets are `web` (responsive PNGs + SVG), `icons` (square PNG ladder) and `print`
    (print-ready PDF); `save_as {dest_path, overwrite}` writes the working copy to a workspace file.
-   `dry_run=true` projects sizes without writing and `byte_budget` caps the total. A list of
-   `doc_id`s exports a set (files are prefixed with each id). To shrink first:
+   `dry_run=true` projects sizes and reports `risk`/`needs_approval` (an overwriting save_as is
+   high) without writing, and `byte_budget` caps the total. A list of
+   `doc_id`s exports a set (files are prefixed with each id). Files are named
+   `<stamp>-[name_prefix-]<source stem>-<size>.<ext>`; a canvas/svg-text document uses its `doc_id`
+   as the stem, and an export with a `save_as` in the same call also takes the save_as name
+   (`sheets/contact.svg` -> `…-contact-<doc_id>-auto.pdf` in `sheets/`). To shrink first:
    `edit(doc_id, ops=[{"op": "optimize_web"}])` (keeps ids and layers, so you can keep editing;
    add `"aggressive": true` as the very last step to also drop unreferenced ids and layers; that
    pass is HIGH risk and needs an `approval_token`).
@@ -139,17 +155,30 @@ originals are never touched:
 - **Operation Records + snapshots (ADR-004).** Every *real* `edit` takes ONE snapshot of the working
   copy and writes ONE **Operation Record** (what changed, the risk class, the policy decision). A
   genuine no-op (e.g. `fill` to the colour already present, `replace_color` matching nothing)
-  reports `changed: false` and writes **no** snapshot or record.
+  reports `changed: false` plus a `reason` ("nothing changed: ...already #hex...") and writes **no**
+  snapshot or record. Delete and path ops list the ids they took out as `removed`; a `dry_run` plan
+  reads `plan (not applied): ...`.
 - **No hidden renders.** An edit renders nothing unless you ask (`render="inline"`); set
   `INKSCAPE_MCP_EDIT_PREVIEWS=after|before_after` to keep before/after PNGs in the Operation
   Record for audit.
-- **Undo / restore.** `history(doc_id, action="list")` browses; `"create"` checkpoints on demand;
+- **Undo / restore.** To undo, use `history(doc_id, action="undo")` (optional `steps=N`): it
+  reverts the most recent edit not yet undone, names it (`undone`) and returns
+  `pre_restore_snapshot_id`; calling it again walks one edit further back (it does not toggle).
+  Or run the `undo` call from the edit result verbatim. Never pick a snapshot by guessing: an
+  edit's `snapshot_id` is the state BEFORE that edit, so restoring the snapshot of an earlier
+  edit loses an extra change. `history(doc_id, action="list")` browses; `"create"` checkpoints on demand;
   `"restore"` + `snapshot_id` rolls the working copy back (itself reversible: it snapshots first);
-  `"reload"` re-reads the working copy from the source file, e.g. after an external edit.
+  `"reload"` re-reads the working copy from the source file, e.g. after an external edit. Restoring
+  `pre_reload_snapshot_id` brings back your edits but drops the reloaded outside change; to keep
+  both, re-apply your edits after the reload. An approved `save_as` overwrite first backs up the old
+  file bytes in the server store and returns `undo`: `history(doc_id, action="restore_file",
+  operation_id=…)` puts them back (HIGH: needs an `approval_token`; itself reversible the same way).
 - **Retention.** Snapshot, artifact and live-frame growth is bounded by an **explicit** sweep
   (boot-time + `history(action="prune")`) — never an implicit side effect of an edit.
 
-Practical loop: edit (an automatic snapshot is taken) → look → if wrong, `restore` and try again.
+Practical loop: edit (an automatic snapshot is taken) → look → if wrong, `undo` and try again.
+`prune` only frees history older than the retention limits; when nothing qualifies it returns
+`pruned_snapshots: 0` plus a `note` saying so. That is not a failure.
 
 ---
 
@@ -166,7 +195,8 @@ Every call has a risk class (per tool in `llms.txt`; per op in `help(op=…)`):
 
 The risk of an `edit` call is the **maximum over its ops** — one `delete` among twenty `create_*`
 ops makes the call HIGH. The error tells you what to do: `ops[3] delete is HIGH risk; re-call with
-approval_token`.
+approval_token`. When the call also has non-HIGH ops, the error suggests sending them alone
+without a token.
 
 **The approval gate.** A HIGH-risk call is refused unless it carries a non-empty `approval_token`.
 The token is a **deliberate per-call confirmation** — deliberately *not* an ambient env flag or a

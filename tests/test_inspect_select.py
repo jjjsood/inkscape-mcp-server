@@ -170,6 +170,15 @@ def test_find_in_root_filters_an_in_memory_tree() -> None:
     assert [o.object_id for o in find_in_root(root, tag="circle")] == ["renamed"]
 
 
+def test_text_filter_matches_only_the_outermost_text_element() -> None:
+    root = etree.fromstring(
+        b'<svg xmlns="http://www.w3.org/2000/svg"><g id="layer">'
+        b'<text id="t"><tspan id="ts">Spring Sale</tspan></text><rect id="r"/></g></svg>'
+    )
+    assert {o.object_id for o in find_in_root(root, text="sale")} == {"t"}
+    assert find_in_root(root, text="autumn") == []
+
+
 def test_find_in_root_engine_boxes_override_attribute_boxes() -> None:
     root = etree.fromstring(
         b'<svg xmlns="http://www.w3.org/2000/svg"><rect id="a" width="5" height="5"/></svg>'
@@ -199,8 +208,11 @@ def test_select_passes_every_filter_through(tool_app, mixed) -> None:
 def test_object_rows_for_a_mixed_document(tool_app, mixed) -> None:
     objects = _rows(tool_app, mixed, include=["objects"])
     assert objects["count"] == len(ALL_IDS)  # the id-less rect never appears
+    assert objects["columns"] == ["id", "tag", "bbox", "fill"]
     rows = {r[0]: r for r in objects["objects"]}
     assert set(rows) == ALL_IDS
+    assert rows["blue1"][1] == "rect"
+    assert rows["blue1"][2] == [0, 0, 20, 20]
     assert rows["blue1"][3] == "#3366CC"
     assert rows["p1"][2] is None  # a path has no analytic box
     empty = _rows(tool_app, mixed, select={"tag": "circle"})

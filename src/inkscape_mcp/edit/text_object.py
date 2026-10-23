@@ -36,8 +36,8 @@ from inkscape_mcp.edit.dom import (
     deep_copy_with_new_ids,
     find_by_id,
     normalize_font_family,
+    normalize_font_size,
     normalize_font_weight,
-    normalize_length,
     require_target,
     rewrite_references,
     set_label,
@@ -201,7 +201,7 @@ def set_font(
     """Set font properties on one or more targets.
 
     Sets any provided of ``font-family`` (via ``normalize_font_family``), ``font-size`` (via
-    ``normalize_length``), and ``font-weight`` (via ``normalize_font_weight``) on each target's
+    ``normalize_font_size``), and ``font-weight`` (via ``normalize_font_weight``) on each target's
     inline style using ``set_style_property``. At least one of the three must be supplied and
     ``object_ids`` must be non-empty; otherwise :class:`EditError` is raised. Only the requested
     family is written — missing-font detection stays with ``validate_document``.
@@ -216,7 +216,7 @@ def set_font(
     if family is not None:
         props.append(("font-family", normalize_font_family(family)))
     if size is not None:
-        props.append(("font-size", normalize_length(size)))
+        props.append(("font-size", normalize_font_size(size)))
     if weight is not None:
         props.append(("font-weight", normalize_font_weight(weight)))
     root = tree.getroot()

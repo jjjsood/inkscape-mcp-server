@@ -67,6 +67,7 @@ def _run_chain(
         "operation_id": result.operation_id,
         "summary": result.summary,
         "plan": plan,
+        "locked_layers_touched": result.locked_layers_touched or None,
     }
 
 

@@ -32,6 +32,7 @@ from pathlib import Path
 from lxml import etree
 
 from inkscape_mcp.config import Settings, resolve_settings
+from inkscape_mcp.document.inspect import _parse_transform
 from inkscape_mcp.edit.dom import (
     SVG_NS,
     EditError,
@@ -116,6 +117,18 @@ def _append_transform(elem: etree._Element, transform: str) -> None:
     elem.set("transform", f"{existing} {transform}".strip() if existing else transform)
 
 
+def _scale_factors(sx: float, sy: float | None) -> tuple[float, float]:
+    """Validate scale factors (``sy`` defaults to ``sx``) or raise :class:`EditError`."""
+    factor_y = sx if sy is None else sy
+    require_finite("sx", sx)
+    require_finite("sy", factor_y)
+    if sx <= 0 or factor_y <= 0:
+        raise EditError("scale factors must be positive")
+    if fmt_num(sx) == "0" or fmt_num(factor_y) == "0":
+        raise EditError("scale factors must be at least 0.000001")
+    return sx, factor_y
+
+
 def scale(tree: etree._ElementTree, object_id: str, sx: float, sy: float | None = None) -> str:
     """Scale the target object by factor ``sx`` (and ``sy``, defaulting to ``sx`` for uniform).
 
@@ -125,13 +138,7 @@ def scale(tree: etree._ElementTree, object_id: str, sx: float, sy: float | None 
     Rejects a non-finite or non-positive factor with :class:`EditError`. Raises
     :class:`TargetNotFound` if the id is absent.
     """
-    factor_y = sx if sy is None else sy
-    require_finite("sx", sx)
-    require_finite("sy", factor_y)
-    if sx <= 0 or factor_y <= 0:
-        raise EditError("scale factors must be positive")
-    if fmt_num(sx) == "0" or fmt_num(factor_y) == "0":
-        raise EditError("scale factors must be at least 0.000001")
+    sx, factor_y = _scale_factors(sx, sy)
     elem = require_target(tree.getroot(), object_id)
     factors = f"{fmt_num(sx)},{fmt_num(factor_y)}"
     center = _own_center(elem)
@@ -145,6 +152,95 @@ def scale(tree: etree._ElementTree, object_id: str, sx: float, sy: float | None 
         f"{fmt_num(cx - sx * cx)},{fmt_num(cy - factor_y * cy)})",
     )
     return f"scaled {object_id!r} by ({factors}) about its centre"
+
+
+_Box = tuple[float, float, float, float]  # x0, y0, x1, y1
+
+#: Elements that are never "an object on the canvas" (skipped by the neighbour check).
+_NON_GRAPHIC = frozenset({"defs", "style", "metadata", "namedview", "title", "desc", "script"})
+
+
+def _parent_box(elem: etree._Element) -> _Box | None:
+    """The element's attribute-derived box in its PARENT's space (own transform applied)."""
+    box = content_bbox(elem)
+    if box is None:
+        return None
+    x, y, w, h = box
+    corners = [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]
+    raw = elem.get("transform")
+    if raw:
+        m = _parse_transform(raw)
+        if m is None:
+            return None
+        a, b, c, d, e, f = m
+        corners = [(a * px + c * py + e, b * px + d * py + f) for px, py in corners]
+    xs, ys = [p[0] for p in corners], [p[1] for p in corners]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def scale_together(
+    tree: etree._ElementTree, object_ids: list[str], sx: float, sy: float | None = None
+) -> str:
+    """Scale several objects about ONE shared centre: the centre of their combined box.
+
+    The boxes are read in the parent's space (:func:`_parent_box`), so all targets must share a
+    parent and have measurable geometry, else :class:`EditError`. Each target gets the scale
+    PREPENDED (parent space), so a pre-existing transform stays correct.
+    """
+    sx, sy_ = _scale_factors(sx, sy)
+    elems = [require_target(tree.getroot(), oid) for oid in object_ids]
+    if len({e.getparent() for e in elems}) > 1:
+        raise EditError("about='selection' needs all ids to share one parent; use about='each'")
+    boxes = [_parent_box(e) for e in elems]
+    if any(b is None for b in boxes):
+        raise EditError("about='selection' needs measurable geometry for every id")
+    real = [b for b in boxes if b is not None]
+    cx = (min(b[0] for b in real) + max(b[2] for b in real)) / 2
+    cy = (min(b[1] for b in real) + max(b[3] for b in real)) / 2
+    matrix = (
+        f"matrix({fmt_num(sx)},0,0,{fmt_num(sy_)},{fmt_num(cx - sx * cx)},{fmt_num(cy - sy_ * cy)})"
+    )
+    for elem in elems:
+        prepend_transform(elem, matrix)
+    return (
+        f"scaled {len(elems)} object(s) by ({fmt_num(sx)},{fmt_num(sy_)}) "
+        f"about their shared centre ({fmt_num(cx)},{fmt_num(cy)})"
+    )
+
+
+def unscaled_neighbours(tree: etree._ElementTree, object_ids: list[str]) -> list[str]:
+    """Notes for siblings that sit on a scaled object (box centre inside it) but are not scaled.
+
+    Heuristic on attribute-derived boxes (a text is its anchor point), siblings only, so a button
+    label left behind by a scaled button rect is flagged. Call BEFORE scaling.
+    """
+    scaled = set(object_ids)
+    notes: list[str] = []
+    for oid in object_ids:
+        elem = require_target(tree.getroot(), oid)
+        box, parent = _parent_box(elem), elem.getparent()
+        if box is None or parent is None:
+            continue
+        over: list[str] = []
+        for sib in parent:
+            sid = sib.get("id") if isinstance(sib.tag, str) else None
+            if not sid or sid in scaled or etree.QName(sib).localname in _NON_GRAPHIC:
+                continue
+            sb = _parent_box(sib)
+            if sb is None:
+                continue
+            mx, my = (sb[0] + sb[2]) / 2, (sb[1] + sb[3]) / 2
+            if box[0] <= mx <= box[2] and box[1] <= my <= box[3]:
+                over.append(sid)
+        if over:
+            one = len(over) == 1
+            notes.append(
+                f"{', '.join(over[:5])}{', ...' if len(over) > 5 else ''} "
+                f"{'sits' if one else 'sit'} on {oid} and {'was' if one else 'were'} not scaled; "
+                f"add {'it' if one else 'them'} to ids with about='selection' "
+                "to scale them together"
+            )
+    return notes
 
 
 def rotate(
@@ -578,5 +674,7 @@ __all__ = [
     "resize_canvas",
     "rotate",
     "scale",
+    "scale_together",
     "tile",
+    "unscaled_neighbours",
 ]

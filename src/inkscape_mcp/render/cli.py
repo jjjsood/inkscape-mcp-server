@@ -32,7 +32,8 @@ Reproducibility / naming (workspace model):
 - User exports land under ``artifacts/exports/`` (or a caller-chosen, sandbox-validated
   ``out_dir``) named ``<utc-timestamp>-<rand>-[<prefix>-]<basename>-<descriptor>.<ext>``
   per §6. The descriptor encodes the reproducible parameters (size/format/object); ``<basename>``
-  is a sanitized stem of the document source; an optional ``name_prefix`` tags the stem. The
+  is a sanitized stem of the document source (the ``doc_id`` for a canvas/svg-text document);
+  an optional ``name_prefix`` tags the stem. The
   timestamp + random token make successive exports non-clobbering (and every output is created
   exclusively, so an existing file is never overwritten or later deleted) while the descriptor
   keeps the parameter set reproducible and predictable.
@@ -269,8 +270,11 @@ def _target_raster_dims(summary: DocSummary, width_px: int | None) -> tuple[int,
 
 
 def _sanitize_basename(entry: DocEntry) -> str:
-    """A filesystem- and name-safe stem derived from the document source path stem."""
-    stem = Path(entry.source_path).stem or "document"
+    """A filesystem- and name-safe stem: the source file's stem, or the doc_id for a document
+    created from a canvas / SVG text (no source file; registered as "document.svg")."""
+    # ponytail: "document.svg" sentinel is shared with tools/export.py; a real root-level
+    # document.svg is treated as created too (same ambiguity export.py already accepts).
+    stem = entry.doc_id if entry.source_path == "document.svg" else Path(entry.source_path).stem
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", stem).strip("-.")
     return cleaned or "document"
 

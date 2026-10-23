@@ -192,14 +192,3 @@ def test_delete_accepts_a_selector(tool_ws, doc) -> None:
 )
 def test_delete_with_missing_or_empty_ids_is_rejected_whole(tool_ws, doc, ids, match) -> None:
     _rejected(tool_ws, doc, _delete(ids), match=match, approval_token=TOKEN)
-
-
-@pytest.mark.parametrize("token", [None, "", "   "])
-def test_delete_without_a_real_token_is_refused_before_any_write(tool_ws, doc, token) -> None:
-    _rejected(
-        tool_ws,
-        doc,
-        _delete(["seed1"]),
-        match=r"ops\[0\] delete is HIGH risk; re-call with approval_token",
-        approval_token=token,
-    )

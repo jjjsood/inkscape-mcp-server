@@ -204,12 +204,6 @@ def test_out_dir_escape_is_rejected_before_inkscape(fake_inkscape, doc, run, out
     assert fake_inkscape.calls == []
 
 
-@pytest.mark.parametrize("run", [export_web_profile, create_icon_set, export_print_profile])
-def test_unknown_document_is_a_keyerror(fake_inkscape, tool_ws, run) -> None:
-    with pytest.raises(KeyError):
-        run("d_missing")
-
-
 # --- through the `export` tool --------------------------------------------------------------
 
 
@@ -319,7 +313,7 @@ def test_profiles_default_next_to_a_save_as_in_the_same_call(tool_app, fake_inks
     assert res["saved"]["path"] == "dist/site/logo.svg"
     assert res["artifacts"] and all(a["path"].startswith("dist/site/") for a in res["artifacts"])
     assert "save_as folder" in res["out_dir"]
-    # an explicit out_dir still wins; no save_as keeps the managed store
+    # an explicit out_dir still wins; no save_as falls back to the source file's folder
     res = _export(
         tool_app,
         doc,
@@ -331,4 +325,5 @@ def test_profiles_default_next_to_a_save_as_in_the_same_call(tool_app, fake_inks
     )
     assert all(a["path"].startswith("other/") for a in res["artifacts"])
     res = _export(tool_app, doc, [{"kind": "profile", "name": "web", "width_px": 32}])
-    assert all(a["path"].startswith(".inkscape-mcp/") for a in res["artifacts"])
+    assert all("/" not in a["path"] for a in res["artifacts"])
+    assert "source file's folder" in res["out_dir"]

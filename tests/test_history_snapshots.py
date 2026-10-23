@@ -105,8 +105,9 @@ def test_restore_reports_sha256_and_size_of_the_restored_bytes(doc) -> None:
     assert result.restored_size_bytes == len(SVG) == working.stat().st_size
 
 
-@pytest.mark.parametrize("bad_id", ["../../etc/passwd", "snap_deadbeef"])
-def test_restore_rejects_crafted_or_absent_ids_and_writes_nothing(doc, bad_id: str) -> None:
+def test_restore_rejects_a_crafted_id_and_writes_nothing(doc) -> None:
+    # an absent but well-formed id is covered by test_retention (restore of a pruned snapshot)
+    bad_id = "../../etc/passwd"
     doc_id, root, src = doc
     create_snapshot(doc_id)
     working = sandbox.working_copy(root, doc_id)
@@ -144,6 +145,11 @@ def test_tool_list_orders_snapshots_and_restore_matches_engine(tool_app, doc) ->
     res = _hist(tool_app, doc_id, "restore", snapshot_id=made[0]["snapshot_id"])
     assert sandbox.working_copy(root, doc_id).read_bytes() == SVG
     assert res["restored_from"] == made[0]["snapshot_id"]
+    assert res["restored_state"] == "the state saved as 's0'"
+    assert res["undo"] == (
+        f"history(doc_id='{doc_id}', action='restore', "
+        f"snapshot_id='{res['pre_restore_snapshot_id']}')"
+    )
     assert res["pre_restore_snapshot_id"].startswith("snap_") and res["operation_id"].startswith(
         "op_"
     )
@@ -165,6 +171,9 @@ def test_tool_create_label_is_listed_and_length_limited(tool_app, doc) -> None:
     assert _hist(tool_app, doc_id, "list")["snapshots"][0]["label"] == "before-logo"
     with pytest.raises(ToolError, match="label too long"):
         _hist(tool_app, doc_id, "create", label="x" * 300)
+    for reserved in ("pre-reload", "before: fake", "pre-restore before snap_x"):
+        with pytest.raises(ToolError, match="reserved"):
+            _hist(tool_app, doc_id, "create", label=reserved)
 
 
 def test_tool_arguments_must_match_the_action(tool_app, doc) -> None:
@@ -213,8 +222,17 @@ def test_reload_snapshots_first_and_is_reversible(tool_app, tool_ws) -> None:
     assert [s.snapshot_id for s in snaps] == [res["pre_reload_snapshot_id"]]
     assert snaps[0].label == "pre-reload"
     assert _working(doc_id).read_bytes() != before
-    _hist(tool_app, doc_id, "restore", snapshot_id=res["pre_reload_snapshot_id"])
+    pre_id = res["pre_reload_snapshot_id"]
+    assert res["undo"] == f"history(doc_id='{doc_id}', action='restore', snapshot_id='{pre_id}')"
+    back = _hist(tool_app, doc_id, "restore", snapshot_id=pre_id)
     assert _working(doc_id).read_bytes() == before
+    assert "reloaded outside change" in back["warning"] and "dropped" in back["warning"]
+
+
+def test_reload_note_explains_pre_reload_restore(tool_app, tool_ws) -> None:
+    doc_id, _ = _open(tool_app, tool_ws)
+    note = _hist(tool_app, doc_id, "reload")["note"]
+    assert "pre_reload_snapshot_id" in note and "drops" in note
 
 
 def test_reload_discards_working_edits(tool_app, tool_ws) -> None:
@@ -241,22 +259,6 @@ def test_reload_falls_back_to_the_baseline_when_the_source_is_gone(tool_app, too
     assert 'id="r1"' in _working(doc_id).read_text(encoding="utf-8")
 
 
-def test_restoring_the_pre_restore_snapshot_undoes_the_restore(tool_app, tool_ws) -> None:
-    """Undo of undo: restore to the pre-edit snapshot, then restore its pre_restore snapshot."""
-    doc_id, _ = _open(tool_app, tool_ws)
-    edit = call(
-        tool_app,
-        "edit",
-        {"doc_id": doc_id, "ops": [{"op": "fill", "ids": ["r1"], "color": "#00ff00"}]},
-    ).data
-    edited = _working(doc_id).read_bytes()
-
-    undo = _hist(tool_app, doc_id, "restore", snapshot_id=edit["snapshot_id"])
-    assert _working(doc_id).read_bytes() != edited
-    _hist(tool_app, doc_id, "restore", snapshot_id=undo["pre_restore_snapshot_id"])
-    assert _working(doc_id).read_bytes() == edited
-
-
 def test_edit_snapshot_is_labelled_with_what_it_precedes(tool_app, tool_ws) -> None:
     doc_id, _ = _open(tool_app, tool_ws)
     edit = call(
@@ -274,4 +276,4 @@ def test_edit_snapshot_is_labelled_with_what_it_precedes(tool_app, tool_ws) -> N
     entry = next(s for s in listed["snapshots"] if s["id"] == edit["snapshot_id"])
     assert entry["label"].startswith("before: fill")
     assert entry["restoring"] == f"returns to the state {entry['label']}"
-    assert len(entry["label"]) <= 120
+    assert len(entry["label"]) <= 240

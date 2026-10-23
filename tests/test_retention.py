@@ -231,6 +231,15 @@ def test_history_prune_applies_the_configured_policy(
     assert again["pruned_snapshots"] == 0
 
 
+def test_history_prune_noop_explains_itself(tool_app, doc) -> None:
+    doc_id, _ = doc
+    _create_n(doc_id, 1)
+    res = call(tool_app, "history", {"doc_id": doc_id, "action": "prune"}).data
+    assert res["pruned_snapshots"] == 0
+    assert "Nothing to prune" in res["note"] and "retention" in res["note"]
+    assert "not an error" in res["note"]
+
+
 # --- live-frame retention (part of the same explicit sweep) -------------------------------------
 
 

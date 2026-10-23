@@ -43,6 +43,11 @@ def snapshots_index(root: Path, doc_id: str) -> Path:
     return snapshots_dir(root, doc_id) / "index.json"
 
 
+def backups_dir(root: Path, doc_id: str) -> Path:
+    """`<doc>/backups/` — old destination bytes replaced by an approved `save_as` overwrite."""
+    return doc_dir(root, doc_id) / "backups"
+
+
 def artifacts_dir(root: Path, doc_id: str) -> Path:
     """`<doc>/artifacts/`."""
     return doc_dir(root, doc_id) / "artifacts"
@@ -90,13 +95,14 @@ def ensure_live_dirs(root: Path) -> None:
 def ensure_doc_dirs(root: Path, doc_id: str) -> None:
     """Create the per-document directory tree (real dirs only, never symlinks).
 
-    Idempotent. Creates the doc folder plus `working/`, `snapshots/`, `artifacts/exports/`,
-    and `operations/`.
+    Idempotent. Creates the doc folder plus `working/`, `snapshots/`, `backups/`,
+    `artifacts/exports/`, and `operations/`.
     """
     for path in (
         doc_dir(root, doc_id),
         working_copy(root, doc_id).parent,
         snapshots_dir(root, doc_id),
+        backups_dir(root, doc_id),
         artifacts_dir(root, doc_id),
         exports_dir(root, doc_id),
         operations_dir(root, doc_id),

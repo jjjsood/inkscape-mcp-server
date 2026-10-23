@@ -252,16 +252,6 @@ def test_palette_validates_colours_before_any_record(tool_ws, doc, mapping) -> N
     _rejected(tool_ws, doc, {"op": "palette", "mapping": mapping}, match=r"ops\[0\] palette")
 
 
-# --- targets and shared error paths ---------------------------------------------
-
-
-def test_missing_and_empty_targets_are_rejected(tool_ws, doc) -> None:
-    _rejected(
-        tool_ws, doc, _fill(["does-not-exist"], "#000000"), match="id 'does-not-exist' not found"
-    )
-    _rejected(tool_ws, doc, _fill([], "#000000"), match="'ids' is empty")
-
-
 # --- colours inside <style> CSS rules ------------------------------------------------------
 
 CSS_SVG = (

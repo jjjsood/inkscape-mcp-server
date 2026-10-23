@@ -33,7 +33,7 @@ DESCRIPTION = (
     "from_live {dest_path} (save the live Inkscape canvas into the workspace). Optional `ops` run "
     "the first edit in the same call (same format as edit); render='inline' returns a PNG "
     "(of the opened page when there are no ops). "
-    "Example: open(canvas={'width':800,'height':600,'background':'#fff'}, "
+    "Example: open(canvas={'width':800,'height':600}, "
     "ops=[{'op':'create_circle','cx':400,'cy':300,'r':100,'fill':'#f63'}], render='inline')"
 )
 

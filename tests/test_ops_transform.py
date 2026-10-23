@@ -170,10 +170,6 @@ def test_move_accepts_a_selector_and_several_ops_stack_on_one_snapshot(tool_ws, 
     assert _counts(tool_ws, doc) == (1, 1)
 
 
-def test_missing_object_is_rejected(tool_ws, doc) -> None:
-    _rejected(tool_ws, doc, {"op": "move", "ids": ["nope"], "dx": 1, "dy": 1}, match="id 'nope'")
-
-
 # --- tile ------------------------------------------------------------------------
 
 
@@ -207,7 +203,6 @@ def test_tile_1x1_is_a_noop(tool_ws, doc) -> None:
     [
         ({"rows": 0, "cols": 3}, "tile"),
         ({"rows": 100, "cols": 100}, "tile"),  # over the grid cap
-        ({"ids": ["nope"]}, "id 'nope' not found"),
     ],
 )
 def test_tile_rejections(tool_ws, doc, patch, match) -> None:

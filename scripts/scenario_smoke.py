@@ -52,11 +52,11 @@ from typing import Any
 
 from PIL import Image
 
-#: Fixture: two red shapes and a text (same as ``evals/run_call_count.py::SAMPLE_SVG``).
+#: Fixture: red background, purple dot, text (dot must differ from bg, else it is invisible).
 FIXTURE_SVG = """<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="200" height="120" viewBox="0 0 200 120">
   <rect id="bg" x="0" y="0" width="200" height="120" fill="#ff0000"/>
-  <circle id="dot" cx="100" cy="60" r="30" fill="#ff0000"/>
+  <circle id="dot" cx="100" cy="60" r="30" fill="#6a0dad"/>
   <text id="label" x="20" y="100" fill="#222222">Hello</text>
 </svg>
 """
@@ -68,6 +68,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 POSTER = REPO_ROOT / "tests" / "e2e" / "fixtures" / "brand_poster.svg"
 
 OLD_RED, OLD_NAVY, TEAL, NAVY = "#e63946", "#1d3557", "#2a9d8f", "#264653"
+BG_RED, DOT_PURPLE = "#ff0000", "#6a0dad"  # logo.svg fixture: background and dot
 
 
 class Failed(Exception):
@@ -86,6 +87,8 @@ class Called:
         return len(self.pngs)
 
     def image(self) -> Image.Image:
+        if not self.pngs:
+            raise Failed("no inline image returned")
         return Image.open(io.BytesIO(self.pngs[0])).convert("RGBA")
 
 
@@ -236,7 +239,10 @@ def pixel(img: Image.Image, x: float, y: float, page_w: float) -> tuple[int, ...
 
 
 def grid_svg(n_cols: int = 12, n_rows: int = 10) -> str:
-    """120 rects ``c{r}_{c}`` on a 40 px grid, red when ``(r+c) % 3 == 0`` else blue."""
+    """120 rects ``c{r}_{c}`` on a 40 px grid, red when ``(r+c) % 3 == 0`` else blue.
+
+    The canvas is one row (40 px) taller than the grid: an empty strip at the bottom.
+    """
     cells = "".join(
         f'<rect id="c{r}_{c}" x="{c * 40 + 5}" y="{r * 40 + 5}" width="30" height="30" '
         f'fill="{"#cc0000" if (r + c) % 3 == 0 else "#0055cc"}"/>'
@@ -244,8 +250,9 @@ def grid_svg(n_cols: int = 12, n_rows: int = 10) -> str:
         for c in range(n_cols)
     )
     return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{n_cols * 40}" height="{n_rows * 40}" '
-        f'viewBox="0 0 {n_cols * 40} {n_rows * 40}">{cells}</svg>'
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{n_cols * 40}" '
+        f'height="{n_rows * 40 + 40}" viewBox="0 0 {n_cols * 40} {n_rows * 40 + 40}">'
+        f"{cells}</svg>"
     )
 
 
@@ -336,6 +343,16 @@ async def wf1_logo_feedback_delivery(c: Ctx) -> None:
     done = await c.save(doc, "deliver/logo.svg", overwrite=True)
     c.check(done.data["saved"].get("overwritten") is True, "overwritten flagged")
     c.check("#f4a261" in dest.read_text(encoding="utf-8"), "delivered file carries the fix")
+    if c.has_engine("re-export after the late fix"):  # icons + web from turn 5 are stale now
+        again = await c.call("export", {"doc_id": doc, "targets": [
+            {"kind": "profile", "name": "icons"}, {"kind": "profile", "name": "web"}],
+            "name_prefix": "logo"})  # fmt: skip
+        svgs = [a for a in again.data.get("artifacts", []) if str(a.get("path")).endswith(".svg")]
+        c.check(
+            bool(svgs)
+            and all("#f4a261" in (c.ws.parent / a["path"]).read_text("utf-8") for a in svgs),
+            f"regenerated web SVG has the fix: {svgs}",
+        )
 
 
 async def wf2_brand_refresh(c: Ctx) -> None:
@@ -509,6 +526,9 @@ async def wf4_variants_contact_sheet(c: Ctx) -> None:
     msg = await c.fail("export", {"doc_id": docs, "targets": [
         {"kind": "save_as", "dest_path": str(c.ws / "x.svg")}]})  # fmt: skip
     c.check("call export once per doc_id" in msg, msg)
+    for d, name in zip(docs, "abc", strict=True):  # the error's advice: one call per doc_id
+        await c.save(d, f"variants/poster-{name}.svg")
+        c.check((c.ws / f"variants/poster-{name}.svg").is_file(), f"variant {name} saved")
     await c.save(sheet2, "sheets/contact.svg")
     c.check("Sale B2" in (c.ws / "sheets/contact.svg").read_text(encoding="utf-8"), "sheet saved")
     if c.has_engine("set export + sheet PDF"):
@@ -545,7 +565,7 @@ async def wf5_bulk_selectors(c: Ctx) -> None:
             "no red left, one snapshot for the whole call")  # fmt: skip
 
     # One delete among ten creates makes the whole call HIGH: nothing created without a token.
-    creates = [{"op": "create_rect", "x": i * 10, "y": 0, "width": 8, "height": 8,
+    creates = [{"op": "create_rect", "x": i * 14 + 5, "y": 410, "width": 8, "height": 8,
                 "fill": "#00aa00"} for i in range(10)]  # fmt: skip
     mixed: list[dict[str, Any]] = [*creates, {"op": "delete", "ids": ["c0_1"]}]
     msg = await c.fail("edit", {"doc_id": doc, "ops": mixed})
@@ -620,6 +640,10 @@ async def wf6_path_ops(c: Ctx) -> None:
                          approval_token=TOKEN)  # fmt: skip
     pieces = len(await c.objects(doc))
     c.check(pieces >= 3, f"break_apart split the compound path: {pieces}")
+    c.check(
+        len(apart.data["created"]) == pieces,
+        f"break_apart reports every piece: {apart.data['created']}",
+    )
     # Iteration: "no, keep it combined" -> undo only the last step.
     await c.call("history", {"doc_id": doc, "action": "restore",
                              "snapshot_id": apart.data["snapshot_id"]})  # fmt: skip
@@ -645,7 +669,7 @@ async def wf7_foreign_svg_security(c: Ctx) -> None:
     )
     insert = [{"op": "insert_svg", "svg": fragment}]
     msg = await c.fail("edit", {"doc_id": doc, "ops": insert})
-    c.check("insert_svg is HIGH risk; re-call with approval_token" in msg, msg)
+    c.check("disallowed event-handler attribute: 'onload'" in msg, msg)  # scrubbed before a token
     _, err = await c.attempt("edit", {"doc_id": doc, "ops": insert, "approval_token": TOKEN})
     if not err:
         c.check("ins" in await c.ids(doc), "safe part of the fragment inserted")
@@ -692,7 +716,9 @@ async def wf8_long_iteration(c: Ctx) -> None:
         c.check(await c.snapshot_count(doc) == base + i, f"round {i}: exactly one snapshot")
         if i % 4 == 0 and c.has_engine(f"render round {i}"):
             img = (await c.call("render", {"doc_id": doc, "width_px": 200})).image()
-            c.check(near(pixel(img, 100 + 5 * i, 60, 200), "#ff0000"), f"dot moved in round {i}")
+            # Dot spans x 70+5i .. 130+5i at y=60: purple at its centre, background just left of it.
+            c.check(near(pixel(img, 100 + 5 * i, 60, 200), DOT_PURPLE), f"dot moved in round {i}")
+            c.check(near(pixel(img, 66 + 5 * i, 60, 200), BG_RED), f"old spot is background, {i}")
 
     # "Round 3 was the good one": the snapshot of round 4 holds the state after round 3.
     await c.call("history", {"doc_id": doc, "action": "restore", "snapshot_id": rounds[3]})
@@ -700,10 +726,12 @@ async def wf8_long_iteration(c: Ctx) -> None:
     c.check({"step1", "step2", "step3"} <= now and "step4" not in now, f"state after 3: {now}")
     c.check(centre((await c.row(doc, "dot"))["bbox"])[0] == 115, "dot moved exactly 3x5")
     for i in (13, 14):
-        await c.edit(doc, [{"op": "create_rect", "x": 0, "y": i * 4, "width": 4, "height": 4,
+        await c.edit(doc, [{"op": "move", "ids": ["dot"], "dx": 5},
+                           {"op": "create_rect", "x": 0, "y": i * 4, "width": 4, "height": 4,
                             "id": f"step{i}"}])  # fmt: skip
     now = await c.ids(doc)
     c.check({"step13", "step14"} <= now and "step12" not in now, "work continues after restore")
+    c.check(centre((await c.row(doc, "dot"))["bbox"])[0] == 125, "dot moved 5x5 after restore")
 
     pruned = await c.call("history", {"doc_id": doc, "action": "prune"})
     c.check(pruned.data.get("retained", 0) >= 1, f"prune keeps snapshots: {pruned.data}")

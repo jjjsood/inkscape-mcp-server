@@ -109,34 +109,62 @@ def test_scrub_allows_same_document_references(name: str) -> None:
     assert elem is not None and elem.get(attr) == value
 
 
+def test_all_violations_listed_in_one_error() -> None:
+    svg = f'<svg {NS} onload="x()"><script>alert(1)</script></svg>'
+    with pytest.raises(ComposeError) as ei:
+        parse_and_scrub(svg)
+    assert str(ei.value) == (
+        "svg contains a disallowed event-handler attribute: 'onload'; "
+        "svg contains disallowed element: 'script'"
+    )
+
+
+def test_violation_list_deduped_and_capped() -> None:
+    body = "<script/>" * 5
+    body += "".join(f"<g data-{c}='1'/>" for c in "abcdefghijklmnop")
+    with pytest.raises(ComposeError) as ei:
+        parse_and_scrub(f"<svg {NS}>{body}</svg>")
+    msg = str(ei.value)
+    assert msg.count("'script'") == 1  # de-duplicated
+    assert msg.endswith("more")
+    assert len(msg.split("; ")) == 11  # 10 shown + "and more"
+
+
+def test_violation_items_are_clipped() -> None:
+    with pytest.raises(ComposeError) as ei:
+        parse_and_scrub(f"<svg {NS}><{'x' * 5000}/></svg>")
+    assert len(str(ei.value)) <= 200
+
+
 # --- allowlist and approval through the ops -----------------------------------
 
 
 @pytest.mark.parametrize("name", ["script", "onload", "image"])
-def test_set_svg_and_insert_svg_surface_the_allowlist_error(doc: str, tool_ws: Path, name) -> None:
+@pytest.mark.parametrize("kw", [{"approval_token": TOKEN}, {}, {"dry_run": True}])
+def test_set_svg_and_insert_svg_surface_the_allowlist_error(
+    doc: str, tool_ws: Path, name, kw
+) -> None:
     svg, fragment = REJECTED[name]
     before = _text(tool_ws, doc)
     with pytest.raises(OpError, match=rf"ops\[0\] set_svg: .*{fragment}"):
-        run_ops(doc, {"op": "set_svg", "svg": svg}, approval_token=TOKEN)
+        run_ops(doc, {"op": "set_svg", "svg": svg}, **kw)
     with pytest.raises(OpError, match=rf"ops\[0\] insert_svg: .*{fragment}"):
         run_ops(
             doc,
             _insert(svg.replace("<svg", "<g", 1).replace("</svg>", "</g>")),
-            approval_token=TOKEN,
+            **kw,
         )
     assert _text(tool_ws, doc) == before
 
 
-@pytest.mark.parametrize(("op", "token"), [("set_svg", None), ("insert_svg", "  ")])
-def test_compose_ops_are_high_risk_and_need_a_token(
-    doc: str, tool_ws: Path, op: str, token: str | None
-) -> None:
+@pytest.mark.parametrize("op", ["set_svg", "insert_svg"])
+def test_compose_ops_are_high_risk_and_need_a_token(doc: str, tool_ws: Path, op: str) -> None:
     before = _text(tool_ws, doc)
     svg = (
         f'<svg {NS} width="10" height="10"/>' if op == "set_svg" else '<rect width="2" height="2"/>'
     )
     with pytest.raises(OpError, match=rf"ops\[0\] {op} is HIGH risk; re-call with approval_token"):
-        run_ops(doc, {"op": op, "svg": svg}, approval_token=token)
+        run_ops(doc, {"op": op, "svg": svg})
     assert _text(tool_ws, doc) == before
 
 
@@ -338,7 +366,7 @@ def test_grid_lays_whole_documents_out_row_major(pair: tuple[str, str], tool_ws:
     cells = [e for e in wroot.iter(f"{SVG_NS}g") if (e.get("id") or "").startswith("cell-")]
     assert [c.get("id").split("-")[1:3] for c in cells] == [["0", "0"], ["0", "1"]]
     assert "translate(55,0)" in cells[1].get("transform", "")
-    assert res.created[0].id == cells[0].get("id")
+    assert [c.id for c in res.created] == [c.get("id") for c in cells]
 
 
 def test_grid_lays_objects_of_one_document_out(pair: tuple[str, str], tool_ws: Path) -> None:
@@ -417,3 +445,29 @@ def test_a_copy_without_its_own_style_keeps_the_document_classes() -> None:
     )
     clone, _ = deep_copy_with_new_ids(root.find(f"{SVG_NS}rect"), root, None)
     assert clone.get("class") == "accent"
+
+
+def test_grid_sheet_reports_stale_source_after_source_edit(pair: tuple[str, str]) -> None:
+    from inkscape_mcp.tools.inspect_ import _sections
+
+    target, source = pair
+    run_ops(target, {"op": "grid", "doc_ids": [source], "rows": 1, "cols": 1, "cell": 50})
+
+    def summary() -> dict[str, Any]:
+        return _sections(target, ["summary"], None, "summary", 50, None)["summary"]
+
+    assert "stale_sources" not in summary()
+    run_ops(source, {"op": "create_rect", "x": 0, "y": 0, "width": 1, "height": 1})
+    assert summary()["stale_sources"] == [source]
+
+
+def test_editing_a_placed_source_warns_until_the_sheet_no_longer_holds_the_copy(
+    pair: tuple[str, str],
+) -> None:
+    target, source = pair
+    placed = run_ops(target, {"op": "place", "source_doc_id": source, "x": 0, "y": 0})
+    res = run_ops(source, {"op": "create_rect", "x": 0, "y": 0, "width": 1, "height": 1})
+    assert any(target in w and "stale" in w for w in res.warnings)
+    restore_snapshot(target, placed.snapshot_id)  # sheet back to pre-place: no copy left
+    res = run_ops(source, {"op": "create_rect", "x": 2, "y": 0, "width": 1, "height": 1})
+    assert not any(target in w for w in res.warnings)

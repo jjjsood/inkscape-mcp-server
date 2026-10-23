@@ -29,13 +29,16 @@ a WORKING COPY; the original source file is never modified.
 
 Ops. An op is `{op: 'create_rect', x, y, width, height}`. `"$<n>"` names the id that op n of the
 same call created, so a whole drawing is one call; ops that act on objects take `ids` or a `select`
-({fill, stroke, tag, text, id_prefix, bbox}) instead of a separate lookup. A call is atomic: one bad
-op rejects the whole call and nothing changes. `dry_run=true` returns the plan. `help(topic='ops')`
-lists every op, `help(op=NAME)` shows its fields and a valid example (also: `inkscape://ops`).
+({fill, stroke, tag, text, id_prefix, bbox}) instead of a separate lookup. Ops run in
+order, each seeing the document as the previous ops left it. A call is atomic: one bad op rejects
+the whole call and nothing changes. `dry_run=true` returns the plan. `help(topic='ops')` lists every
+op, `help(op=NAME)` shows its fields and a valid example (also: `inkscape://ops`).
 
 Reversibility. Every real edit takes ONE snapshot and writes ONE Operation Record (ADR-004); a
-genuine no-op writes nothing and reports `changed: false`. `history(doc_id, action='restore',
-snapshot_id=...)` rolls back (itself reversible); 'create' checkpoints, 'list' browses, 'reload'
+genuine no-op writes nothing and reports `changed: false`. To undo: `history(doc_id,
+action='undo')` (again = one edit further back) or the `undo` call from the edit result, verbatim;
+never pick a snapshot by guessing (an edit's `snapshot_id` is the state before THAT edit). Undo is
+itself reversible; 'restore' + snapshot_id, 'create' checkpoints, 'list' browses, 'reload'
 re-reads the source file.
 
 Risk classes & approval. low (inspect/render/help/export), medium (edit ops: reversible,
@@ -45,13 +48,14 @@ is the MAX over its ops; a high-risk call without a non-empty `approval_token` i
 A token approves ONE call: ask the human for it (show the dry_run plan) before each high-risk
 call, never invent one and never reuse a token from an earlier, different change.
 
-Working with the human. Act on what they named: if an id they gave is not found, say so and
-name the match you used (the error lists similar ids) instead of silently substituting it.
+Working with the human. Send ids exactly as the human wrote them, even if you suspect a typo
+(`brand-nam`): never pre-correct. Only after the server's `not found (similar: ...)` error retry
+with the match, and tell the human which id you used.
 Reply in the human's language; `help(goal=...)` understands non-English goals, so pass their
 words as they are.
 
 Look before you trust. `edit(..., render='inline')` and `render(doc_id)` return a PNG you can see;
-check it, and `history(action='restore')` if it is wrong. `inspect(doc_id, include=[...],
+check it, and `history(action='undo')` if it is wrong. `inspect(doc_id, include=[...],
 select=...)` reads structure, objects, validation and quality.
 
 Finding the right call. Don't grep the surface: `help(goal='make the svg smaller')` returns the

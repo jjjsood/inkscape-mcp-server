@@ -255,3 +255,12 @@ def test_keep_ids_keeps_a_deliberately_renamed_id(doc: str, tool_ws: Path) -> No
 
 def test_an_unknown_keep_id_is_harmless(doc: str, tool_ws: Path) -> None:
     assert "unrefrect" not in _optimized_ids(tool_ws, doc, keep_ids=["not-in-doc"])
+
+
+def test_aggressive_dry_run_plan_says_what_it_removes(tool_app, doc: str) -> None:
+    plan = call(tool_app, "edit", {"doc_id": doc, "ops": [OPTIMIZE], "dry_run": True}).data
+    assert "layer markers and namedview removed" in plan["plan"][0]["summary"]
+    plain = call(
+        tool_app, "edit", {"doc_id": doc, "ops": [{"op": "optimize_web"}], "dry_run": True}
+    )
+    assert "aggressive" not in plain.data["plan"][0]["summary"]

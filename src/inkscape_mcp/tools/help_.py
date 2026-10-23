@@ -35,7 +35,7 @@ OVERVIEW = {
         "by op n; dry_run shows the plan",
         "render": "look at the page, an object or a frame as an inline PNG",
         "export": "files (png/pdf/svg), profiles (web/icons/print), save_as",
-        "history": "list/create/restore snapshots, prune, reload from source",
+        "history": "snapshots (list/create/restore/prune), restore_file (undo a save_as), reload",
         "help": "this tool",
         "live": "observe/steer a running Inkscape (when live mode is enabled)",
         "live_edit": "change the live selection (when live mode is enabled)",

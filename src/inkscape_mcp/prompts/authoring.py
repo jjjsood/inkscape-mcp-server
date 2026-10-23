@@ -45,7 +45,7 @@ def compose_artwork(goal: str) -> str:
         "Follow the open → edit → look → export loop with the typed tools (each call is atomic, "
         "risk-classed and reversible — every edit writes a snapshot + Operation Record, so "
         "`history(doc_id, action='restore', snapshot_id=...)` rolls back at any point):\n\n"
-        "1. OPEN — `open(canvas={'width': ..., 'height': ..., 'background': '#fff'}, ops=[...], "
+        "1. OPEN — `open(canvas={'width': ..., 'height': ...}, ops=[...], "
         "render='inline')` starts a blank SVG, returns a `doc_id`, and can already draw the first "
         "shapes. (To work on an existing file instead, `open(path=...)`.)\n"
         "2. DRAW — ONE `edit(doc_id, ops=[...], render='inline')` call can hold up to dozens of "

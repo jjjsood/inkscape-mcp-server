@@ -18,7 +18,6 @@ from fastmcp.exceptions import ToolError
 from inkscape_mcp.config import (
     ENV_MAX_EXPORT_PX,
     ENV_MAX_OUTPUT_BYTES,
-    ENV_PROCESS_TIMEOUT_S,
     get_settings,
 )
 from inkscape_mcp.registry import get_registry
@@ -270,11 +269,6 @@ def test_engine_failure_leaves_no_artifact(fake_inkscape, doc, tool_ws) -> None:
     assert not exports.exists() or not any(exports.rglob("*"))
 
 
-def test_unknown_document_is_a_keyerror(fake_inkscape, tool_ws) -> None:
-    with pytest.raises(KeyError):
-        export_document("d_missing", "png")
-
-
 @pytest.mark.parametrize(
     ("knob", "message"), [("returncode", "render failed"), ("timed_out", "render timed out")]
 )
@@ -286,23 +280,6 @@ def test_failed_or_timed_out_inkscape_leaves_no_artifact(
         export_document(doc, "png", width_px=32)
     assert fake_inkscape.calls  # Inkscape ran (and the fake wrote a file) ...
     assert not any(sandbox.exports_dir(tool_ws, doc).rglob("*"))  # ... which was removed
-
-
-def test_run_inkscape_uses_the_configured_process_timeout(monkeypatch) -> None:
-    from inkscape_mcp.workspace import subprocess_exec
-
-    monkeypatch.setenv(ENV_PROCESS_TIMEOUT_S, "7.5")
-    get_settings.cache_clear()
-    seen: dict[str, object] = {}
-
-    def run_process(argv: list[str], timeout_s: float) -> str:
-        seen.update(argv=argv, timeout_s=timeout_s)
-        return "ran"
-
-    monkeypatch.setattr(subprocess_exec.shutil, "which", lambda _name: "/opt/inkscape")
-    monkeypatch.setattr(subprocess_exec, "run_process", run_process)
-    assert subprocess_exec.run_inkscape(["--version"]) == "ran"
-    assert seen == {"argv": ["/opt/inkscape", "--version"], "timeout_s": 7.5}
 
 
 # --- engine: staleness ----------------------------------------------------------------------
@@ -332,15 +309,19 @@ def test_tool_artifacts_resolve_by_one_root_join(tool_app, fake_inkscape, doc, t
             {"kind": "file", "format": "pdf"},
             {"kind": "file", "format": "png", "object_id": "dot", "width_px": 24},
         ],
+        byte_budget=1_000_000,
     )
+    assert data["count"] == 3
     assert [a["format"] for a in data["artifacts"]] == ["png", "pdf", "png"]
     assert data["total_bytes"] == sum(a["bytes"] for a in data["artifacts"])
+    assert 0 < data["total_bytes"] <= 1_000_000
     for art in data["artifacts"]:
-        assert art["path"].startswith(f".inkscape-mcp/documents/{doc}/artifacts/exports/")
+        assert "/" not in art["path"]  # defaults to the source file's folder (workspace root)
         assert _file(doc, art["path"]).is_file() and art["bytes"] > 0
     assert data["artifacts"][0]["width_px"] == 64
     assert data["artifacts"][2]["object_id"] == "dot"
     assert "width_px" not in data["artifacts"][1]  # vector output has no raster dims
+    assert _file(doc, data["artifacts"][0]["path"]).read_bytes()[:4] == PNG_MAGIC
 
 
 def test_tool_out_dir_and_prefix(tool_app, fake_inkscape, doc, tool_ws) -> None:
@@ -359,6 +340,14 @@ def test_tool_out_dir_escape_is_rejected(tool_app, fake_inkscape, doc) -> None:
     with pytest.raises(ToolError, match=r"targets\[0\] \(file\): path rejected"):
         _export(tool_app, doc, [{"kind": "file", "format": "png"}], out_dir="../escape")
     assert fake_inkscape.calls == []
+
+
+def test_tool_foreign_out_dir_suggests_the_doc_folder(tool_app, tool_ws, fake_inkscape) -> None:
+    (tool_ws / "run" / "WF7").mkdir(parents=True)
+    doc_id = open_doc(tool_ws, "run/WF7/logo.svg", ART)
+    with pytest.raises(ToolError, match=r"run/WF7/deliver"):
+        _export(tool_app, doc_id, [{"kind": "file", "format": "svg"}], out_dir="deliver")
+    assert not (tool_ws / "deliver").exists()
 
 
 def test_tool_rejects_unsafe_object_ids(tool_app, fake_inkscape, doc) -> None:

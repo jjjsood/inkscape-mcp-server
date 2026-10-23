@@ -326,6 +326,12 @@ def normalize_length(raw: str) -> str:
     return value
 
 
+def normalize_font_size(raw: str) -> str:
+    """Validate a font-size; a bare number gets `px` (CSS needs a unit) or raise `EditError`."""
+    value = normalize_length(raw)
+    return f"{value}px" if value[-1].isdigit() else value
+
+
 def normalize_font_weight(raw: str) -> str:
     """Validate a font-weight keyword / numeric value or raise `EditError`."""
     value = raw.strip().lower()
@@ -638,6 +644,7 @@ __all__ = [
     "local_name",
     "normalize_color",
     "normalize_font_family",
+    "normalize_font_size",
     "normalize_font_weight",
     "normalize_length",
     "normalize_paint",

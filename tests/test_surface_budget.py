@@ -91,3 +91,14 @@ def test_every_op_has_a_group_and_a_valid_example() -> None:
     for name, example in OP_EXAMPLES.items():
         (typed,) = parse_ops([example])
         assert typed.op == name
+
+
+def test_render_series_and_label_say_frame_only() -> None:
+    props = _tools()["render"].parameters["properties"]
+    assert "frame" in props["series"]["description"]
+    assert "frame" in props["label"]["description"]
+
+
+def test_edit_ops_param_documents_select_max_matches() -> None:
+    props = _tools()["edit"].parameters["properties"]
+    assert "max_matches" in props["ops"]["description"]

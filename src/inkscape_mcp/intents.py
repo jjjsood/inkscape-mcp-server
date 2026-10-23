@@ -106,8 +106,9 @@ OUT_OF_SCOPE_RULES: tuple[OutOfScopeRule, ...] = (
         label="raster/photo pixel editing",
         reason=(
             "This is a vector/SVG server — it cannot edit raster/photo PIXELS (JPEG/PNG/GIF/"
-            "bitmap). It can embed or trace a raster, and it exports SVG to PNG, but pixel editing "
-            "(retouch/filter/crop photo content) is out of scope."
+            "bitmap). It keeps raster images already in a document and exports SVG to PNG, but it "
+            "cannot embed, trace (vectorize) or edit raster pixels (retouch/filter/crop photo "
+            "content)."
         ),
         keywords=[
             "jpeg",
@@ -319,7 +320,7 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
         ],
         _call(
             "open",
-            canvas={"width": 200, "height": 100, "background": "#ffffff"},
+            canvas={"width": 200, "height": 100},
             ops=[{"op": "create_circle", "cx": 100, "cy": 50, "r": 30, "fill": "#3366ff"}],
             render="inline",
         ),
@@ -755,13 +756,39 @@ INTENT_MAP: tuple[IntentEntry, ...] = (
         _doc_call("history", action="prune"),
     ),
     _entry(
-        "Snapshot, undo, or restore the document state",
+        "Undo the last change(s)",
+        "history",
+        ["history:undo"],
+        "history(doc_id, action='undo') reverts the last edit; call it again to go one further "
+        "back (steps=N for several). Itself reversible. Never guess a snapshot_id.",
+        [
+            "undo",
+            "undo the last change",
+            "undo last",
+            "take back",
+            "bring back",
+            "bring the deleted",
+            "deleted",
+            "get it back",
+            "put it back",
+            "revert the last",
+            "rueckgaengig",
+            "annulla",
+            "annuler",
+            "deshacer",
+        ],
+        _doc_call("history", action="undo"),
+    ),
+    _entry(
+        "Snapshot or restore a specific document state",
         "history",
         ["history:list", "history:create", "history:restore"],
-        "history(doc_id, action='list|create|restore'); restore is itself reversible.",
+        "history(doc_id, action='list|create|restore'); restore is itself reversible. "
+        "To undo an export save_as overwrite use action='restore_file' + the save result's "
+        "operation_id (HIGH, needs approval_token). "
+        "To undo the last edit use action='undo' instead.",
         [
             "snapshot",
-            "undo",
             "revert",
             "restore",
             "roll back",
@@ -880,7 +907,8 @@ _GERMAN_KEYWORDS: dict[str, tuple[str, ...]] = {
         "optimier",
     ),
     "Save the document to a new file": ("speicher",),
-    "Snapshot, undo, or restore the document state": ("rückgängig", "wiederherstell", "zurück"),
+    "Undo the last change(s)": ("rückgängig", "letzte änderung", "mach das rückgängig"),
+    "Snapshot or restore a specific document state": ("wiederherstell", "zurück"),
 }
 
 

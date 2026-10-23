@@ -9,25 +9,11 @@ from fastmcp.exceptions import ToolError
 
 from tests.tool_support import call, open_doc
 
-FILL = {"op": "fill", "ids": ["r1"], "color": "#fff"}
-
 
 def _fail(app: Any, tool: str, args: dict[str, Any]) -> str:
     with pytest.raises(ToolError) as excinfo:
         call(app, tool, args)
     return str(excinfo.value)
-
-
-def test_unknown_id_names_the_op_and_the_id(tool_app, tool_ws) -> None:
-    doc = open_doc(tool_ws)
-    msg = _fail(tool_app, "edit", {"doc_id": doc, "ops": [FILL, {**FILL, "ids": ["r9"]}]})
-    assert msg.startswith("ops[1] fill:") and "'r9'" in msg and "not found" in msg
-
-
-def test_high_risk_op_asks_for_an_approval_token(tool_app, tool_ws) -> None:
-    doc = open_doc(tool_ws)
-    msg = _fail(tool_app, "edit", {"doc_id": doc, "ops": [{"op": "delete", "ids": ["r1"]}]})
-    assert msg.startswith("ops[0] delete is HIGH risk; re-call with approval_token (dry_run=true")
 
 
 def test_unknown_op_lists_the_valid_ones_and_missing_field_is_named(tool_app, tool_ws) -> None:

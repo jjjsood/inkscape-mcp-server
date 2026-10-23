@@ -32,18 +32,14 @@ def test_canvas_returns_open_shape_with_synthesized_viewbox(tool_app) -> None:
     assert "changed" not in data
 
 
-def test_canvas_is_validate_clean(tool_app) -> None:
-    doc_id = _open_canvas(tool_app, width=64, height=64)["doc_id"]
-    report = _validate(tool_app, doc_id)
-    assert report["ok"] is True
-
-
 def test_canvas_explicit_viewbox(tool_app) -> None:
     data = _open_canvas(tool_app, width=100, height=100, viewBox="0 0 200 50")
     assert data["summary"]["viewbox"] == [0, 0, 200, 50]
 
 
-def test_canvas_background_rect_stays_validate_clean(tool_app) -> None:
+def test_canvas_stays_validate_clean(tool_app) -> None:
+    plain = _open_canvas(tool_app, width=64, height=64)["doc_id"]
+    assert _validate(tool_app, plain)["ok"] is True
     doc_id = _open_canvas(tool_app, width=40, height=40, background="#3366cc")["doc_id"]
     svg = working_svg(doc_id)
     assert 'id="background"' in svg and "#3366cc" in svg

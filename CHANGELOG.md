@@ -25,6 +25,8 @@ agent-ready over STDIO.
   exposing document structure, the runtime capability matrix and the op reference (`inkscape://ops`).
 - **Safe edits (medium risk, reversible)** — every mutation auto-snapshots and emits an Operation
   Record; `history(action='restore')` rolls back. Genuine no-ops write nothing (`changed: false`).
+  `edit` / `open` results and dry-run plans report `locked_layers_touched` when objects in a locked
+  layer change.
 - **Render & export** — `render` and `edit(render='inline')` return an inline PNG; `export` writes
   files, web / icons / print profiles, `save_as`, for one document or a set, with dry-run size
   projection, a byte budget and in-process content-truth verification.

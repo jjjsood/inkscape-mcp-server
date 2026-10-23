@@ -12,8 +12,10 @@ from pathlib import Path
 import pytest
 from fastmcp.exceptions import ToolError
 
+from inkscape_mcp.config import ENV_ARTIFACT_MAX_BYTES_PER_DOC, get_settings
 from inkscape_mcp.registry import get_registry
 from inkscape_mcp.render.cli import RenderResult
+from inkscape_mcp.tools.export import DESCRIPTION
 from inkscape_mcp.workspace import sandbox
 from tests.tool_support import PNG, call, open_doc
 
@@ -110,7 +112,9 @@ def test_budget_refuses_a_real_profile_export_before_writing(tool_app, tool_ws, 
     assert list(tool_ws.rglob("*.png")) == []
 
 
-def test_file_and_profile_targets_share_one_budget(tool_app, tool_ws, engine) -> None:
+def test_file_and_profile_targets_share_one_budget(
+    tool_app, tool_ws, engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
     doc = open_doc(tool_ws)
     png = {"kind": "file", "format": "png", "width_px": 128}
     pdf = {"kind": "profile", "name": "print"}
@@ -121,6 +125,12 @@ def test_file_and_profile_targets_share_one_budget(tool_app, tool_ws, engine) ->
     with pytest.raises(ToolError, match="byte budget"):
         _export(tool_app, doc, [png, pdf], byte_budget=budget)
     assert engine == []
+    # the per-doc setting caps a larger requested budget (clamped once for all targets)
+    monkeypatch.setenv(ENV_ARTIFACT_MAX_BYTES_PER_DOC, str(budget))
+    get_settings.cache_clear()
+    for targets, fits in (([png], True), ([pdf], True), ([png, pdf], False)):
+        plan = _export(tool_app, doc, targets, dry_run=True, byte_budget=10**9)
+        assert plan["within_budget"] is fits
 
 
 def test_invalid_targets(tool_app, tool_ws, engine) -> None:
@@ -133,3 +143,9 @@ def test_invalid_targets(tool_app, tool_ws, engine) -> None:
         _export(tool_app, doc, [{"kind": "file", "format": "png", "object_id": "ghost"}])
     with pytest.raises(ToolError):
         _export(tool_app, doc, [{"kind": "nonsense"}])
+
+
+def test_export_description_out_dir_and_root_wording() -> None:
+    assert "out_dir is a top-level arg" in DESCRIPTION
+    assert "WORKSPACE ROOT" in DESCRIPTION
+    assert "file/profile only" not in DESCRIPTION

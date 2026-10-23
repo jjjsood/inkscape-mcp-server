@@ -17,7 +17,10 @@ def _edit(app, doc, ops, **kw):
 def test_default_result_is_ids_only(tool_app, tool_ws) -> None:
     doc = open_doc(tool_ws)
     data = _edit(tool_app, doc, [RECT]).data
-    assert set(data) == {"doc_id", "changed", "snapshot_id", "risk", "created"}
+    assert set(data) == {"doc_id", "changed", "snapshot_id", "risk", "created", "undo"}
+    assert data["undo"] == (
+        f"history(doc_id='{doc}', action='restore', snapshot_id='{data['snapshot_id']}')"
+    )  # medium results carry the undo call too
     assert data["changed"] is True
     assert data["risk"] == "medium"
     assert data["created"] == [{"op": 0, "id": "bg", "bbox": [0, 0, 50, 20]}]
@@ -60,8 +63,6 @@ def test_invalid_op_shape_reports_field_paths_in_the_kernel_format(tool_app, too
     doc = open_doc(tool_ws)
     with pytest.raises(ToolError, match=r"invalid ops: ops\[0\]"):
         _edit(tool_app, doc, [{"op": "create_rect", "x": 1}])
-    with pytest.raises(ToolError, match="ops"):
-        _edit(tool_app, doc, [{"op": "no_such_op"}])
     with pytest.raises(ToolError, match="at least one op"):
         _edit(tool_app, doc, [])
 
@@ -69,21 +70,27 @@ def test_invalid_op_shape_reports_field_paths_in_the_kernel_format(tool_app, too
 def test_high_risk_needs_approval_and_dry_run_reports_it(tool_app, tool_ws) -> None:
     doc = open_doc(tool_ws)
     delete = {"op": "delete", "ids": ["r1"]}
-    with pytest.raises(
-        ToolError, match=r"ops\[0\] delete is HIGH risk; re-call with approval_token"
-    ):
+    with pytest.raises(ToolError) as excinfo:
         _edit(tool_app, doc, [delete])
+    msg = str(excinfo.value)
+    assert msg.startswith("ops[0] delete is HIGH risk; re-call with approval_token (dry_run=true")
+    assert "or send the other" not in msg  # a lone high-risk op has no mixed-call hint
     plan = _edit(tool_app, doc, [delete], dry_run=True).data
     assert plan["dry_run"] is True and plan["needs_approval"] is True
-    assert plan["changed"] is False
+    assert plan["changed"] is False and "approved" not in plan
     assert plan["plan"][0]["matched"] == ["r1"]
+    assert plan["plan"][0]["summary"].startswith("plan (not applied): ")
     assert 'id="r1"' in working_svg(doc)
     done = _edit(tool_app, doc, [delete], approval_token="yes").data
     assert done["risk"] == "high" and done["changed"] is True
+    assert done["approved"] is True and "needs_approval" not in done
     assert done["undo"] == (
-        f"history(doc_id, action='restore', snapshot_id='{done['snapshot_id']}')"
+        f"history(doc_id='{doc}', action='restore', snapshot_id='{done['snapshot_id']}')"
     )
     assert 'id="r1"' not in working_svg(doc)
+    assert done["removed"] == ["r1"] and "reason" not in done
+    low = _edit(tool_app, doc, [RECT]).data
+    assert "approved" not in low and "needs_approval" not in low
 
 
 def test_dry_run_writes_nothing(tool_app, tool_ws) -> None:
@@ -135,3 +142,24 @@ def test_a_noop_edit_reports_unchanged(tool_app, tool_ws) -> None:
     data = _edit(tool_app, doc, [{"op": "fill", "ids": ["r1"], "color": "#ff0000"}]).data
     assert data["changed"] is False
     assert "snapshot_id" not in data
+    assert data["reason"].startswith(
+        "nothing changed: fill: set fill on 1 object (already #ff0000: 'r1')"
+    )
+
+
+def test_document_wide_replace_color_shows_in_hits(tool_app, tool_ws) -> None:
+    doc = open_doc(tool_ws)
+    _edit(tool_app, doc, [{**RECT, "fill": "#ff0000"}])  # + 2 red rects in the fixture
+    ops = [{"op": "replace_color", "from_color": "#ff0000", "to_color": "#00ff00"}]
+    assert _edit(tool_app, doc, ops).data["hits"] == [{"op": "replace_color", "matched": 3}]
+    assert _edit(tool_app, doc, ops).data["hits"] == [{"op": "replace_color", "matched": 0}]
+
+
+def test_hits_count_matched_objects_per_op(tool_app, tool_ws) -> None:
+    doc = open_doc(tool_ws)
+    ops = [RECT, {"op": "fill", "select": {"tag": "rect"}, "color": "#f00"}]
+    (hit,) = _edit(tool_app, doc, ops).data["hits"]
+    assert hit["op"] == "fill" and hit["matched"] >= 2
+    delete = [{"op": "delete", "ids": ["r1"]}]
+    done = _edit(tool_app, doc, delete, approval_token="yes").data
+    assert done["hits"] == [{"op": "delete", "matched": 1}]

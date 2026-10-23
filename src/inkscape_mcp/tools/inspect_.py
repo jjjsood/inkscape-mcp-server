@@ -13,6 +13,7 @@ from inkscape_mcp import quality as quality_engine
 from inkscape_mcp import snapshots as snapshots_engine
 from inkscape_mcp.document import inspect as inspect_engine
 from inkscape_mcp.document.inspect import ObjectRef
+from inkscape_mcp.edit import collection as collection_engine
 from inkscape_mcp.edit.ops import Selector
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
 from inkscape_mcp.render.cli import list_frames
@@ -41,10 +42,12 @@ DEFAULT_LIMIT = 200
 DESCRIPTION = (
     "Read-only view of one document (or several: pass a list of doc_ids). `include` picks "
     "sections: summary (default), objects, tree, layers, styles, fonts, assets, validate, quality, "
-    "snapshots, frames. `select` filters `objects` (tag, fill, stroke, text, id_prefix, bbox) so "
+    "snapshots, frames. quality = validity/hygiene, not content; several doc_ids add "
+    "consistency (viewBox, stroke, id naming). `select` filters `objects` "
+    "(tag, fill, stroke, text, id_prefix, bbox) so "
     "you need no separate find call; giving only `select` returns just the objects, as "
     "[id, tag, bbox, fill] rows capped by `limit` (truncated=true when cut). "
-    "detail: ids | summary | full. "
+    "detail: ids | summary | full (full adds stroke, text, transform). "
     "Example: inspect(doc_id, select={'tag': 'rect'})"
 )
 
@@ -106,6 +109,8 @@ def _sections(
     for name in include:
         if name == "summary":
             out["summary"] = _dump(inspect_engine.inspect_summary(doc_id))
+            if stale := collection_engine.stale_grid_sources(doc_id):
+                out["summary"]["stale_sources"] = stale
         elif name == "objects":
             out["objects"] = _objects(doc_id, select, detail, limit)
         elif name == "tree":

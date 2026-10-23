@@ -6,6 +6,8 @@ import sys
 
 import pytest
 
+from inkscape_mcp.config import ENV_PROCESS_TIMEOUT_S, get_settings
+from inkscape_mcp.workspace import subprocess_exec
 from inkscape_mcp.workspace.subprocess_exec import (
     ProcessError,
     ProcessResult,
@@ -64,6 +66,23 @@ def test_run_inkscape_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("inkscape_mcp.workspace.subprocess_exec.shutil.which", lambda _name: None)
     with pytest.raises(ProcessError, match="inkscape binary not found"):
         run_inkscape(["--version"])
+
+
+def test_run_inkscape_uses_the_configured_process_timeout(monkeypatch) -> None:
+    monkeypatch.setenv(ENV_PROCESS_TIMEOUT_S, "7.5")
+    get_settings.cache_clear()
+    seen: dict[str, object] = {}
+
+    def run_process(argv: list[str], timeout_s: float, env: object = None) -> ProcessResult:
+        seen.update(argv=argv, timeout_s=timeout_s)
+        return ProcessResult(
+            args=argv, returncode=0, stdout="", stderr="", duration_s=0.0, timed_out=False
+        )
+
+    monkeypatch.setattr(subprocess_exec.shutil, "which", lambda _name: "/opt/inkscape")
+    monkeypatch.setattr(subprocess_exec, "run_process", run_process)
+    assert subprocess_exec.run_inkscape(["--version"]).returncode == 0
+    assert seen == {"argv": ["/opt/inkscape", "--version"], "timeout_s": 7.5}
 
 
 @pytest.mark.inkscape

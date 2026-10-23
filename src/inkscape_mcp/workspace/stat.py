@@ -15,7 +15,12 @@ from pydantic import BaseModel
 
 from inkscape_mcp.config import get_settings
 from inkscape_mcp.workspace.limits import check_input_size
-from inkscape_mcp.workspace.paths import anchor_to_root, owning_root, resolve_read_path
+from inkscape_mcp.workspace.paths import (
+    SandboxViolation,
+    anchor_to_root,
+    owning_root,
+    resolve_read_path,
+)
 
 
 class ArtifactStat(BaseModel):
@@ -56,7 +61,17 @@ def stat_one(raw_path: str) -> ArtifactStat:
     """
     settings = get_settings()
     anchored = anchor_to_root(raw_path, settings)
-    resolved = resolve_read_path(anchored, settings)
+    try:
+        resolved = resolve_read_path(anchored, settings)
+    except SandboxViolation as exc:
+        if str(exc) != "path rejected: file not found":
+            raise
+        shown = _under_root(anchored, settings.workspace_roots)
+        raise SandboxViolation(
+            f"path rejected: file not found under the workspace root (looked for {shown!r}); "
+            "relative paths resolve against the workspace root, absolute paths must be inside it",
+            detail=exc.detail,
+        ) from None
 
     # Enforce the input-size cap BEFORE hashing (sec.12) — never hash an over-limit file.
     size = check_input_size(resolved, settings)
@@ -69,6 +84,12 @@ def stat_one(raw_path: str) -> ArtifactStat:
         bytes=size,
         sha256=digest.hexdigest(),
     )
+
+
+def _under_root(anchored: str, roots: list[Path]) -> str:
+    """Root-relative form of a not-yet-resolved path (no host path leak); basename if outside."""
+    root = owning_root(Path(anchored), roots)
+    return Path(anchored).relative_to(root).as_posix() if root else Path(anchored).name
 
 
 def _workspace_relative(resolved: Path, roots: list[Path]) -> str:

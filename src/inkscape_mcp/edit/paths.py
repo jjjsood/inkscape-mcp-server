@@ -185,6 +185,28 @@ def _effective_value(elem: etree._Element, prop: str) -> str | None:
     return elem.get(prop)
 
 
+def _paint_change(root: etree._Element, kept_id: str, from_id: str) -> str:
+    """` (fill A -> B, stroke C -> D)` for paints differing between two elements, else empty."""
+    kept, src = find_by_id(root, kept_id), find_by_id(root, from_id)
+    if kept is None or src is None:
+        return ""
+    diffs = []
+    for prop in ("fill", "stroke"):
+        a, b = _effective_value(kept, prop), _effective_value(src, prop)
+        if a != b:
+            diffs.append(f"{prop} {a or 'unset'} \u2192 {b or 'unset'}")
+    return f" ({', '.join(diffs)})" if diffs else ""
+
+
+def _keeps_note(ids: list[str], pieces: list[str]) -> str:
+    """`; 'plate' stays on the last piece (of N, document order)` - which piece kept the id."""
+    if len(ids) != 1 or ids[0] not in pieces:
+        return ""
+    pos = pieces.index(ids[0])
+    where = "first" if pos == 0 else "last" if pos == len(pieces) - 1 else f"#{pos + 1}"
+    return f"; '{ids[0]}' stays on the {where} piece (of {len(pieces)}, document order)"
+
+
 def _has_explicit_fill(elem: etree._Element) -> bool:
     """True if `elem` carries an explicit ``fill`` (inline style or presentation attribute)."""
     return "fill" in parse_style(elem) or elem.get("fill") is not None
@@ -274,16 +296,54 @@ def _drop_empty_markers(old_root: etree._Element, new_root: etree._Element, ids:
             parent.remove(elem)
 
 
-def predicted_result_id(root: etree._Element, op: str, ids: list[str]) -> str | None:
-    """The id a merge `op` WOULD standardize its result to (the bottom-most target), or ``None``.
+_NON_CONTENT = frozenset({"defs", "metadata", "namedview"})
 
-    Read-only preview for the dry-run path: returns the first-in-document-order target id for a
-    merge op (:data:`_MERGE_OPS`), and ``None`` for a non-merge op. `ids` must already be validated
-    and present. No mutation, no engine call.
+
+def _result_ids(old_root: etree._Element, new_root: etree._Element, ids: list[str]) -> list[str]:
+    """Ids the engine left as the RESULT of a break_apart / stroke_to_path, in document order.
+
+    An element counts when its id is a target id or is absent from the pre-op tree (a new piece).
+    The root, defs / metadata / namedview and anything below ``<defs>`` are skipped, and so is a
+    descendant of an already-collected element (a stroke_to_path group lists once, not per child).
     """
-    if op not in _MERGE_OPS:
-        return None
-    return _bottom_target_id(root, ids)
+    before = all_ids(old_root)
+    targets = set(ids)
+    found: list[str] = []
+    skip: set[etree._Element] = set()  # elements whose whole subtree is not reported (held, so
+    # lxml cannot recycle a proxy's id())
+    for elem in new_root.iter():
+        if not isinstance(elem.tag, str):
+            continue
+        if elem is new_root:
+            continue
+        parent = elem.getparent()
+        if etree.QName(elem).localname in _NON_CONTENT:
+            skip.add(elem)
+            continue
+        if parent is not None and parent in skip:
+            skip.add(elem)
+            continue
+        eid = elem.get("id")
+        if eid is not None and (eid in targets or eid not in before):
+            found.append(eid)
+            skip.add(elem)
+    return found
+
+
+def predicted_result_ids(root: etree._Element, op: str, ids: list[str]) -> list[str]:
+    """The ids `op` WOULD report as created, for the dry-run path (no mutation, no engine call).
+
+    Merge ops: the bottom-most target (the standardized surviving id). stroke_to_path: the
+    targets themselves (the outline keeps the id). Everything else: none. `ids` must already be
+    validated and present.
+    """
+    if op in _MERGE_OPS:
+        bottom = _bottom_target_id(root, ids)
+        return [bottom] if bottom else []
+    if op == STROKE_TO_PATH:
+        return list(dict.fromkeys(ids))
+    # ponytail: break_apart piece ids need the engine; dry_run cannot project them
+    return []
 
 
 def _build_args(working_path: Path, out_path: Path, action: str, ids: list[str]) -> list[str]:
@@ -380,6 +440,7 @@ def apply_path_op(
     object_ids: list[str],
     settings: Settings | None = None,
     result_holder: list[str] | None = None,
+    notes: list[str] | None = None,
 ) -> str:
     """Pipeline `mutate` kernel: run `op` on the engine and replace the tree in memory.
 
@@ -394,7 +455,10 @@ def apply_path_op(
     element whose id is standardized to the BOTTOM-most target (first in document order) — see
     :func:`_normalize_surviving_id`. When `result_holder` is supplied, that surviving id is written
     into it (``result_holder[:] = [surviving_id]``) so the tool layer can return it as
-    ``result_id`` / ``surviving_id`` without re-inspecting the document.
+    ``result_id`` / ``surviving_id`` without re-inspecting the document. For break_apart and
+    stroke_to_path it receives every resulting piece id instead (see :func:`_result_ids`).
+    `notes` collects short style / geometry side effects a caller would not guess from the id list
+    (combine's style swap, stroke colour becoming the fill, holes becoming pieces).
     """
     root = tree.getroot()
     ids = validate_targets(root, object_ids, op)
@@ -409,6 +473,9 @@ def apply_path_op(
         raise PathOpError("path operation produced unsafe output") from exc
 
     surviving_id: str | None = None
+    # The engine keeps ONE input's id+style (top for combine, bottom for union): the style source.
+    present = all_ids(new_root)
+    style_from = next((oid for oid in ids if oid in present), None)
     if op in _MERGE_OPS and bottom_id is not None:
         surviving_id = _normalize_surviving_id(new_root, ids, bottom_id)
     if result_holder is not None and surviving_id is not None:
@@ -420,15 +487,38 @@ def apply_path_op(
     #: it also leaves an empty marker container behind when the source had no marker — drop
     # that no-op stub here so the conversion lands a clean tree in one call (was stripped later by
     # optimize_web).
+    if notes is not None:
+        if surviving_id and style_from and style_from != surviving_id:
+            label = op.removeprefix("boolean_").removesuffix("_paths")
+            notes.append(
+                f"{label}: result '{surviving_id}' now has the style of '{style_from}'"
+                + _paint_change(root, surviving_id, style_from)
+            )
+        if op == STROKE_TO_PATH:
+            stroked = [i for i in ids if _outline_fill_from(find_by_id(root, i)) != "#000000"]
+            if stroked:
+                notes.append(
+                    f"stroke_to_path: stroke colour is now the fill of {', '.join(stroked)}"
+                )
     if op == STROKE_TO_PATH:
         _restore_outline_fill(root, new_root, ids)
         _drop_empty_markers(root, new_root, ids)
+    if op in (BREAK_APART, STROKE_TO_PATH) and result_holder is not None:
+        result_holder[:] = _result_ids(root, new_root, ids)
+        if notes is not None and op == BREAK_APART and len(result_holder) > 1:
+            notes.append(
+                f"break_apart: {', '.join(ids)} split into {len(result_holder)} pieces; "
+                "holes are now separate filled pieces" + _keeps_note(ids, result_holder)
+            )
 
     # Replace the live tree root with the engine output so `write_working_tree` persists it.
     tree._setroot(new_root)
 
     action = _ACTIONS[op]
-    return f"applied {op} (Inkscape {action}) to {len(ids)} object(s): {', '.join(ids)}"
+    summary = f"applied {op} (Inkscape {action}) to {len(ids)} object(s): {', '.join(ids)}"
+    if surviving_id and style_from:
+        summary += f"; kept id {surviving_id}, style from {style_from}"
+    return summary
 
 
 def describe_dry_run(root: etree._Element, op: str, object_ids: list[str]) -> str:
@@ -439,10 +529,28 @@ def describe_dry_run(root: etree._Element, op: str, object_ids: list[str]) -> st
     """
     ids = validate_targets(root, object_ids, op)
     action = _ACTIONS[op]
-    return (
+    text = (
         f"dry-run: would apply {op} (Inkscape {action}) to {len(ids)} object(s): "
         f"{', '.join(ids)} — no change written"
     )
+    if op in _MERGE_OPS:
+        # Same rule as the real run: the result always carries the BOTTOM id; the engine keeps the
+        # style of the TOP input for combine, the bottom one for union/difference.
+        wanted = set(ids)
+        order = [
+            e.get("id") for e in root.iter() if isinstance(e.tag, str) and e.get("id") in wanted
+        ]
+        surviving, style_from = order[0], order[-1] if op == COMBINE else order[0]
+        text += f"; result keeps id {surviving}, style from {style_from}"
+        if surviving and style_from and surviving != style_from:
+            text += _paint_change(root, surviving, style_from)
+    elif op == STROKE_TO_PATH:
+        text += "; stroke colour becomes the fill, stroke removed"
+    elif op == BREAK_APART:
+        text += (
+            "; subpaths/holes become separate filled pieces, the original id stays on one of them"
+        )
+    return text
 
 
 __all__ = [
@@ -456,7 +564,7 @@ __all__ = [
     "PathOpError",
     "apply_path_op",
     "describe_dry_run",
-    "predicted_result_id",
+    "predicted_result_ids",
     "run_path_op",
     "validate_targets",
 ]

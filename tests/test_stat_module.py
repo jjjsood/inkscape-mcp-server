@@ -42,3 +42,15 @@ def test_stat_many_rejects_a_path_outside_the_workspace(ws: Path) -> None:
     (ws / "a.bin").write_bytes(b"x")
     with pytest.raises(SandboxViolation):
         stat_many(["a.bin", "../escape.bin"])
+
+
+def test_stat_not_found_names_the_root_rule(ws: Path) -> None:
+    (ws / "a").mkdir()
+    (ws / "a" / "f.svg").write_text("<svg/>")
+    assert stat_one(str(ws / "a" / "f.svg")).path == "a/f.svg"  # absolute in-root works
+    for raw in ("f.svg", str(ws / "f.svg")):
+        with pytest.raises(SandboxViolation) as exc:
+            stat_one(raw)
+        assert "under the workspace root" in str(exc.value)
+        assert "'f.svg'" in str(exc.value)
+        assert str(ws) not in str(exc.value)

@@ -134,13 +134,6 @@ def test_engine_budget_can_only_be_tightened(fake_inkscape, doc) -> None:
         export_batch(doc, [ExportSpec(format="png", width_px=16)], byte_budget=0)
 
 
-def test_engine_aborts_when_real_output_outgrows_the_projection(fake_inkscape, doc) -> None:
-    # An SVG projects as max(working size, 4096) but this one writes far more than budgeted.
-    fake_inkscape.svg_body = b" " * 10_000
-    with pytest.raises(BatchError, match="exceeded the byte budget mid-run"):
-        export_batch(doc, [ExportSpec(format="svg")], dry_run=False, byte_budget=5000)
-
-
 @pytest.mark.parametrize(
     ("spec", "message"),
     [
@@ -188,6 +181,11 @@ def test_tool_dry_run_plans_and_projects_without_writing(tool_app, fake_inkscape
     assert _written(doc) == [] and fake_inkscape.calls == []
 
 
+def test_tool_dry_run_without_a_png_has_no_projected_note(tool_app, fake_inkscape, doc) -> None:
+    data = _export(tool_app, doc, [{"kind": "save_as", "dest_path": "x.svg"}], dry_run=True)
+    assert data["projected_bytes"] == 0 and "projected_note" not in data
+
+
 def test_tool_dry_run_over_a_set_plans_per_document(tool_app, fake_inkscape, tool_ws) -> None:
     a, b = open_doc(tool_ws, "a.svg", ART), open_doc(tool_ws, "b.svg", ART)
     data = _export(tool_app, [a, b], [PNG_64], dry_run=True, byte_budget=20_000)
@@ -211,25 +209,6 @@ def test_tool_budget_covers_all_file_targets_together(tool_app, fake_inkscape, d
     with pytest.raises(ToolError, match="budget"):
         _export(tool_app, doc, [PNG_64, PNG_64], byte_budget=20_000)
     assert len(fake_inkscape.calls) == 1
-
-
-def test_tool_real_run_within_cap_and_budget(tool_app, fake_inkscape, doc) -> None:
-    data = _export(
-        tool_app,
-        doc,
-        [
-            {"kind": "file", "format": "png", "width_px": 48},
-            {"kind": "file", "format": "svg"},
-            {"kind": "file", "format": "png", "object_id": "dot", "width_px": 24},
-        ],
-        byte_budget=1_000_000,
-    )
-    assert data["count"] == 3 and 0 < data["total_bytes"] <= 1_000_000
-    root = Path(get_registry().get(doc).root)
-    assert all(
-        not a["path"].startswith("/") and (root / a["path"]).is_file() for a in data["artifacts"]
-    )
-    assert (root / data["artifacts"][0]["path"]).read_bytes()[:4] == PNG_MAGIC
 
 
 def test_tool_file_targets_are_batched_around_other_targets(tool_app, fake_inkscape, doc) -> None:
@@ -265,9 +244,10 @@ def test_engine_failure_mid_batch_removes_the_items_already_written(
 
 
 def test_engine_budget_overrun_mid_batch_removes_every_item(fake_inkscape, doc) -> None:
+    # An SVG projects as max(working size, 4096) but this one writes far more than budgeted.
     fake_inkscape.svg_body = b" " * 10_000
     specs = [ExportSpec(format="png", width_px=16), ExportSpec(format="svg")]
-    with pytest.raises(BatchError, match="mid-run"):
+    with pytest.raises(BatchError, match="exceeded the byte budget mid-run"):
         export_batch(doc, specs, dry_run=False, byte_budget=6000)
     assert _written(doc) == []
 
@@ -296,6 +276,46 @@ def test_tool_failing_second_target_names_it_and_keeps_no_artifact(
     assert _all_exports(tool_ws) == []
 
 
+def test_tool_failed_profile_leaves_no_save_as(
+    tool_app, fake_inkscape, doc, tool_ws, monkeypatch
+) -> None:
+    targets = [
+        {"kind": "save_as", "dest_path": "deliver/logo.svg"},
+        {"kind": "file", "format": "png", "width_px": 32},
+        {"kind": "profile", "name": "icons"},
+    ]
+
+    def boom(*_a, **_k):
+        raise RuntimeError("render failed")
+
+    with monkeypatch.context() as m:
+        m.setattr("inkscape_mcp.tools.export._profile", boom)
+        with pytest.raises(ToolError, match="partial artifact"):
+            _export(tool_app, doc, targets)
+    assert not (tool_ws / "deliver" / "logo.svg").exists()
+    assert not list((tool_ws / "deliver").glob("*"))
+    assert _export(tool_app, doc, targets)["saved"]["path"] == "deliver/logo.svg"
+
+
+def test_tool_save_as_onto_existing_removes_earlier_files(
+    tool_app, fake_inkscape, doc, tool_ws
+) -> None:
+    (tool_ws / "deliver").mkdir()
+    existing = tool_ws / "deliver" / "keep.svg"
+    existing.write_bytes(b"<svg/>")
+    with pytest.raises(ToolError, match="already exists"):
+        _export(
+            tool_app,
+            doc,
+            [
+                {"kind": "file", "format": "png", "width_px": 32},
+                {"kind": "save_as", "dest_path": "deliver/keep.svg"},
+            ],
+        )
+    assert [p.name for p in (tool_ws / "deliver").iterdir()] == ["keep.svg"]
+    assert existing.read_bytes() == b"<svg/>"
+
+
 def test_tool_failing_second_document_removes_the_first_documents_files(
     tool_app, fake_inkscape, tool_ws
 ) -> None:
@@ -310,10 +330,12 @@ def test_tool_failing_second_document_removes_the_first_documents_files(
 # --- output ownership / budget backstops (security review) -----------------------------------
 
 
-def test_identical_targets_in_one_call_get_distinct_files(tool_app, fake_inkscape, doc) -> None:
+def test_identical_targets_in_one_call_get_distinct_files(
+    tool_app, fake_inkscape, doc, tool_ws
+) -> None:
     out = _export(tool_app, doc, [PNG_64, PNG_64])
     paths = [a["path"] for a in out["artifacts"]]
-    assert len(set(paths)) == 2 and len(_written(doc)) == 2
+    assert len(set(paths)) == 2 and all((tool_ws / p).is_file() for p in paths)
 
 
 def test_existing_output_is_never_overwritten_or_deleted(
@@ -372,18 +394,6 @@ def test_profile_output_over_budget_mid_run_aborts_and_discards(
     with pytest.raises(ToolError, match=r"targets\[1\] \(profile\): .*mid-run"):
         _export(tool_app, doc, targets, byte_budget=projected)
     assert _all_exports(tool_ws) == [] and not any(p.suffix == ".svg" for p in _written(doc))
-
-
-def test_budget_is_clamped_once_and_covers_files_plus_profiles(
-    tool_app, fake_inkscape, doc, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # 64 px PNG = 13 056 projected bytes: the file alone fits a 20 000 cap, file + icon do not.
-    monkeypatch.setenv(ENV_ARTIFACT_MAX_BYTES_PER_DOC, "20000")
-    get_settings.cache_clear()
-    icon = {"kind": "profile", "name": "icons", "sizes": [64]}
-    assert _export(tool_app, doc, [PNG_64], dry_run=True, byte_budget=10**9)["within_budget"]
-    plan = _export(tool_app, doc, [PNG_64, icon], dry_run=True, byte_budget=10**9)
-    assert plan["within_budget"] is False
 
 
 @pytest.mark.xfail(

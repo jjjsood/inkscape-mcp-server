@@ -261,6 +261,14 @@ def _strip_editor(root: etree._Element, aggressive: bool) -> int:
     return removed
 
 
+def _layer_markers(root: etree._Element) -> bool:
+    """True when the tree has a namedview or any layer-marker attribute."""
+    return any(
+        is_element(e) and (local_name(e) == _NAMEDVIEW or not _LAYER_ATTRS.isdisjoint(e.attrib))
+        for e in root.iter()
+    )
+
+
 def _prune_unused_defs(root: etree._Element, referenced: set[str]) -> int:
     """Remove ``<defs>`` children whose id is not referenced (dead templates). Returns the count."""
     removed = 0
@@ -449,6 +457,7 @@ def optimize_web(
     # still-referenced id look dead (the safe direction — keep, never break a reference). The
     # caller's keep_ids allowlist is folded in so a deliberately-set id is treated as live.
     referenced = collect_referenced_ids(root) | keep
+    markers = _layer_markers(root)
     editor = _strip_editor(root, aggressive)
     defs_removed = _prune_unused_defs(root, referenced)
     ids_removed = _strip_unreferenced_ids(root, referenced) if aggressive else 0
@@ -456,10 +465,11 @@ def optimize_web(
     rounded = _reduce_precision(root, precision)
     etree.cleanup_namespaces(root)
 
+    note = "; aggressive: layer markers and namedview removed" if aggressive and markers else ""
     return (
         f"web-optimized: stripped {editor} editor nodes/attrs, removed {defs_removed} unused "
         f"defs, {ids_removed} unreferenced ids, {empties} empty groups, rounded {rounded} "
-        f"coordinate attrs (precision {precision})"
+        f"coordinate attrs (precision {precision}){note}"
     )
 
 

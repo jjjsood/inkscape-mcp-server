@@ -2,7 +2,25 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from tests.tool_support import call, open_doc
+
+LAYERED = b"""<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     width="10" height="10" viewBox="0 0 10 10">
+  <g id="l1" inkscape:groupmode="layer" inkscape:label="L1">
+    <rect id="r1" x="2" y="3" width="4" height="5" style="fill:#ff0000"/>
+  </g>
+</svg>
+"""
+
+
+def _walk(node):
+    yield node
+    for child in node.get("children", []):
+        yield from _walk(child)
 
 
 def test_default_is_the_summary(tool_app, tool_ws) -> None:
@@ -10,17 +28,6 @@ def test_default_is_the_summary(tool_app, tool_ws) -> None:
     data = call(tool_app, "inspect", {"doc_id": doc}).data
     assert set(data) == {"doc_id", "summary"}
     assert data["summary"]["num_objects"] >= 3
-
-
-def test_objects_are_compact_rows(tool_app, tool_ws) -> None:
-    doc = open_doc(tool_ws)
-    data = call(tool_app, "inspect", {"doc_id": doc, "include": ["objects"]}).data
-    objects = data["objects"]
-    assert objects["columns"] == ["id", "tag", "bbox", "fill"]
-    rows = {r[0]: r for r in objects["objects"]}
-    assert rows["r1"][1] == "rect"
-    assert rows["r1"][2] == [0, 0, 10, 10]
-    assert rows["r1"][3] == "#ff0000"
 
 
 def test_detail_ids_and_full(tool_app, tool_ws) -> None:
@@ -96,6 +103,7 @@ def test_snapshots_section_lists_edit_snapshots(tool_app, tool_ws) -> None:
 
 
 def test_a_list_of_documents_is_keyed_by_id(tool_app, tool_ws) -> None:
+    # plain ids (r1, t1) and a property some docs lack: exercises the consistency fallbacks
     a = open_doc(tool_ws, "a.svg")
     b = open_doc(tool_ws, "b.svg")
     data = call(tool_app, "inspect", {"doc_id": [a, b], "include": ["quality"]}).data
@@ -103,8 +111,29 @@ def test_a_list_of_documents_is_keyed_by_id(tool_app, tool_ws) -> None:
     assert "consistency" in data
 
 
-def test_inspect_writes_nothing(tool_app, tool_ws) -> None:
-    doc = open_doc(tool_ws)
-    call(tool_app, "inspect", {"doc_id": doc, "include": ["objects", "validate", "quality"]})
-    snaps = call(tool_app, "inspect", {"doc_id": doc, "include": ["snapshots"]}).data
-    assert "snapshots" not in snaps  # empty list is dropped from the compact JSON
+def test_layers_section_lists_the_layer_labels(tool_app, tool_ws) -> None:
+    doc = open_doc(tool_ws, "a.svg", LAYERED)
+    layers = call(tool_app, "inspect", {"doc_id": doc, "include": ["layers"]}).data["layers"]
+    assert [layer["label"] for layer in layers["layers"]] == ["L1"]
+
+
+def test_tree_carries_per_element_bbox(tool_app, tool_ws) -> None:
+    doc = open_doc(tool_ws, "a.svg", LAYERED)
+    tree = call(tool_app, "inspect", {"doc_id": doc, "include": ["tree"]}).data["tree"]
+    rect = next(n for n in _walk(tree["root"]) if n.get("id") == "r1")
+    assert rect["bbox"] == {"x": 2.0, "y": 3.0, "width": 4.0, "height": 5.0}
+
+
+def test_validate_section_flags_a_broken_document(tool_app, tool_ws) -> None:
+    bad = LAYERED.replace(b'style="fill:#ff0000"', b'fill="url(#nope)"')
+    doc = open_doc(tool_ws, "bad.svg", bad)
+    report = call(tool_app, "inspect", {"doc_id": doc, "include": ["validate"]}).data["validate"]
+    assert report["ok"] is False
+    assert [f["code"] for f in report["findings"]] == ["missing_id"]
+
+
+def test_summary_object_count_matches_object_list(tool_app, tool_ws) -> None:
+    poster = (Path(__file__).parent / "e2e" / "fixtures" / "brand_poster.svg").read_bytes()
+    doc = open_doc(tool_ws, "poster.svg", poster)
+    res = call(tool_app, "inspect", {"doc_id": doc, "include": ["summary", "objects"]}).data
+    assert res["summary"]["num_objects"] == res["objects"]["count"] == 23

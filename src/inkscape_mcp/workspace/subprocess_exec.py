@@ -12,7 +12,10 @@ timeout; it raises `ProcessError` only when the program cannot be launched at al
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -20,6 +23,9 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from inkscape_mcp.config import Settings, get_settings
+from inkscape_mcp.logging_setup import get_logger
+
+_logger = get_logger("subprocess_exec")
 
 
 class ProcessResult(BaseModel):
@@ -41,6 +47,7 @@ def run_process(
     args: list[str],
     timeout_s: float | None = None,
     cwd: Path | None = None,
+    env: dict[str, str] | None = None,
 ) -> ProcessResult:
     """Run `args` with `shell=False`, capturing stdout/stderr as text.
 
@@ -61,6 +68,7 @@ def run_process(
             text=True,
             timeout=timeout,
             cwd=str(cwd) if cwd is not None else None,
+            env=env,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
@@ -99,14 +107,64 @@ def _as_text(value: str | bytes | None) -> str:
     return value
 
 
+def inkscape_env() -> dict[str, str]:
+    """Environment for a one-shot Inkscape CLI child: no session bus.
+
+    Each CLI start registers a GApplication on the session bus; several starting at once abort
+    with ``Gio::DBus::Error`` (SIGABRT). One-shot CLI runs never need the bus (live mode does).
+    """
+    return {**os.environ, "DBUS_SESSION_BUS_ADDRESS": "disabled:"}
+
+
 def run_inkscape(args: list[str], settings: Settings | None = None) -> ProcessResult:
     """Run the Inkscape CLI with the per-process timeout enforced.
 
     Resolves the binary via `shutil.which("inkscape")` and prepends it to `args`. Raises
-    `ProcessError("inkscape binary not found")` if absent.
+    `ProcessError("inkscape binary not found")` if absent. A non-timeout failure is logged and
+    retried once with the remaining budget (transient crashes under load); timeouts never are.
     """
     s = settings if settings is not None else get_settings()
     binary = shutil.which("inkscape")
     if binary is None:
         raise ProcessError("inkscape binary not found")
-    return run_process([binary, *args], timeout_s=s.process_timeout_s)
+    budget = s.process_timeout_s
+    result = run_process([binary, *args], timeout_s=budget, env=inkscape_env())
+    if result.returncode == 0 and not result.timed_out:
+        return result
+    left = budget - result.duration_s
+    retry = not result.timed_out and left >= 1.0
+    _log_failure(result, attempt=1, retry=retry)
+    if not retry:
+        return result
+    # ponytail: one retry for transient crashes (run7 F1); total stays within process_timeout_s
+    result = run_process([binary, *args], timeout_s=left, env=inkscape_env())
+    if result.returncode != 0 or result.timed_out:
+        _log_failure(result, attempt=2, retry=False)
+    return result
+
+
+def _log_failure(r: ProcessResult, *, attempt: int, retry: bool) -> None:
+    sig = None
+    if r.returncode < 0 and not r.timed_out:
+        try:
+            sig = signal.Signals(-r.returncode).name
+        except ValueError:
+            pass
+    _logger.warning(
+        "inkscape cli failed",
+        extra={
+            "event": "inkscape_cli",
+            "attempt": attempt,
+            "retry": retry,
+            "timed_out": r.timed_out,
+            "returncode": r.returncode,
+            "signal": sig,
+            "duration_s": round(r.duration_s, 3),
+            "stderr_tail": _scrub(r.stderr[-500:]),
+        },
+    )
+
+
+def _scrub(text: str) -> str:
+    """Absolute host paths -> basename (logs must not leak the workspace layout)."""
+    return re.sub(r"(?<![\w.])/[^\s'\":]+", lambda m: Path(m.group()).name, text)

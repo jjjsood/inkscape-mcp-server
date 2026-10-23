@@ -2,11 +2,12 @@
 
 import re
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.tools import ToolResult
+from pydantic import Field
 
 from inkscape_mcp.document.inspect import inspect_objects
 from inkscape_mcp.logging_setup import get_logger, log_tool_call
@@ -20,6 +21,9 @@ from inkscape_mcp.render.cli import (
 from inkscape_mcp.render.inline import resolve_artifact_abspath
 from inkscape_mcp.tools._result import guarded, inline_png, ok, require_doc
 
+if TYPE_CHECKING:
+    from PIL import Image
+
 _logger = get_logger("tools.render")
 
 Target = Literal["page", "object", "frame"]
@@ -27,10 +31,12 @@ Target = Literal["page", "object", "frame"]
 DESCRIPTION = (
     "Render the document as a PNG you can see inline. target='page' (default): the whole page; "
     "'object': a zoomed view of one object, clipped to its box (needs object_id; to view, "
-    "not resize); 'frame': the next numbered frame of a `series` (a screenshot log; optional "
-    "`label`). width_px sets the raster width. background (CSS colour such as '#333', "
-    "default none = transparent) fills the transparent areas, e.g. to see white shapes. Use it "
-    "after edits to check the result (edit(render='inline') already includes one render). "
+    "not resize); 'frame': the next numbered frame of a `series` (screenshot log; "
+    "`series`/`label` only here). "
+    "width_px sets the raster width. background (CSS colour like '#333') fills "
+    "transparent areas; default transparent, but a white-only render gets '#333' unless you "
+    "pass background ('none' = raw). Use it after edits to check the result "
+    "(edit(render='inline') already includes one render). "
     "Example: render(doc_id, target='object', object_id='logo', width_px=512)"
 )
 
@@ -40,6 +46,11 @@ _NEAR_WHITE = 235
 _LOW_CONTRAST_NOTE = (
     "drawn pixels are nearly all white on a transparent background, so viewers may show it blank; "
     "re-render with background='#333'"
+)
+_AUTO_BACKDROP = "#333"
+_AUTO_NOTE = (
+    "drawn pixels are nearly all white, so a dark '#333' backdrop was added to this preview "
+    "(the document is unchanged); pass background='transparent' for the raw transparent render"
 )
 
 
@@ -57,10 +68,19 @@ def _colour(value: str) -> str:
         ) from None
 
 
-def _apply_background(path: Path, colour: str | None) -> str | None:
+def _composite(path: Path, im: "Image.Image", colour: str) -> None:
+    from PIL import Image
+
+    canvas = Image.new("RGBA", im.size, colour)
+    canvas.alpha_composite(im)
+    canvas.save(path, format="PNG")
+
+
+def _apply_background(path: Path, colour: str | None, *, auto: bool = False) -> str | None:
     """Composite the PNG onto `colour` in place; with no colour, return a low-contrast note.
 
-    The note fires when at least 95% of the drawn (non-transparent) pixels are near-white.
+    The note fires when at least 95% of the drawn (non-transparent) pixels are near-white; with
+    `auto` the dark backdrop is applied as well (preview only) and the note says so.
     """
     from PIL import Image, ImageChops
 
@@ -68,9 +88,7 @@ def _apply_background(path: Path, colour: str | None) -> str | None:
         with Image.open(path) as opened:
             im = opened.convert("RGBA")
         if colour is not None:
-            canvas = Image.new("RGBA", im.size, colour)
-            canvas.alpha_composite(im)
-            canvas.save(path, format="PNG")
+            _composite(path, im, colour)
             return None
         r, g, b, a = im.split()
         drawn = a.point(lambda v: 255 if v else 0)
@@ -82,7 +100,10 @@ def _apply_background(path: Path, colour: str | None) -> str | None:
             drawn,
         )
         if n_drawn and white.histogram()[255] >= 0.95 * n_drawn:
-            return _LOW_CONTRAST_NOTE
+            if not auto:
+                return _LOW_CONTRAST_NOTE
+            _composite(path, im, _AUTO_BACKDROP)
+            return _AUTO_NOTE
     except OSError:
         pass
     return None
@@ -104,12 +125,13 @@ def render_(
     target: Target = "page",
     object_id: str | None = None,
     width_px: int | None = None,
-    series: str | None = None,
-    label: str | None = None,
+    series: Annotated[str | None, Field(description="frame only: series name")] = None,
+    label: Annotated[str | None, Field(description="frame only: caption for the frame")] = None,
     background: str | None = None,
 ) -> ToolResult:
     require_doc(doc_id)
-    colour = _colour(background) if background is not None else None
+    transparent = background is not None and background.lower() in ("none", "transparent")
+    colour = _colour(background) if background is not None and not transparent else None
     if target != "object" and object_id is not None:
         raise ToolError("object_id is only used with target='object'")
     if target != "frame" and (series is not None or label is not None):
@@ -138,7 +160,9 @@ def render_(
     log_tool_call(_logger, tool="render", doc_id=doc_id, target=target)
     payload = {"doc_id": doc_id, "target": target, **_info(result), **extra}
     artifact = resolve_artifact_abspath(doc_id, result.workspace_relative_path)
-    if artifact is not None and (hint := _apply_background(artifact, colour)):
+    if artifact is not None and (
+        hint := _apply_background(artifact, colour, auto=background is None)
+    ):
         payload["note"] = f"{payload['note']}; {hint}"
     image = inline_png(doc_id, result.workspace_relative_path)
     if image is None:

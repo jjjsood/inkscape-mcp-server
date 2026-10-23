@@ -25,7 +25,7 @@ from inkscape_mcp.workspace.risk import RiskClass, enforce_risk_policy
 
 #: Minted operation-id shape (`op_` + 8 hex chars). Enforced before any path construction
 #: so a caller-supplied id can never traverse out of the per-document `operations/` dir.
-_OPERATION_ID_RE = re.compile(r"^op_[0-9a-f]{8}$")
+_OPERATION_ID_RE = re.compile(r"op_[0-9a-f]{8}")
 
 
 class OperationStatus(StrEnum):
@@ -48,6 +48,8 @@ class OperationRecord(BaseModel):
     invocation: dict[str, Any] | None = None
     snapshot_id: str | None = None
     artifacts: list[str] = Field(default_factory=list)
+    #: basename in `backups/` holding the destination bytes an overwrite replaced (reversible).
+    backup_file: str | None = None
     previews: dict[str, str] = Field(default_factory=dict)
     logs: list[str] = Field(default_factory=list)
     status: OperationStatus = OperationStatus.PROPOSED
@@ -65,7 +67,7 @@ def _operation_path(doc_id: str, operation_id: str, registry: Registry) -> Path:
     `operation_id` is validated against the minted `op_<8hex>` shape before it is used to
     build a path, so a caller-supplied id can never traverse out of the `operations/` dir.
     """
-    if not _OPERATION_ID_RE.match(operation_id):
+    if not _OPERATION_ID_RE.fullmatch(operation_id):
         raise KeyError(operation_id)
     entry = registry.get(doc_id)
     root = Path(entry.root)

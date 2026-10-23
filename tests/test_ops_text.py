@@ -119,7 +119,6 @@ def test_replace_text_accepts_a_selector(tool_ws, doc) -> None:
     [
         ({"op": "replace_text", "ids": ["g1"], "text": "nope"}, "not a text element"),
         ({"op": "replace_text", "ids": ["t1"], "text": "bad\x00null"}, "control characters"),
-        ({"op": "replace_text", "ids": ["does_not_exist"], "text": "x"}, "id 'does_not_exist'"),
     ],
 )
 def test_replace_text_rejections(tool_ws, doc, op, match) -> None:
@@ -142,12 +141,17 @@ def test_font_writes_family_size_and_weight(tool_ws, doc) -> None:
 
 def test_font_accepts_a_selector(tool_ws, doc) -> None:
     run_ops(doc, {"op": "font", "select": {"tag": "text"}, "size": "24"})
-    assert "font-size:24" in _elem(tool_ws, doc, "t1").get("style")
+    assert "font-size:24px" in _elem(tool_ws, doc, "t1").get("style")
 
 
 def test_font_size_accepts_a_number(tool_ws, doc) -> None:
     run_ops(doc, {"op": "font", "ids": ["t1"], "size": 8})
-    assert "font-size:8" in _elem(tool_ws, doc, "t1").get("style")
+    assert "font-size:8px" in _elem(tool_ws, doc, "t1").get("style")
+
+
+def test_font_size_bare_string_gets_px_unit_kept(tool_ws, doc) -> None:
+    run_ops(doc, {"op": "font", "ids": ["t1"], "size": "10"})
+    assert "font-size:10px" in _elem(tool_ws, doc, "t1").get("style")
 
 
 @pytest.mark.parametrize(
@@ -155,7 +159,6 @@ def test_font_size_accepts_a_number(tool_ws, doc) -> None:
     [
         ({"op": "font", "ids": ["t1"], "family": "Arial;fill:red{"}, "font"),
         ({"op": "font", "ids": ["t1"]}, "at least one of family / size / weight"),
-        ({"op": "font", "ids": [], "family": "Arial"}, "'ids' is empty"),
     ],
 )
 def test_font_rejections(tool_ws, doc, op, match) -> None:

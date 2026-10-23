@@ -414,3 +414,13 @@ def test_snapshot_index_write_failure_leaves_no_temp(
         snapshots._write_index(root, doc_id, [])
     index = sandbox.snapshots_index(root, doc_id)
     assert list(index.parent.glob("*.tmp")) == []
+
+
+def test_snapshot_label_cuts_at_a_separator_not_mid_word() -> None:
+    summary = "applied 2 op(s) | " + " | ".join(
+        f"op{i}: removed element number {i}" for i in range(30)
+    )
+    label = pipeline.snapshot_label("edit", summary)
+    assert len(label) <= 240 and label.endswith("...") and "\n" not in label
+    assert not label[:-3].endswith(("op", "removed", "element"))  # no dangling half-item
+    assert label[:-3].rsplit(" | ", 1)[-1].endswith(tuple("0123456789"))

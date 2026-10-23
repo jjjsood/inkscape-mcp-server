@@ -591,8 +591,8 @@ def _iter_objects(root: etree._Element) -> list[etree._Element]:
     for elem in root.iter():
         if not is_element(elem):
             continue
-        if local_name(elem) in _NON_OBJECT_TAGS:
-            continue
+        if local_name(elem) in _NON_OBJECT_TAGS or not str(elem.tag).startswith(f"{{{SVG_NS}}}"):
+            continue  # also skips foreign-namespace nodes (rdf:RDF, cc:Work inside <metadata>)
         out.append(elem)
     return out
 
@@ -1237,6 +1237,7 @@ def find_in_root(
     returned refs and in the `bbox` filter.
     """
     from inkscape_mcp.edit.dom import color_key  # local import: edit.dom imports from this module
+    from inkscape_mcp.edit.text_object import _TEXT_TAGS  # local: text_object imports this module
 
     fill_key = color_key(fill) if fill is not None else None
     stroke_key = color_key(stroke) if stroke is not None else None
@@ -1269,8 +1270,14 @@ def find_in_root(
             eff = _effective_paint_for_match(elem, css_rules, parents, "stroke")
             if eff is None or color_key(eff) != stroke_key:
                 continue
-        if text_needle is not None and (ref.text is None or text_needle not in ref.text.lower()):
-            continue
+        if text_needle is not None:
+            parent = elem.getparent()
+            if local_name(elem) not in _TEXT_TAGS or (
+                parent is not None and local_name(parent) in _TEXT_TAGS
+            ):
+                continue  # outermost text element only, not <g> ancestors / <tspan> runs
+            if ref.text is None or text_needle not in ref.text.lower():
+                continue
         if id_prefix is not None and not ref.object_id.startswith(id_prefix):
             continue
         if bbox is not None and (ref.bbox is None or not _bbox_intersects(ref.bbox, bbox)):
@@ -1308,7 +1315,9 @@ def find_objects(
       per-element authored token (inline `style` over presentation attr; no cascade) for back-compat
       — only the FILTER uses the cascade-resolved value. Objects whose effective paint is unset
       never match.
-    - `text`: case-insensitive substring match against the object's collapsed text content.
+    - `text`: case-insensitive substring match against the collapsed content of the outermost
+      text element (`<text>` / `<flowRoot>` ...); container `<g>` ancestors and inner `<tspan>`
+      runs never match.
     - `id_prefix`: the object's `id` starts with this string.
     - `bbox`: keep objects whose box INTERSECTS the given box (shared edge/corner counts). By
       default this is the attribute-derived box, and objects with `bbox is None` (path / text /

@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Any
 
 from lxml import etree
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from inkscape_mcp.config import (
     EDIT_PREVIEWS_BEFORE_AFTER,
@@ -65,6 +65,7 @@ from inkscape_mcp.config import (
 )
 from inkscape_mcp.document.inspect import DocumentNotFound
 from inkscape_mcp.edit.dom import load_working_tree, write_working_tree
+from inkscape_mcp.edit.locks import locked_changes, locked_notes, locked_state
 from inkscape_mcp.logging_setup import get_logger, log_file_io
 from inkscape_mcp.operations import (
     OperationStatus,
@@ -129,6 +130,10 @@ class EditResult(BaseModel):
     summary: str | None = None
     preview_before: str | None = None
     preview_after: str | None = None
+    #: Non-fatal facts about the edit, e.g. objects changed inside locked layers.
+    notes: list[str] = Field(default_factory=list)
+    #: Locked layer id -> ids of objects this edit changed inside it (empty when none).
+    locked_layers_touched: dict[str, list[str]] = Field(default_factory=dict)
 
 
 def _render_op_preview(
@@ -213,7 +218,7 @@ def _drop_orphan_snapshot(doc_id: str, root: Path, pre: SnapshotInfo) -> None:
 
 
 #: Max length of the "before: ..." snapshot label (history entries stay one readable line).
-_LABEL_MAX = 120
+_LABEL_MAX = 240
 
 
 def snapshot_label(tool: str, summary: str) -> str:
@@ -228,7 +233,16 @@ def snapshot_label(tool: str, summary: str) -> str:
         else summary
     )
     label = f"before: {body or tool}"
-    return label if len(label) <= _LABEL_MAX else label[: _LABEL_MAX - 3].rstrip() + "..."
+    if len(label) <= _LABEL_MAX:
+        return label
+    head = label[: _LABEL_MAX - 3]
+    # Prefer the last " | " or ", " (past the first half), then the last space; never mid-word.
+    for seps in ((" | ", ", "), (" ",)):
+        cut = max(head.rfind(sep) for sep in seps)
+        if cut > _LABEL_MAX // 2:
+            head = head[:cut]
+            break
+    return head.rstrip(" ,|") + "..."
 
 
 def apply_edit(
@@ -285,6 +299,7 @@ def apply_edit(
     root = Path(entry.root)
     workspace_dir = Path(entry.workspace_dir)
     before_bytes = _canonical_bytes(tree)
+    locked_before = locked_state(tree.getroot())
 
     # 3. Run the mutation IN MEMORY. A bad input discards the record and re-raises before any
     #    snapshot / preview / write has touched disk.
@@ -389,6 +404,7 @@ def apply_edit(
     )
 
     # 9. Return the typed result.
+    locked_after = locked_state(tree.getroot())
     return EditResult(
         doc_id=doc_id,
         operation_id=record.operation_id,
@@ -397,6 +413,8 @@ def apply_edit(
         summary=summary,
         preview_before=preview_before,
         preview_after=preview_after,
+        notes=locked_notes(locked_before, locked_after),
+        locked_layers_touched=locked_changes(locked_before, locked_after),
     )
 
 

@@ -31,6 +31,8 @@ SVG = (
     b"</svg>"
 )
 
+BLANK = b'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"/>'
+
 _SVG = f"{{{SVG_NS}}}"
 
 
@@ -135,6 +137,19 @@ def test_text_anchor_sets_text_anchor(tool_ws, doc, anchor) -> None:
     op = {"op": "create_text", "x": 50, "y": 5, "text": "hi", "anchor": anchor}
     _, text = _created(tool_ws, doc, op)
     assert text.get("text-anchor") == anchor
+
+
+def test_off_page_created_object_warns(tool_ws) -> None:
+    doc = open_doc(tool_ws, "blank.svg", BLANK)  # the page is its viewBox
+    rect = {"op": "create_rect", "width": 10, "height": 10}
+    off = run_ops(doc, {**rect, "x": 0, "y": -200})
+    assert any("outside the page" in w for w in off.warnings)
+    on = run_ops(doc, {**rect, "x": 0, "y": 10})
+    assert not any("outside the page" in w for w in on.warnings)
+    moved = run_ops(
+        doc, {**rect, "x": 0, "y": -200}, {"op": "move", "ids": ["$0"], "dx": 0, "dy": 250}
+    )
+    assert not any("outside the page" in w for w in moved.warnings)
 
 
 # --- inline paint on create ----------------------------------------------------
@@ -250,16 +265,10 @@ def test_group_accepts_a_selector(tool_ws, doc) -> None:
     assert [c.get("id") for c in group] == ["c1"]
 
 
-@pytest.mark.parametrize(
-    ("op", "match"),
-    [
-        ({"op": "group", "ids": []}, "'ids' is empty"),
-        ({"op": "group", "ids": ["nope"]}, "id 'nope' not found"),
-        ({"op": "group", "select": {"tag": "polygon"}}, "select matched 0 objects"),
-    ],
-)
-def test_group_rejects_empty_or_missing_targets(tool_ws, doc, op, match) -> None:
-    _rejected(tool_ws, doc, op, match=match)
+def test_group_rejects_a_selector_matching_nothing(tool_ws, doc) -> None:
+    _rejected(
+        tool_ws, doc, {"op": "group", "select": {"tag": "polygon"}}, match="matched 0 objects"
+    )
 
 
 def test_reparent_moves_under_a_group_created_in_the_same_call(tool_ws, doc) -> None:

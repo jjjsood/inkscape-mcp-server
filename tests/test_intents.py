@@ -78,6 +78,12 @@ def test_actions_are_discoverable_not_out_of_scope() -> None:
     assert detect_out_of_scope("run an arbitrary extension") is not None
 
 
+def test_out_of_scope_raster_text_does_not_overclaim() -> None:
+    hit = detect_out_of_scope("edit my jpeg")
+    assert hit is not None
+    assert "trace a raster" not in hit.reason and "can embed" not in hit.reason
+
+
 def test_german_goals_match_and_every_german_key_names_a_real_intent() -> None:
     from inkscape_mcp.intents import _GERMAN_KEYWORDS
 
@@ -85,7 +91,7 @@ def test_german_goals_match_and_every_german_key_names_a_real_intent() -> None:
     for goal, key in [
         ("Wie mache ich ein SVG kleiner fürs Web?", "edit:optimize_web"),
         ("Funktioniert meine Inkscape-Installation?", "help:diagnose"),
-        ("Mach das rückgängig", "history:restore"),
+        ("Mach das rückgängig", "history:undo"),
         ("Exportiere das als PNG", "export:file"),
     ]:
         assert key in match_intents(goal, limit=1)[0].keys, goal
@@ -105,3 +111,9 @@ def test_history_cleanup_goals_surface_prune(goal: str) -> None:
     (top, *_) = match_intents(goal)
     assert "history:prune" in top.keys
     assert top.example is not None and top.example.args["action"] == "prune"
+
+
+def test_open_examples_do_not_add_a_background() -> None:
+    from inkscape_mcp.tools import open_
+
+    assert "'background'" not in open_.DESCRIPTION.split("Example:")[1]

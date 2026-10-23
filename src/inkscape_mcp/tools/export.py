@@ -2,7 +2,7 @@
 or a set, in one call.
 """
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal
 
 from fastmcp import FastMCP
@@ -12,8 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from inkscape_mcp import quality as quality_engine
 from inkscape_mcp.config import resolve_settings
-from inkscape_mcp.document.save import save_document_as
+from inkscape_mcp.document.save import dest_exists, save_document_as
 from inkscape_mcp.logging_setup import get_logger, log_export
+from inkscape_mcp.registry import DocEntry, get_registry
 from inkscape_mcp.render.batch import ExportSpec, export_batch
 from inkscape_mcp.render.cli import discard_on_error
 from inkscape_mcp.render.inline import resolve_artifact_abspath
@@ -59,7 +60,8 @@ class ProfileTarget(BaseModel):
 class SaveAsTarget(BaseModel):
     """Write the working copy to a workspace file. Overwriting needs overwrite + approval_token.
 
-    `dest_path` is workspace-relative; `out_dir` does not apply to it.
+    `dest_path`: path relative to the WORKSPACE ROOT (not the document's folder), or an absolute
+    path inside the root; `out_dir` does not apply to it. The result echoes the path written.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -72,15 +74,14 @@ class SaveAsTarget(BaseModel):
 Target = Annotated[FileTarget | ProfileTarget | SaveAsTarget, Field(discriminator="kind")]
 
 DESCRIPTION = (
-    "Write results to files in the workspace. `targets` is a list of: "
-    "{kind:'file', format:'png|pdf|svg', object_id?, width_px?}, "
-    "{kind:'profile', name:'web|icons|print', ...} or {kind:'save_as', dest_path, overwrite?} "
-    "(dest_path workspace-relative; out_dir: file/profile only, defaults to save_as's folder). "
-    "doc_id may be a list to export a set (files are prefixed with each doc_id). dry_run=true "
-    "plans and projects sizes without writing; byte_budget caps each doc's total. Returns each "
-    "artifact's workspace path, size and pixel dimensions. "
-    "Example: export(doc_id, targets=[{'kind':'file','format':'png','width_px':1024},"
-    "{'kind':'file','format':'svg'}])"
+    "Write results to workspace files. `targets`: {kind:'file', format:'png|pdf|svg', "
+    "object_id?, width_px?}, {kind:'profile', name:'web|icons|print'} or {kind:'save_as', "
+    "dest_path, overwrite?}. Paths are relative to the WORKSPACE ROOT, not the document's "
+    "folder. out_dir is a top-level arg (never inside a target) for file/profile outputs;"
+    " default: the save_as folder, else the source's folder. "
+    "doc_id may be a list. name_prefix tags file names. dry_run=true projects sizes; "
+    "byte_budget caps each doc's total. Returns each artifact's root-relative path and size. "
+    "Example: export(doc_id, targets=[{'kind':'file','format':'png','width_px':1024}])"
 )
 
 
@@ -229,7 +230,10 @@ def _export_one(
     result: dict[str, Any] = {"artifacts": []}
     files = [t for t in targets if isinstance(t, FileTarget)]
     batch_done = False
-    for index, target in enumerate(targets):
+    # save_as runs LAST: any earlier failure happens before it wrote, and a save_as failure rolls
+    # back the files/profiles already claimed, so a failed call never leaves the save_as behind.
+    for index in sorted(range(len(targets)), key=lambda i: isinstance(targets[i], SaveAsTarget)):
+        target = targets[index]
         try:
             if isinstance(target, FileTarget):
                 if batch_done:
@@ -283,6 +287,7 @@ def _export_one(
                     "bytes": saved.bytes,
                     "overwritten": saved.overwritten or None,
                     "operation_id": saved.operation_id,
+                    "undo": saved.undo,
                 }
             # Backstop on ACTUAL bytes across files + profiles (the projection may under-estimate):
             # abort once this document's real output crosses its budget; the caller's
@@ -301,6 +306,25 @@ def _export_one(
             reason = to_tool_error(exc, limit_msg=LIMIT_MSG)
             raise ToolError(f"{doc_id} targets[{index}] ({target.kind}): {reason}") from exc
     return result
+
+
+def _check_anchor(raw: str | None, entry: DocEntry, *, is_dir: bool) -> None:
+    """Refuse a relative path whose first folder is missing at the workspace root while the
+    document lives in a subfolder: the agent almost certainly meant the document's folder."""
+    if raw is None or Path(raw).is_absolute():
+        return
+    src = PurePosixPath(entry.source_path).parent  # "." for created docs / root-level files
+    parts = PurePosixPath(raw).parts
+    if src == PurePosixPath(".") or len(parts) < (1 if is_dir else 2) or parts[0] in (".", ".."):
+        return
+    if (Path(entry.root) / parts[0]).exists():
+        return
+    base = src.parts[: src.parts.index(parts[0])] if parts[0] in src.parts else src.parts
+    raise ToolError(
+        f"'{raw}' is relative to the workspace root, where folder '{parts[0]}' does not exist "
+        f"(the document is in '{src}/'); did you mean '{PurePosixPath(*base, *parts)}'? "
+        "Use an absolute path to create it at the root."
+    )
 
 
 @guarded(limit_msg=LIMIT_MSG)
@@ -325,16 +349,40 @@ def export(
         require_doc(one)
     if multi and any(isinstance(t, SaveAsTarget) for t in targets):
         raise ToolError("save_as writes one document; call export once per doc_id for save_as")
-    # No out_dir but a save_as in the same call: put file/profile outputs next to the saved file
-    # instead of the hidden server store.
+    # No out_dir: put outputs next to a save_as in the same call, else next
+    # to the document's own source file (workspace files only), else the managed store (None).
     save_as = next((t for t in targets if isinstance(t, SaveAsTarget)), None)
-    defaulted_out_dir = out_dir is None and save_as is not None
-    if defaulted_out_dir and save_as is not None:
-        out_dir = Path(save_as.dest_path).parent.as_posix()
+    for one in ids:  # relative paths resolve at the root; refuse the likely-wrong ones up front
+        entry = get_registry().get(one)
+        _check_anchor(out_dir, entry, is_dir=True)
+        _check_anchor(save_as.dest_path if save_as else None, entry, is_dir=False)
+    out_dirs: dict[str, str | None] = {}
+    origins: dict[str, str] = {}
+    for one in ids:
+        out_dirs[one] = out_dir
+        if out_dir is not None:
+            origins[one] = "explicit"
+        elif save_as is not None:
+            out_dirs[one] = Path(save_as.dest_path).parent.as_posix()
+            origins[one] = "save_as"
+        elif (src := get_registry().get(one).source_path) != "document.svg":
+            # Opened from a workspace file (created/svg-text docs are "document.svg"); the
+            # engine still validates this through the sandbox out_dir helper.
+            out_dirs[one] = Path(src).parent.as_posix()
+            origins[one] = "source"
+        else:
+            origins[one] = "managed"
+
+    # A created doc (canvas / svg text) saved in this call: name its files after the save_as.
+    default_prefix = (
+        Path(save_as.dest_path).stem
+        if save_as is not None and get_registry().get(ids[0]).source_path == "document.svg"
+        else None
+    )
 
     # All-or-nothing for exported files: a failing target (or document) removes every file/profile
-    # artifact this call already wrote, so no half result is left behind. A completed save_as is
-    # kept: it is its own Operation Record.
+    # artifact this call already wrote, so no half result is left behind. save_as runs last, so a
+    # failure leaves nothing behind.
     written: list[Path] = []
     try:
         with discard_on_error() as written:
@@ -342,8 +390,10 @@ def export(
                 one: _export_one(
                     one,
                     targets,
-                    out_dir=out_dir,
-                    prefix=name_prefix if name_prefix is not None else (one if multi else None),
+                    out_dir=out_dirs[one],
+                    prefix=name_prefix
+                    if name_prefix is not None
+                    else (one if multi else default_prefix),
                     byte_budget=byte_budget,
                     dry_run=dry_run,
                     approval_token=approval_token,
@@ -358,8 +408,19 @@ def export(
         raise
     artifacts = [a for r in per_doc.values() for a in r["artifacts"]]
     payload: dict[str, Any] = {"artifacts": artifacts}
-    if defaulted_out_dir and artifacts:
-        payload["out_dir"] = f"{out_dir} (defaulted to the save_as folder)"
+    if artifacts and not dry_run:
+        folders = dict.fromkeys(PurePosixPath(a["path"]).parent.as_posix() for a in artifacts)
+        used = set(origins.values())
+        label = {
+            "save_as": " (defaulted to the save_as folder)",
+            "source": " (defaulted to the source file's folder)",
+        }.get(next(iter(used)) if len(used) == 1 else "", "")
+        payload["out_dir"] = ", ".join(folders) + label
+        if "managed" in used:
+            payload["out_dir_note"] = (
+                "written to the server-managed store (no out_dir, no save_as, no source file); "
+                "pass out_dir='<workspace-relative folder>' to write elsewhere"
+            )
     if dry_run:
         payload = {
             "dry_run": True,
@@ -367,9 +428,14 @@ def export(
             if multi
             else per_doc[ids[0]]["plan"],
             "projected_bytes": sum(r.get("projected_bytes", 0) for r in per_doc.values()),
-            "projected_note": "upper bound (raw RGBA); real PNG files are much smaller",
             "within_budget": all(r.get("within_budget", True) for r in per_doc.values()),
         }
+        planned = [i for r in per_doc.values() for i in r["plan"]]
+        if any(i.get("format") == "png" and i.get("projected_bytes") for i in planned):
+            payload["projected_note"] = "upper bound (raw RGBA); real PNG files are much smaller"
+        needs = bool(save_as and save_as.overwrite and dest_exists(save_as.dest_path))
+        payload["risk"] = "high" if needs else "medium" if save_as else "low"
+        payload["needs_approval"] = needs or None  # compact() drops None, same as edit
     else:
         saved = {one: r["saved"] for one, r in per_doc.items() if "saved" in r}
         payload["count"] = len(artifacts) + len(saved)
@@ -378,6 +444,15 @@ def export(
         )
         if saved:
             payload["saved"] = saved[ids[0]] if not multi else saved
+            src_dir = PurePosixPath(get_registry().get(ids[0]).source_path).parent
+            if (
+                not multi
+                and src_dir != PurePosixPath(".")
+                and PurePosixPath(saved[ids[0]]["path"]).parent == PurePosixPath(".")
+            ):
+                saved[ids[0]]["note"] = (
+                    f"written at the workspace root, not next to the source ('{src_dir}/')"
+                )
     log_export(_logger, tool="export", docs=len(ids), targets=len(targets), dry_run=dry_run)
     return ok(payload)
 

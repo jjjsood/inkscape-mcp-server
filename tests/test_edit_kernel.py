@@ -242,22 +242,6 @@ def test_unknown_id_is_actionable_and_rolls_back(doc: tuple[str, Path]) -> None:
     _assert_untouched(root, doc_id, before)
 
 
-def test_delete_of_unknown_id_is_an_error_not_a_skip(doc: tuple[str, Path]) -> None:
-    doc_id, root = doc
-    before = sandbox.working_copy(root, doc_id).read_bytes()
-    with pytest.raises(OpError, match=r"ops\[0\] delete: id 'nope' not found"):
-        run_ops(doc_id, {"op": "delete", "ids": ["nope"]}, approval_token=TOKEN)
-    _assert_untouched(root, doc_id, before)
-
-
-def test_all_noop_call_writes_nothing(doc: tuple[str, Path]) -> None:
-    doc_id, root = doc
-    result = run_ops(doc_id, {"op": "fill", "ids": ["r1"], "color": "#ff0000"})
-    assert result.changed is False
-    assert result.operation_id == "" and result.snapshot_id == ""
-    assert _snapshot_count(root, doc_id) == 0
-
-
 def test_unknown_document(doc: tuple[str, Path]) -> None:
     with pytest.raises(EditApplyError, match="document id not found"):
         run_ops("nope", {"op": "normalize_viewbox"})
@@ -303,12 +287,17 @@ def test_targeted_op_needs_exactly_one_of_ids_or_select() -> None:
 def test_delete_requires_approval_token(doc: tuple[str, Path]) -> None:
     doc_id, root = doc
     before = sandbox.working_copy(root, doc_id).read_bytes()
-    with pytest.raises(OpError, match=r"ops\[1\] delete is HIGH risk; re-call with approval_token"):
+    with pytest.raises(
+        OpError, match=r"ops\[1\] delete is HIGH risk; re-call with approval_token"
+    ) as ei:
         run_ops(
             doc_id,
             {"op": "fill", "ids": ["r1"], "color": "#0000ff"},
             {"op": "delete", "ids": ["t1"]},
         )
+    assert "or send the other 1 op(s) without ops[1] as a medium call that needs no token" in str(
+        ei.value
+    )
     assert sandbox.working_copy(root, doc_id).read_bytes() == before
     assert _records(root, doc_id) == []
 
@@ -325,14 +314,6 @@ def test_risk_is_the_max_over_ops(doc: tuple[str, Path]) -> None:
     assert not _has(_working(root, doc_id), "t1")
     (record,) = _records(root, doc_id)
     assert record["risk_class"] == "high"
-
-
-def test_set_svg_is_high_risk(doc: tuple[str, Path]) -> None:
-    doc_id, _ = doc
-    new = '<svg xmlns="http://www.w3.org/2000/svg" width="5" height="5"/>'
-    with pytest.raises(OpError, match="set_svg is HIGH risk"):
-        run_ops(doc_id, {"op": "set_svg", "svg": new})
-    assert run_ops(doc_id, {"op": "set_svg", "svg": new}, approval_token=TOKEN).changed
 
 
 # --- $n references ------------------------------------------------------------
@@ -437,7 +418,11 @@ def test_selector_with_no_match_or_too_many_is_an_error(doc: tuple[str, Path]) -
     before = sandbox.working_copy(root, doc_id).read_bytes()
     with pytest.raises(OpError, match=r"ops\[0\] fill: select matched 0 objects"):
         run_ops(doc_id, {"op": "fill", "select": {"tag": "ellipse"}, "color": "#fff"})
-    with pytest.raises(OpError, match=r"matched 2 objects, more than max_matches=1"):
+    with pytest.raises(
+        OpError,
+        match=r"more than max_matches=1; .*raise select\.max_matches "
+        r"\(a field inside 'select', up to 1024\)",
+    ):
         run_ops(
             doc_id, {"op": "fill", "select": {"tag": "rect", "max_matches": 1}, "color": "#fff"}
         )

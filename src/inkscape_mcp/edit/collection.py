@@ -26,8 +26,11 @@ short style tokens) — never a host path. Source-subtree extraction is bounded 
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import math
 import re
+from pathlib import Path
 
 from fastmcp.exceptions import ToolError
 from lxml import etree
@@ -48,7 +51,8 @@ from inkscape_mcp.edit.dom import (
     prepend_transform,
     require_finite,
 )
-from inkscape_mcp.registry import doc_not_found_message
+from inkscape_mcp.registry import doc_not_found_message, get_registry
+from inkscape_mcp.workspace import sandbox
 
 __all__ = [
     "ConsistencyProperty",
@@ -60,7 +64,11 @@ __all__ = [
     "dominant_id_naming",
     "dominant_stroke_width",
     "place_document",
+    "record_grid_sources",
     "resolve_grid_assets",
+    "source_fingerprint",
+    "stale_copy_warnings",
+    "stale_grid_sources",
     "viewbox_signature",
 ]
 
@@ -178,7 +186,10 @@ def compose_grid(
                         prepend_transform(wrapper, f"scale({fmt_num(factor)})")
         prepend_transform(wrapper, f"translate({fmt_num(origin_x)},{fmt_num(origin_y)})")
 
-    return f"composed {len(plan)} asset(s) into a {rows}x{cols} grid", plan
+    return (
+        f"composed {len(plan)} asset(s) into a {rows}x{cols} grid (copies: rebuild after "
+        "editing a source)"
+    ), plan
 
 
 def _carry_css_rules(source: etree._Element, source_root: etree._Element) -> etree._Element:
@@ -484,6 +495,55 @@ def build_consistency_verdict(
         consistent=all(p.agree for p in properties),
         properties=properties,
     )
+
+
+def source_fingerprint(doc_id: str) -> str | None:
+    """Short sha256 of a document's working-copy bytes, or `None` if it cannot be read."""
+    try:
+        data = Path(get_registry().get(doc_id).working_path).read_bytes()
+    except (KeyError, OSError):
+        return None
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def _sources_file(doc_id: str) -> Path:
+    return sandbox.doc_dir(Path(get_registry().get(doc_id).root), doc_id) / "copies.json"
+
+
+def record_grid_sources(doc_id: str, copies: dict[str, list[str]]) -> None:
+    """Remember each grid/place copy `{group_id: [source_doc_id, fingerprint]}` beside the sheet."""
+    path = _sources_file(doc_id)
+    old = json.loads(path.read_text()) if path.is_file() else {}
+    path.write_text(json.dumps({**old, **copies}))
+
+
+def stale_grid_sources(doc_id: str) -> list[str]:
+    """Source doc_ids this sheet still holds a copy of (group present) that no longer matches."""
+    try:
+        path = _sources_file(doc_id)
+        if not path.is_file():
+            return []
+        ids = all_ids(_load_tree(doc_id)[1])
+    except (KeyError, DocumentNotFound, InspectionError):
+        return []
+    return sorted(
+        {
+            src
+            for gid, (src, fp) in json.loads(path.read_text()).items()
+            if gid in ids and source_fingerprint(src) != fp
+        }
+    )
+
+
+def stale_copy_warnings(source_id: str) -> list[str]:
+    """One warning per other document whose copy of `source_id` is now outdated."""
+    return [
+        f"{d.doc_id} holds a copy of {source_id} made before this edit; that copy is now stale. "
+        f"Rebuild it (grid/place on a fresh canvas, or restore {d.doc_id}'s pre-copy snapshot "
+        "and re-run) instead of patching the copy"
+        for d in get_registry().list_documents()
+        if d.doc_id != source_id and source_id in stale_grid_sources(d.doc_id)
+    ]
 
 
 def resolve_grid_assets(

@@ -23,9 +23,11 @@ from inkscape_mcp.render.cli import (
     RenderResult,
     _next_frame_index,
     capture_frame,
+    export_document,
     list_frames,
     render_preview,
 )
+from inkscape_mcp.render.profiles import create_icon_set, export_print_profile, export_web_profile
 from inkscape_mcp.tools._result import inline_png
 from inkscape_mcp.workspace import sandbox
 from tests.test_export_files import ART, FakeInkscape, install_fake
@@ -99,10 +101,22 @@ def test_blank_page_is_reported(fake_inkscape, doc) -> None:
     assert (result.opaque_px, result.all_blank) == (0, True)
 
 
-def test_unknown_document_is_a_keyerror(fake_inkscape, tool_ws) -> None:
-    for fn in (render_preview, capture_frame, list_frames):
-        with pytest.raises(KeyError):
-            fn("d_missing")
+@pytest.mark.parametrize(
+    "run",
+    [
+        render_preview,
+        capture_frame,
+        list_frames,
+        lambda doc_id: export_document(doc_id, "png"),
+        export_web_profile,
+        create_icon_set,
+        export_print_profile,
+    ],
+    ids=["preview", "frame", "frames", "export", "web", "icons", "print"],
+)
+def test_unknown_document_is_a_keyerror(fake_inkscape, tool_ws, run) -> None:
+    with pytest.raises(KeyError):
+        run("d_missing")
 
 
 # --- engine: frame series ---
@@ -382,14 +396,24 @@ def white_dot(monkeypatch: pytest.MonkeyPatch, doc: str):
 def test_render_background_fills_transparency(tool_app, doc, white_dot) -> None:
     res = call(tool_app, "render", {"doc_id": doc, "background": "#333"})
     assert "note" in res.data and "background=" not in res.data["note"]
+    assert "backdrop" not in res.data["note"]  # an explicit background is never overridden
     px = _decode(res)
     assert px.convert("RGBA").getpixel((0, 0)) == (0x33, 0x33, 0x33, 255)
     assert px.convert("RGBA").getpixel((10, 10)) == (255, 255, 255, 255)
 
 
-def test_render_notes_white_on_transparent(tool_app, doc, white_dot) -> None:
+def test_white_only_render_gets_auto_backdrop(tool_app, doc, white_dot) -> None:
     res = call(tool_app, "render", {"doc_id": doc})
+    assert "backdrop was added" in res.data["note"] and "transparent" in res.data["note"]
+    px = _decode(res).convert("RGBA")
+    assert px.getpixel((0, 0)) == (0x33, 0x33, 0x33, 255)
+    assert px.getpixel((10, 10)) == (255, 255, 255, 255)
+
+
+def test_render_notes_white_on_transparent(tool_app, doc, white_dot) -> None:
+    res = call(tool_app, "render", {"doc_id": doc, "background": "none"})
     assert "background='#333'" in res.data["note"]
+    assert _decode(res).convert("RGBA").getpixel((0, 0))[3] == 0  # opt-out: still transparent
 
 
 @pytest.mark.parametrize("bad", ["red; rm -rf", "--export-id=x", "#12", "url(x)", "nosuchcolour"])
@@ -406,7 +430,9 @@ def test_real_white_circle_object_render(tool_app, tool_ws) -> None:
     )
     doc_id = open_doc(tool_ws, "dot.svg", svg)
     args = {"doc_id": doc_id, "target": "object", "object_id": "mark"}
-    assert "background='#333'" in call(tool_app, "render", args).data["note"]
+    auto = call(tool_app, "render", args)
+    assert "backdrop was added" in auto.data["note"]
+    assert _decode(auto).convert("RGBA").getpixel((0, 0))[:3] == (0x33, 0x33, 0x33)
     res = call(tool_app, "render", {**args, "background": "#333"})
-    assert "background='#333'" not in res.data["note"]
+    assert "backdrop" not in res.data["note"]
     assert _decode(res).convert("RGBA").getpixel((0, 0))[:3] == (0x33, 0x33, 0x33)

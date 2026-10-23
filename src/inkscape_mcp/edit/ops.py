@@ -45,6 +45,7 @@ from pydantic import (
     Field,
     TypeAdapter,
     ValidationError,
+    field_validator,
     model_validator,
 )
 
@@ -73,7 +74,9 @@ from inkscape_mcp.edit.dom import (
     find_by_id,
     fmt_num,
     load_working_tree,
+    parse_viewbox,
 )
+from inkscape_mcp.edit.locks import locked_changes, locked_notes, locked_state
 from inkscape_mcp.edit.pipeline import EditApplyError, EditResult, apply_edit
 from inkscape_mcp.logging_setup import get_logger
 from inkscape_mcp.registry import DocEntry, Registry, get_registry
@@ -104,6 +107,7 @@ MAX_OPS = 64
 #: Default cap on the objects one selector may match (an over-broad selector rejects the op BEFORE
 #: it mutates anything — a caller may raise it, but never silently fans out across the document).
 DEFAULT_MAX_MATCHES = 64
+MAX_MATCHES_LIMIT = 1024
 
 #: Total ordering over the risk vocabulary so a call's effective risk is the MAX over its ops.
 _RISK_ORDER: dict[RiskClass, int] = {
@@ -150,10 +154,11 @@ class Selector(BaseModel):
     """Select objects by predicate — the same filters `find_objects` takes (AND semantics).
 
     `tag` is an exact local element name; `fill` / `stroke` match the EFFECTIVE cascade-resolved
-    paint; `text` is a case-insensitive substring; `id_prefix` an id prefix; `bbox` an intersection
-    box. `accurate_bbox` opts into geometry-accurate boxes (one read-only Inkscape query) so
-    path / text / group objects can match a `bbox`. More than `max_matches` matches rejects
-    the op.
+    paint; `text` is a case-insensitive substring of a text object's content (the outermost
+    `<text>`, not its `<g>` ancestors or `<tspan>` runs); `id_prefix` an id prefix; `bbox` matches
+    objects whose box intersects it. `accurate_bbox` opts into geometry-accurate boxes (one
+    read-only Inkscape query) so path / text / group objects can match a `bbox`. More than
+    `max_matches` matches rejects the op.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -165,7 +170,7 @@ class Selector(BaseModel):
     id_prefix: str | None = None
     bbox: BBox | None = None
     accurate_bbox: bool = False
-    max_matches: int = Field(default=DEFAULT_MAX_MATCHES, ge=1, le=1024)
+    max_matches: int = Field(default=DEFAULT_MAX_MATCHES, ge=1, le=MAX_MATCHES_LIMIT)
 
 
 class Stop(BaseModel):
@@ -268,6 +273,12 @@ class OpsResult(BaseModel):
     created: list[CreatedRef] = Field(default_factory=list)
     outcomes: list[OpOutcome] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    #: Ids a delete or path op took out of the document (e.g. 'ring' after combine).
+    removed: list[str] = Field(default_factory=list)
+    #: Why a real run changed nothing (empty when it changed something or was a dry run).
+    reason: str = ""
+    #: Locked layer id -> ids of objects the call changed inside it (also set for a dry run).
+    locked_layers_touched: dict[str, list[str]] = Field(default_factory=dict)
     render_artifact: str | None = None
 
 
@@ -307,10 +318,15 @@ class _Run:
         self.primary: dict[int, str] = {}
         #: set by an op to name the id it produced when a before/after id diff cannot
         self.override: str | None = None
+        #: further ids an op produced besides the primary (e.g. every grid cell after the first)
+        self.extra_created: list[str] = []
         self.matched: list[str] | None = None
         self.outcomes: list[OpOutcome] = []
         self.created: list[CreatedRef] = []
         self.warnings: list[str] = []
+        self.removed: list[str] = []
+        #: group_id -> [source doc_id, fingerprint] per grid/place copy of another doc
+        self.grid_sources: dict[str, list[str]] = {}
 
     # --- helpers the ops use ---
 
@@ -348,7 +364,8 @@ class _Run:
         if len(ids) > sel.max_matches:
             raise self.fail(
                 f"select matched {len(ids)} objects, more than max_matches={sel.max_matches}; "
-                "narrow the selector or raise max_matches"
+                f"narrow the selector or raise select.max_matches (a field inside 'select', up to "
+                f'{MAX_MATCHES_LIMIT}), e.g. "select": {{..., "max_matches": {len(ids)}}}'
             )
         self.matched = ids
         return ids
@@ -358,6 +375,26 @@ class _Run:
         if op.ids is None and op.select is None:
             return None
         return self.targets(op)
+
+    def _state(self) -> list[tuple[etree._Element, tuple[Any, ...]]]:
+        return [
+            (e, (tuple(e.attrib.items()), e.text, e.tail))
+            for e in self.tree.getroot().iter()
+            if isinstance(e.tag, str)
+        ]
+
+    def track_changes(self, scope: list[str] | None, fn: Any) -> str:
+        """Run `fn`; with no scope (whole document) set `matched` to the changed elements."""
+        before = self._state() if scope is None else []
+        summary: str = fn()
+        if scope is None:
+            old = dict((id(e), st) for e, st in before)
+            self.matched = [
+                e.get("id") or f"<{etree.QName(e).localname}>"
+                for e, st in self._state()
+                if old.get(id(e)) != st
+            ]
+        return summary
 
     def each(self, op: _Targeted, fn: Any) -> str:
         """Run a single-target engine function once per resolved target."""
@@ -411,6 +448,7 @@ class _Run:
         for index, op in enumerate(self.ops):
             self.index = index
             self.override = None
+            self.extra_created = []
             self.matched = None
             before_ids = _ordered_ids(tree)
             try:
@@ -421,9 +459,38 @@ class _Run:
                 raise self.fail("object id not found in document") from exc
             except _OP_FAILURES as exc:
                 raise self.fail(str(exc)) from exc
+            if isinstance(op, Delete | _PathOp):
+                after = set(_ordered_ids(tree))
+                self.removed.extend(i for i in before_ids if i not in after)
             self._record(op, summary, before_ids)
             summaries.append(f"{op.op}: {summary}")
+        self.warnings.extend(self._off_page_notes())
         return f"applied {len(self.ops)} op(s) | " + " | ".join(summaries)
+
+    def _off_page_notes(self) -> list[str]:
+        """Warn for created objects that end the call entirely outside the page (viewBox)."""
+        root = self.tree.getroot()
+        vb = parse_viewbox(root.get("viewBox"))
+        if vb is None:
+            return []
+        px, py, pw, ph = vb
+        notes = []
+        for ref in self.created:
+            elem = find_by_id(root, ref.id)
+            if elem is None or any(a.get("transform") for a in elem.iterancestors()):
+                continue  # bbox_of ignores ancestor transforms
+            box = bbox_of(elem)
+            if box is not None and (
+                box.x + box.width < px
+                or box.x > px + pw
+                or box.y + box.height < py
+                or box.y > py + ph
+            ):
+                notes.append(
+                    f"{ref.id} lies entirely outside the page (viewBox "
+                    f"{fmt_num(px)} {fmt_num(py)} {fmt_num(pw)} {fmt_num(ph)})"
+                )
+        return notes
 
     def _record(self, op: _Op, summary: str, before_ids: list[str]) -> None:
         new_ids: list[str] = []
@@ -433,15 +500,16 @@ class _Run:
         primary = self.override or (new_ids[0] if new_ids and op.CREATES else None)
         if primary is not None:
             self.primary[self.index] = primary
-            elem = find_by_id(self.tree.getroot(), primary)
-            box = bbox_of(elem) if elem is not None else None
-            self.created.append(
-                CreatedRef(
-                    op=self.index,
-                    id=primary,
-                    bbox=[box.x, box.y, box.width, box.height] if box is not None else None,
+            for oid in [primary, *self.extra_created]:
+                elem = find_by_id(self.tree.getroot(), oid)
+                box = bbox_of(elem) if elem is not None else None
+                self.created.append(
+                    CreatedRef(
+                        op=self.index,
+                        id=oid,
+                        bbox=[box.x, box.y, box.width, box.height] if box is not None else None,
+                    )
                 )
-            )
         self.outcomes.append(
             OpOutcome(
                 op=self.index,
@@ -893,8 +961,10 @@ class ReplaceColor(_Targeted):
     to_color: str
 
     def apply(self, run: _Run) -> str:
-        return style_engine.replace_color(
-            run.tree, self.from_color, self.to_color, run.optional_scope(self)
+        scope = run.optional_scope(self)
+        return run.track_changes(
+            scope,
+            lambda: style_engine.replace_color(run.tree, self.from_color, self.to_color, scope),
         )
 
 
@@ -907,7 +977,10 @@ class Palette(_Targeted):
     mapping: dict[str, str]
 
     def apply(self, run: _Run) -> str:
-        return style_engine.apply_palette(run.tree, self.mapping, run.optional_scope(self))
+        scope = run.optional_scope(self)
+        return run.track_changes(
+            scope, lambda: style_engine.apply_palette(run.tree, self.mapping, scope)
+        )
 
 
 class Font(_Targeted):
@@ -1005,15 +1078,30 @@ class Move(_Targeted):
 
 
 class Scale(_Targeted):
-    """Scale each target by `sx` (and `sy`, default `sx`) about its own centre."""
+    """Scale each target by `sx` (and `sy`, default `sx`) about its own centre.
+
+    `about='selection'` scales all targets about ONE shared centre (the centre of their combined
+    box) instead, so a button and its label grow together. Siblings that sit on a target but are
+    not targeted are reported in `warnings`.
+    """
 
     op: Literal["scale"]
     sx: float
     sy: float | None = None
+    about: Literal["each", "selection"] = "each"
+
+    @field_validator("about", mode="before")
+    @classmethod
+    def _about_alias(cls, v: Any) -> Any:
+        return "each" if v in ("center", "centre") else v
 
     def apply(self, run: _Run) -> str:
         sx, sy = self.sx, self.sy
-        return run.each(self, lambda oid: transform_engine.scale(run.tree, oid, sx, sy))
+        ids = run.targets(self)
+        run.warnings.extend(transform_engine.unscaled_neighbours(run.tree, ids))
+        if self.about == "selection":
+            return transform_engine.scale_together(run.tree, ids, sx, sy)
+        return "; ".join(transform_engine.scale(run.tree, oid, sx, sy) for oid in ids)
 
 
 class Rotate(_Targeted):
@@ -1131,8 +1219,9 @@ class InsertSvg(_Op):
 class Place(_Op):
     """Place another document (or one of its objects) here at `(x, y)` scaled by `scale`.
 
-    A same-document source is read from the CURRENT in-memory state; another document is read from
-    its saved working copy. The placed content is wrapped in a new `<g>` (the created id).
+    A same-document source is read from the CURRENT in-memory state; another document is read in
+    its CURRENT state (every edit so far). The placed content is wrapped in a new `<g>` (the
+    created id). The placed content is a COPY; later edits of the source warn that it is stale.
     """
 
     CREATES: ClassVar[bool] = True
@@ -1166,14 +1255,19 @@ class Place(_Op):
             self.scale,
             source_root=source_root if self.source_id is not None else None,
         )
+        if self.source_doc_id != run.ctx.doc_id and (
+            fp := collection_engine.source_fingerprint(self.source_doc_id)
+        ):
+            run.grid_sources[group_id] = [self.source_doc_id, fp]
         run.override = group_id
         return summary
 
 
 class Grid(_Op):
     """Lay documents (`doc_ids`) or objects of one document (`source_doc_id` + `source_ids`) out in
-    a `rows` x `cols` grid of `cell`-sized cells in THIS document (sources are read from their saved
-    working copies)."""
+    a `rows` x `cols` grid of `cell`-sized cells in THIS document (each source is read in its
+    CURRENT state, every edit so far included; the sheet keeps copies: every later edit of a source
+    warns that the copy is stale, and `inspect` on the sheet lists `stale_sources`)."""
 
     CREATES: ClassVar[bool] = True
 
@@ -1202,7 +1296,12 @@ class Grid(_Op):
             scale_to_fit=self.scale_to_fit,
             padding=self.padding,
         )
+        for c in plan:
+            did = self.source_doc_id or c.source  # doc_ids mode: GridCell.source is the doc_id
+            if did != run.ctx.doc_id and (fp := collection_engine.source_fingerprint(did)):
+                run.grid_sources[c.group_id] = [did, fp]
         run.override = plan[0].group_id if plan else None
+        run.extra_created = [c.group_id for c in plan[1:]]
         return summary
 
 
@@ -1222,25 +1321,32 @@ class _PathOp(_Targeted):
         ids = run.targets(self)
         if run.dry_run:
             summary = paths_engine.describe_dry_run(run.tree.getroot(), self.TOKEN, ids)
-            run.override = paths_engine.predicted_result_id(run.tree.getroot(), self.TOKEN, ids)
-            return summary
-        holder: list[str] = []
-        summary = paths_engine.apply_path_op(
-            run.tree, run.ctx.materialize(run.tree), self.TOKEN, ids, result_holder=holder
-        )
-        run.override = holder[0] if holder else None
+            out = paths_engine.predicted_result_ids(run.tree.getroot(), self.TOKEN, ids)
+        else:
+            out = []
+            summary = paths_engine.apply_path_op(
+                run.tree,
+                run.ctx.materialize(run.tree),
+                self.TOKEN,
+                ids,
+                result_holder=out,
+                notes=run.warnings,
+            )
+        run.override = out[0] if out else None
+        run.extra_created = out[1:]
         return summary
 
 
 class Simplify(_PathOp):
-    """Simplify the targeted paths (fewer nodes; lossy)."""
+    """Simplify the targeted paths (fewer nodes; lossy). Ids are unchanged; nothing is created."""
 
     TOKEN: ClassVar[str] = paths_engine.SIMPLIFY
     op: Literal["simplify"]
 
 
 class Union(_PathOp):
-    """Boolean union of >= 2 targets into one path (the bottom-most id survives)."""
+    """Boolean union of >= 2 targets into one path (the bottom-most object's id and style
+    survive)."""
 
     TOKEN: ClassVar[str] = paths_engine.UNION
     CREATES: ClassVar[bool] = True
@@ -1248,7 +1354,7 @@ class Union(_PathOp):
 
 
 class Difference(_PathOp):
-    """Boolean difference: the bottom-most target minus the others (its id survives)."""
+    """Boolean difference: the bottom-most target minus the others (its id and style survive)."""
 
     TOKEN: ClassVar[str] = paths_engine.DIFFERENCE
     CREATES: ClassVar[bool] = True
@@ -1256,7 +1362,8 @@ class Difference(_PathOp):
 
 
 class Combine(_PathOp):
-    """Combine >= 2 paths into one compound path (the bottom-most id survives)."""
+    """Combine >= 2 paths into one compound path (the bottom-most id survives but the result carries
+    the TOP-most object's style, as Inkscape's Path > Combine does)."""
 
     TOKEN: ClassVar[str] = paths_engine.COMBINE
     CREATES: ClassVar[bool] = True
@@ -1264,21 +1371,26 @@ class Combine(_PathOp):
 
 
 class BreakApart(_PathOp):
-    """Break compound paths into their sub-paths."""
+    """Break compound paths into their sub-paths; `created` lists every resulting piece (the
+    count). A dry_run cannot predict piece ids (needs the engine)."""
 
     TOKEN: ClassVar[str] = paths_engine.BREAK_APART
+    CREATES: ClassVar[bool] = True
     op: Literal["break_apart"]
 
 
 class StrokeToPath(_PathOp):
-    """Convert strokes to filled outline paths."""
+    """Convert strokes to filled outline paths; the outline keeps the target's id and is listed in
+    `created` (dry_run too)."""
 
     TOKEN: ClassVar[str] = paths_engine.STROKE_TO_PATH
+    CREATES: ClassVar[bool] = True
     op: Literal["stroke_to_path"]
 
 
 class Cleanup(_PathOp):
-    """Clean up the targeted paths (alias of simplify in Inkscape 1.4)."""
+    """Clean up the targeted paths (alias of simplify in Inkscape 1.4). Ids are unchanged; nothing
+    is created."""
 
     TOKEN: ClassVar[str] = paths_engine.CLEANUP
     op: Literal["cleanup"]
@@ -1432,12 +1544,25 @@ def check_ops(
                 "INKSCAPE_MCP_RAW_ACTION_ENABLED=1",
                 op_index=i,
             )
+        if isinstance(op, SetSvg | InsertSvg):  # unsafe content is refused before a token is asked
+            try:
+                compose_engine.parse_and_scrub(_checked_svg(op.svg))
+            except EditError as exc:
+                raise OpError(f"ops[{i}] {op.op}: {exc}", op_index=i) from exc
     risk = ops_risk(ops)
     if risk == RiskClass.HIGH and not dry_run and not (approval_token and approval_token.strip()):
-        first = next(i for i, op in enumerate(ops) if op.effective_risk() == RiskClass.HIGH)
+        high = [i for i, op in enumerate(ops) if op.effective_risk() == RiskClass.HIGH]
+        first, rest = high[0], len(ops) - len(high)
+        hint = (
+            f"; or send the other {rest} op(s) without "
+            + ", ".join(f"ops[{i}]" for i in high)
+            + " as a medium call that needs no token"
+            if rest
+            else ""
+        )
         raise OpError(
             f"ops[{first}] {ops[first].op} is HIGH risk; re-call with approval_token"
-            " (dry_run=true shows the plan; history(action='restore') undoes it)",
+            " (dry_run=true shows the plan; history(action='restore') undoes it)" + hint,
             op_index=first,
         )
     return risk
@@ -1498,11 +1623,16 @@ def run_ops(
             _entry, tree = load_working_tree(doc_id, registry)
         except (KeyError, DocumentNotFound) as exc:
             raise EditApplyError("document id not found") from exc
+        planned = copy.deepcopy(tree)
+        locked_before = locked_state(planned.getroot())
         try:
-            summary = run.execute(copy.deepcopy(tree))
+            summary = run.execute(planned)
         finally:
             ctx.cleanup()
+        locked_after = locked_state(planned.getroot())
+        run.warnings.extend(locked_notes(locked_before, locked_after))
         return OpsResult(
+            locked_layers_touched=locked_changes(locked_before, locked_after),
             doc_id=doc_id,
             changed=False,
             dry_run=True,
@@ -1527,6 +1657,10 @@ def run_ops(
     finally:
         ctx.cleanup()
 
+    if result.changed:
+        if run.grid_sources:
+            collection_engine.record_grid_sources(doc_id, run.grid_sources)
+        run.warnings.extend(collection_engine.stale_copy_warnings(doc_id))
     render_artifact = _render_artifact(doc_id, result, registry, run.warnings) if render else None
     return OpsResult(
         doc_id=doc_id,
@@ -1538,13 +1672,21 @@ def run_ops(
         summary=result.summary or "",
         created=run.created,
         outcomes=run.outcomes,
-        warnings=run.warnings,
+        warnings=[*run.warnings, *result.notes],
+        removed=list(dict.fromkeys(run.removed)) if result.changed else [],
+        reason=""
+        if result.changed
+        else "nothing changed: "
+        + "; ".join(f"{o.name}: {o.summary}" for o in run.outcomes)
+        + "; the targets already matched the request (same value, or already absent)",
+        locked_layers_touched=result.locked_layers_touched,
         render_artifact=render_artifact,
     )
 
 
 __all__ = [
     "DEFAULT_MAX_MATCHES",
+    "MAX_MATCHES_LIMIT",
     "MAX_OPS",
     "CreatedRef",
     "Op",

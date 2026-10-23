@@ -262,30 +262,33 @@ def _check_url_refs(value: str, *, attr: str) -> None:
         idx += 4
 
 
-def _scrub_element(elem: etree._Element) -> None:
-    """Validate one element + its attributes against the allowlist, or raise `ComposeError`.
+def _scrub_element(elem: etree._Element, errors: list[str]) -> None:
+    """Validate one element + its attributes against the allowlist, appending each violation.
 
     Element rule: a non-element node (comment / PI) is rejected outright; the element's namespace
     must be allowed AND its local name must be in :data:`ALLOWED_ELEMENTS`. Attribute rule: each
     attribute's namespace must be allowed, its local name must be in :data:`ALLOWED_ATTRS` (or be a
     validated `href`), no `on*` event handler is permitted, and any href/url-bearing value must pass
-    the external/active reference guard. Fail-closed: anything unrecognized is rejected.
+    the external/active reference guard. Fail-closed: anything unrecognized is a violation. Every
+    violation is collected (not just the first) so a caller can fix them in one round-trip.
     """
     tag = elem.tag
     if not isinstance(tag, str):
         # Comment / ProcessingInstruction / entity — never allowed in adopted content.
-        raise ComposeError("svg contains a disallowed node (comment/processing-instruction)")
+        errors.append("svg contains a disallowed node (comment/processing-instruction)")
+        return
 
     ns = _namespace(tag)
     local = _local_name(tag)
     if ns not in _ALLOWED_NAMESPACES:
-        raise ComposeError(f"svg contains disallowed element namespace: {ns!r}")
-    if local not in ALLOWED_ELEMENTS:
-        raise ComposeError(f"svg contains disallowed element: {local!r}")
+        errors.append(f"svg contains disallowed element namespace: {ns!r}")
+    elif local not in ALLOWED_ELEMENTS:
+        errors.append(f"svg contains disallowed element: {local!r}")
 
     for attr_name, raw_value in elem.attrib.items():
         if not isinstance(attr_name, str):  # pragma: no cover - lxml attrib keys are always str
-            raise ComposeError("svg contains a disallowed attribute")
+            errors.append("svg contains a disallowed attribute")
+            continue
         # lxml types attribute values as `str | bytes`; SVG values are always text — decode a bytes
         # value defensively so the downstream str-only guards typecheck and never crash.
         attr_value = (
@@ -297,37 +300,55 @@ def _scrub_element(elem: etree._Element) -> None:
 
         # Block every event-handler attribute regardless of namespace (onload/onclick/...).
         if a_low.startswith("on"):
-            raise ComposeError(f"svg contains a disallowed event-handler attribute: {a_local!r}")
+            errors.append(f"svg contains a disallowed event-handler attribute: {a_local!r}")
+            continue
 
         if a_ns not in _ALLOWED_NAMESPACES:
-            raise ComposeError(f"svg contains disallowed attribute namespace: {a_ns!r}")
-
-        # href (plain or xlink:href): same-document '#id' only.
-        if a_local in _HREF_LIKE:
-            _reject_external_or_active(attr_value, attr=a_local)
+            errors.append(f"svg contains disallowed attribute namespace: {a_ns!r}")
             continue
 
-        # inkscape:/sodipodi: editor metadata — accept any local name in those namespaces (inert).
-        if a_ns in (INKSCAPE_NS, SODIPODI_NS):
-            continue
+        try:
+            # href (plain or xlink:href): same-document '#id' only.
+            if a_local in _HREF_LIKE:
+                _reject_external_or_active(attr_value, attr=a_local)
+            # inkscape:/sodipodi: editor metadata — any local name in those namespaces (inert).
+            elif a_ns in (INKSCAPE_NS, SODIPODI_NS):
+                continue
+            elif a_local not in ALLOWED_ATTRS:
+                errors.append(f"svg contains a disallowed attribute: {a_local!r}")
+            # Paint / url-bearing / style values: no external or javascript: url(...) target.
+            elif a_local in _URL_REF_ATTRS:
+                _check_url_refs(attr_value, attr=a_local)
+        except ComposeError as exc:
+            errors.append(str(exc))
 
-        if a_local not in ALLOWED_ATTRS:
-            raise ComposeError(f"svg contains a disallowed attribute: {a_local!r}")
 
-        # Paint / url-bearing / style values: no external or javascript: url(...) target.
-        if a_local in _URL_REF_ATTRS:
-            _check_url_refs(attr_value, attr=a_local)
+_MAX_REPORTED_VIOLATIONS = 10
+_MAX_VIOLATION_CHARS = 200  # echoed names/URIs are caller-controlled; bound each item
 
 
 def scrub_tree(root: etree._Element) -> None:
-    """Walk `root` and every descendant through :func:`_scrub_element`, raising on the first miss.
+    """Walk `root` and every descendant through :func:`_scrub_element`; raise ONE `ComposeError`.
 
-    The single allowlist-enforcement entry point. Mutates nothing; it only validates. After this
-    returns the subtree is known to contain ONLY allowlisted elements/attributes with no `on*`
-    handler and no external/`javascript:` reference, so it is safe to graft into a working copy.
+    The single allowlist-enforcement entry point. Mutates nothing; it only validates (never
+    strips). Violations are collected, de-duplicated, clipped to :data:`_MAX_VIOLATION_CHARS` each
+    and joined with "; "; the walk stops once more than :data:`_MAX_REPORTED_VIOLATIONS` distinct
+    ones are found (then "; and more"), so a hostile document cannot make it allocate per node.
+    After this returns the subtree is known to contain ONLY allowlisted elements/attributes with
+    no `on*` handler and no external/`javascript:` reference, so it is safe to graft.
     """
+    seen: dict[str, None] = {}
     for elem in root.iter():
-        _scrub_element(elem)
+        errors: list[str] = []
+        _scrub_element(elem, errors)
+        for e in errors:
+            seen[e[:_MAX_VIOLATION_CHARS]] = None
+        if len(seen) > _MAX_REPORTED_VIOLATIONS:
+            break
+    if seen:
+        uniq = list(seen)
+        shown = "; ".join(uniq[:_MAX_REPORTED_VIOLATIONS])
+        raise ComposeError(shown + ("; and more" if len(uniq) > _MAX_REPORTED_VIOLATIONS else ""))
 
 
 def parse_and_scrub(svg: str) -> etree._Element:

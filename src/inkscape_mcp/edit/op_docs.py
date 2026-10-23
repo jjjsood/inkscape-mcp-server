@@ -8,7 +8,16 @@ validated against the union in the test suite, so the docs cannot drift from the
 import re
 from typing import Any, get_args
 
-from inkscape_mcp.edit.ops import Op
+from inkscape_mcp.edit.ops import DEFAULT_MAX_MATCHES, MAX_MATCHES_LIMIT, Op
+
+#: The one place the `select` filters are documented (op_reference / ops_index / llms.txt).
+SELECT_DOC = (
+    "select={tag, fill, stroke, text, id_prefix, bbox:{x,y,width,height}, accurate_bbox, "
+    "max_matches} (all given filters must match); bbox matches objects whose box INTERSECTS it "
+    "(touching counts, not 'fully inside'); path/text/group boxes need accurate_bbox=true; "
+    f"max_matches goes INSIDE select (default {DEFAULT_MAX_MATCHES}, up to {MAX_MATCHES_LIMIT}), "
+    "more matches reject the op"
+)
 
 #: One valid example op per op name. Ops that act on objects show `ids`; `select` works anywhere
 #: `ids` does (`{"select": {"tag": "rect", "fill": "#ff0000"}}`). `"$<n>"` refers to the id the
@@ -115,9 +124,32 @@ OP_NOTES: dict[str, str] = {
         "colour that comes from a CSS class/id rule is changed IN the rule when every element "
         "using that rule is targeted; if the class is shared with untargeted elements the targets "
         "get an inline override instead and the rule is left alone. Targeting the root <svg> id "
-        "means document-wide; targeting a <style> id rewrites that stylesheet's colours."
+        "means document-wide; targeting a <style> id rewrites that stylesheet's colours. "
+        "Objects in locked layers are recoloured too (listed in warnings); scope with ids/select "
+        "to avoid that."
+    ),
+    "grid": (
+        "The sheet holds COPIES of each source in its current state (every edit is already in "
+        "the working copy). Editing a source afterwards does NOT update the sheet; the source's "
+        "edit result then warns that the sheet's copy is stale, and `inspect` summary on the "
+        "sheet lists it in `stale_sources`. Rebuild: re-run grid on a fresh "
+        "canvas, or restore the sheet's pre-grid snapshot first."
+    ),
+    "union": "The result keeps the bottom-most object's id and style.",
+    "difference": "The result keeps the bottom-most object's id and style.",
+    "combine": (
+        "The result keeps the bottom-most object's id but takes the TOP-most object's style "
+        "(same as Inkscape's Path > Combine): a navy plate under an orange ring becomes one "
+        "orange path. Union/difference keep the bottom-most object's style instead."
     ),
 }
+OP_NOTES["scale"] = (
+    "Each target scales about its OWN centre (about='each', default; 'center' = 'each'). To "
+    "grow a group of objects together, e.g. a button rect and its label, list them all in ids "
+    "with about='selection' "
+    "(one shared centre; ids must share a parent). Siblings sitting on a target but not scaled "
+    "are named in `warnings`."
+)
 OP_NOTES["palette"] = OP_NOTES["replace_color"]
 
 #: Group -> op names, in presentation order.
@@ -199,7 +231,12 @@ def op_reference(name: str) -> dict[str, Any]:
         "example": OP_EXAMPLES[name],
         "note": " ".join(
             [
-                "fields ending in ? are optional; 'ids' can be replaced by 'select'.",
+                "fields ending in ? are optional"
+                + (
+                    f"; 'ids' can be replaced by {SELECT_DOC}."
+                    if "select" in cls.model_fields
+                    else "."
+                ),
                 OP_NOTES.get(name, ""),
             ]
         ).strip(),
@@ -235,8 +272,8 @@ def ops_index() -> dict[str, Any]:
             group: {n: " ".join((models[n].__doc__ or "").split()).split(". ")[0] for n in names}
             for group, names in OP_GROUPS.items()
         },
-        "targets": "ops that act on objects take ids=[...] or select={tag,fill,stroke,text,"
-        "id_prefix,bbox}; '$<n>' names the id op n created",
+        "targets": f"ops that act on objects take ids=[...] or {SELECT_DOC}; "
+        "'$<n>' names the id op n created",
         "more": "help(op=NAME) gives fields and an example",
     }
 

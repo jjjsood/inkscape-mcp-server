@@ -49,13 +49,13 @@ Operator-tunable limits / gates (all optional, env-overridable):
 Risk class: high
 Key params: doc_id: string, ops: array, render: string, dry_run: boolean, detail: string, approval_token: ['string', 'null']
 Description:
-    Change a document with typed ops in ONE atomic call (all or nothing; snapshot_id = state BEFORE it; undo with history): create shapes, restyle, move, group, text, compose, optimize. Refer to an op's new object as '$<op index>'; target existing ones with ids=[...] or select={tag,fill,...}. render='inline' returns a PNG; dry_run=true the plan. HIGH ops (delete, set_svg, insert_svg, path ops) need approval_token. help(op=NAME) shows fields. Example: edit(doc_id, ops=[{'op':'create_rect','x':0,'y':0,'width':200,'height':100,'fill':'#36f','id':'bg'},{'op':'fill','ids':['$0'],'color':'#f63'}], render='inline')
+    Change a document with typed ops in ONE atomic call (all or nothing; snapshot_id = state BEFORE it; undo with history): create shapes, restyle, move, group, text, compose, optimize. Refer to an op's new object as '$<op index>'; target existing ones with ids=[...] or select={tag,fill,...}. render='inline' returns a PNG; dry_run=true the plan. HIGH ops (delete, set_svg, insert_svg, path ops) need approval_token. hits = per-op match counts. help(op=NAME) shows fields. Example: edit(doc_id, ops=[{'op':'create_rect','x':0,'y':0,'width':200,'height':100,'fill':'#36f','id':'bg'},{'op':'fill','ids':['$0'],'color':'#f63'}], render='inline')
 
 #### open
 Risk class: medium
 Key params: path: ['string', 'null'], svg: ['string', 'null'], canvas: object | null, from_live: object | null, ops: ['array', 'null'], render: string, detail: string, approval_token: ['string', 'null']
 Description:
-    Start working: returns a doc_id. Give exactly ONE source: path (existing SVG in the workspace), svg (SVG text), canvas {width,height,viewBox?,background?} (blank page) or from_live {dest_path} (save the live Inkscape canvas into the workspace). Optional `ops` run the first edit in the same call (same format as edit); render='inline' returns a PNG (of the opened page when there are no ops). Example: open(canvas={'width':800,'height':600,'background':'#fff'}, ops=[{'op':'create_circle','cx':400,'cy':300,'r':100,'fill':'#f63'}], render='inline')
+    Start working: returns a doc_id. Give exactly ONE source: path (existing SVG in the workspace), svg (SVG text), canvas {width,height,viewBox?,background?} (blank page) or from_live {dest_path} (save the live Inkscape canvas into the workspace). Optional `ops` run the first edit in the same call (same format as edit); render='inline' returns a PNG (of the opened page when there are no ops). Example: open(canvas={'width':800,'height':600}, ops=[{'op':'create_circle','cx':400,'cy':300,'r':100,'fill':'#f63'}], render='inline')
 
 ### Inspect
 
@@ -63,13 +63,13 @@ Description:
 Risk class: low
 Key params: doc_id: string | array, include: ['array', 'null'], select: object | null, detail: string, limit: integer, series: ['string', 'null']
 Description:
-    Read-only view of one document (or several: pass a list of doc_ids). `include` picks sections: summary (default), objects, tree, layers, styles, fonts, assets, validate, quality, snapshots, frames. `select` filters `objects` (tag, fill, stroke, text, id_prefix, bbox) so you need no separate find call; giving only `select` returns just the objects, as [id, tag, bbox, fill] rows capped by `limit` (truncated=true when cut). detail: ids | summary | full. Example: inspect(doc_id, select={'tag': 'rect'})
+    Read-only view of one document (or several: pass a list of doc_ids). `include` picks sections: summary (default), objects, tree, layers, styles, fonts, assets, validate, quality, snapshots, frames. quality = validity/hygiene, not content; several doc_ids add consistency (viewBox, stroke, id naming). `select` filters `objects` (tag, fill, stroke, text, id_prefix, bbox) so you need no separate find call; giving only `select` returns just the objects, as [id, tag, bbox, fill] rows capped by `limit` (truncated=true when cut). detail: ids | summary | full (full adds stroke, text, transform). Example: inspect(doc_id, select={'tag': 'rect'})
 
 #### render
 Risk class: low
 Key params: doc_id: string, target: string, object_id: ['string', 'null'], width_px: ['integer', 'null'], series: ['string', 'null'], label: ['string', 'null'], background: ['string', 'null']
 Description:
-    Render the document as a PNG you can see inline. target='page' (default): the whole page; 'object': a zoomed view of one object, clipped to its box (needs object_id; to view, not resize); 'frame': the next numbered frame of a `series` (a screenshot log; optional `label`). width_px sets the raster width. background (CSS colour such as '#333', default none = transparent) fills the transparent areas, e.g. to see white shapes. Use it after edits to check the result (edit(render='inline') already includes one render). Example: render(doc_id, target='object', object_id='logo', width_px=512)
+    Render the document as a PNG you can see inline. target='page' (default): the whole page; 'object': a zoomed view of one object, clipped to its box (needs object_id; to view, not resize); 'frame': the next numbered frame of a `series` (screenshot log; `series`/`label` only here). width_px sets the raster width. background (CSS colour like '#333') fills transparent areas; default transparent, but a white-only render gets '#333' unless you pass background ('none' = raw). Use it after edits to check the result (edit(render='inline') already includes one render). Example: render(doc_id, target='object', object_id='logo', width_px=512)
 
 ### Export
 
@@ -77,15 +77,15 @@ Description:
 Risk class: high
 Key params: doc_id: string | array, targets: array, out_dir: ['string', 'null'], name_prefix: ['string', 'null'], byte_budget: ['integer', 'null'], dry_run: boolean, approval_token: ['string', 'null']
 Description:
-    Write results to files in the workspace. `targets` is a list of: {kind:'file', format:'png|pdf|svg', object_id?, width_px?}, {kind:'profile', name:'web|icons|print', ...} or {kind:'save_as', dest_path, overwrite?} (dest_path workspace-relative; out_dir: file/profile only, defaults to save_as's folder). doc_id may be a list to export a set (files are prefixed with each doc_id). dry_run=true plans and projects sizes without writing; byte_budget caps each doc's total. Returns each artifact's workspace path, size and pixel dimensions. Example: export(doc_id, targets=[{'kind':'file','format':'png','width_px':1024},{'kind':'file','format':'svg'}])
+    Write results to workspace files. `targets`: {kind:'file', format:'png|pdf|svg', object_id?, width_px?}, {kind:'profile', name:'web|icons|print'} or {kind:'save_as', dest_path, overwrite?}. Paths are relative to the WORKSPACE ROOT, not the document's folder. out_dir is a top-level arg (never inside a target) for file/profile outputs; default: the save_as folder, else the source's folder. doc_id may be a list. name_prefix tags file names. dry_run=true projects sizes; byte_budget caps each doc's total. Returns each artifact's root-relative path and size. Example: export(doc_id, targets=[{'kind':'file','format':'png','width_px':1024}])
 
 ### History
 
 #### history
 Risk class: medium
-Key params: doc_id: string, action: string, snapshot_id: ['string', 'null'], label: ['string', 'null']
+Key params: doc_id: string, action: string, snapshot_id: ['string', 'null'], label: ['string', 'null'], steps: integer, operation_id: ['string', 'null'], approval_token: ['string', 'null'], dry_run: boolean
 Description:
-    Undo/redo safety net. Every edit already writes one snapshot of the state BEFORE that edit (restoring it undoes that edit and all later ones). action='list' shows them; 'create' checkpoints now (optional label); 'restore' rolls the working copy back to `snapshot_id` (itself reversible: it snapshots first); 'prune' reclaims old snapshots and live frames; 'reload' re-reads the source file under the same doc_id (pre-reload snapshot taken). Example: history(doc_id, action='restore', snapshot_id='snap-0003')
+    Undo/redo safety net. Every edit snapshots the state BEFORE it. action='undo' (optional steps=N) reverts the last edit(s); call again to go further back; itself reversible. 'list' shows snapshots; 'create' checkpoints now (optional label); 'restore' + `snapshot_id` rolls back to it (reversible); 'restore_file' + `operation_id` + `approval_token` (HIGH) puts back a file an export save_as overwrote (dry_run=true previews); 'prune' reclaims old snapshots; 'reload' re-reads the source file. To undo, use 'undo' or the `undo` call from a result verbatim; never guess a snapshot_id. Example: history(doc_id, action='undo')
 
 ### Live
 
@@ -119,7 +119,7 @@ Description:
 
 ## Edit ops
 
-ops that act on objects take ids=[...] or select={tag,fill,stroke,text,id_prefix,bbox}; '$<n>' names the id op n created.
+ops that act on objects take ids=[...] or select={tag, fill, stroke, text, id_prefix, bbox:{x,y,width,height}, accurate_bbox, max_matches} (all given filters must match); bbox matches objects whose box INTERSECTS it (touching counts, not 'fully inside'); path/text/group boxes need accurate_bbox=true; max_matches goes INSIDE select (default 64, up to 1024), more matches reject the op; '$<n>' names the id op n created.
 help(op=NAME) gives fields and an example.
 
 ### create
@@ -282,8 +282,8 @@ Example: {"op":"move","ids":["bg"],"dx":10,"dy":-5}
 
 #### scale
 Risk: medium
-Does: Scale each target by `sx` (and `sy`, default `sx`) about its own centre.
-Fields: ids: list[str] | None?, select: Selector | None?, sx: float, sy: float | None?
+Does: Scale each target by `sx` (and `sy`, default `sx`) about its own centre. `about='selection'` scales all targets about ONE shared centre (the centre of their combined box) instead, so a button and its label grow together. Siblings that sit on a target but are not targeted are reported in `warnings`.
+Fields: ids: list[str] | None?, select: Selector | None?, sx: float, sy: float | None?, about: Literal['each', 'selection']?
 Example: {"op":"scale","ids":["bg"],"sx":1.5}
 
 #### rotate
@@ -332,13 +332,13 @@ Example: {"op":"insert_svg","svg":"<circle xmlns=\"http://www.w3.org/2000/svg\" 
 
 #### place
 Risk: medium · creates an id
-Does: Place another document (or one of its objects) here at `(x, y)` scaled by `scale`. A same-document source is read from the CURRENT in-memory state; another document is read from its saved working copy. The placed content is wrapped in a new `<g>` (the created id).
+Does: Place another document (or one of its objects) here at `(x, y)` scaled by `scale`. A same-document source is read from the CURRENT in-memory state; another document is read in its CURRENT state (every edit so far). The placed content is wrapped in a new `<g>` (the created id). The placed content is a COPY; later edits of the source warn that it is stale.
 Fields: source_doc_id: str, source_id: str | None?, x: float, y: float, scale: float?
 Example: {"op":"place","source_doc_id":"doc-other","x":10,"y":10,"scale":0.5}
 
 #### grid
 Risk: medium · creates an id
-Does: Lay documents (`doc_ids`) or objects of one document (`source_doc_id` + `source_ids`) out in a `rows` x `cols` grid of `cell`-sized cells in THIS document (sources are read from their saved working copies).
+Does: Lay documents (`doc_ids`) or objects of one document (`source_doc_id` + `source_ids`) out in a `rows` x `cols` grid of `cell`-sized cells in THIS document (each source is read in its CURRENT state, every edit so far included; the sheet keeps copies: every later edit of a source warns that the copy is stale, and `inspect` on the sheet lists `stale_sources`).
 Fields: rows: int, cols: int, cell: float, doc_ids: list[str] | None?, source_doc_id: str | None?, source_ids: list[str] | None?, gap: float?, scale_to_fit: bool?, padding: float?
 Example: {"op":"grid","doc_ids":["doc-a","doc-b"],"rows":1,"cols":2,"cell":128}
 
@@ -346,43 +346,43 @@ Example: {"op":"grid","doc_ids":["doc-a","doc-b"],"rows":1,"cols":2,"cell":128}
 
 #### simplify
 Risk: high · needs approval_token
-Does: Simplify the targeted paths (fewer nodes; lossy).
+Does: Simplify the targeted paths (fewer nodes; lossy). Ids are unchanged; nothing is created.
 Fields: ids: list[str] | None?, select: Selector | None?
 Example: {"op":"simplify","ids":["p1"]}
 
 #### union
 Risk: high · needs approval_token · creates an id
-Does: Boolean union of >= 2 targets into one path (the bottom-most id survives).
+Does: Boolean union of >= 2 targets into one path (the bottom-most object's id and style survive).
 Fields: ids: list[str] | None?, select: Selector | None?
 Example: {"op":"union","ids":["p1","p2"]}
 
 #### difference
 Risk: high · needs approval_token · creates an id
-Does: Boolean difference: the bottom-most target minus the others (its id survives).
+Does: Boolean difference: the bottom-most target minus the others (its id and style survive).
 Fields: ids: list[str] | None?, select: Selector | None?
 Example: {"op":"difference","ids":["p1","p2"]}
 
 #### combine
 Risk: high · needs approval_token · creates an id
-Does: Combine >= 2 paths into one compound path (the bottom-most id survives).
+Does: Combine >= 2 paths into one compound path (the bottom-most id survives but the result carries the TOP-most object's style, as Inkscape's Path > Combine does).
 Fields: ids: list[str] | None?, select: Selector | None?
 Example: {"op":"combine","ids":["p1","p2"]}
 
 #### break_apart
-Risk: high · needs approval_token
-Does: Break compound paths into their sub-paths.
+Risk: high · needs approval_token · creates an id
+Does: Break compound paths into their sub-paths; `created` lists every resulting piece (the count). A dry_run cannot predict piece ids (needs the engine).
 Fields: ids: list[str] | None?, select: Selector | None?
 Example: {"op":"break_apart","ids":["p1"]}
 
 #### stroke_to_path
-Risk: high · needs approval_token
-Does: Convert strokes to filled outline paths.
+Risk: high · needs approval_token · creates an id
+Does: Convert strokes to filled outline paths; the outline keeps the target's id and is listed in `created` (dry_run too).
 Fields: ids: list[str] | None?, select: Selector | None?
 Example: {"op":"stroke_to_path","ids":["p1"]}
 
 #### cleanup
 Risk: high · needs approval_token
-Does: Clean up the targeted paths (alias of simplify in Inkscape 1.4).
+Does: Clean up the targeted paths (alias of simplify in Inkscape 1.4). Ids are unchanged; nothing is created.
 Fields: ids: list[str] | None?, select: Selector | None?
 Example: {"op":"cleanup","ids":["p1"]}
 
