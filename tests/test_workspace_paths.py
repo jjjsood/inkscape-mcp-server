@@ -103,9 +103,7 @@ def test_read_path_missing_inside_reports_not_found(root: Path) -> None:
     assert str(exc.value) == "path rejected: file not found"
 
 
-def test_read_path_missing_outside_reports_outside_not_oracle(
-    root: Path, tmp_path: Path
-) -> None:
+def test_read_path_missing_outside_reports_outside_not_oracle(root: Path, tmp_path: Path) -> None:
     """A NONEXISTENT out-of-sandbox path reports `outside workspace`, not `file not found`.
 
     Reporting `file not found` only for missing-outside paths (while existing-outside paths
