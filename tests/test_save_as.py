@@ -221,7 +221,7 @@ def test_symlink_into_the_state_dir_creates_nothing_there(doc) -> None:
 
 def test_save_works_without_o_nofollow(doc, monkeypatch) -> None:
     """Windows has no os.O_NOFOLLOW: no AttributeError, symlink still refused explicitly."""
-    monkeypatch.delattr(os, "O_NOFOLLOW")
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
     monkeypatch.setattr(save_mod, "HAS_DIR_FD_MKDIR", False)  # import-time on real Windows
     doc_id, root = doc
     save_document_as(doc_id, "plain.svg")

@@ -278,7 +278,7 @@ def doc_not_found_message(given: str | None = None, *, limit: int = 5) -> str:
             e
             for e in docs
             if e.source_path != "document.svg"
-            and norm in (e.source_path, f"{e.root.rstrip('/')}/{e.source_path}")
+            and norm in (e.source_path, (Path(e.root) / e.source_path).as_posix())
         ]
         if len(hits) == 1:
             return (

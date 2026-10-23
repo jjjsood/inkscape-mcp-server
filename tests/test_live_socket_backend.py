@@ -200,10 +200,11 @@ def test_discover_rendezvous_skips_non_private_and_symlinked_files(
     rv.symlink_to(real)  # a planted symlink must not be followed
     assert discover_rendezvous(settings) is None
 
-    rv.unlink()
-    _write_rendezvous(rv, 5000, "tok")
-    rv.chmod(0o644)  # group/world-readable → untrusted
-    assert discover_rendezvous(settings) is None
+    if hasattr(os, "getuid"):  # POSIX mode bits; Windows %TEMP% is per-user (no mode check)
+        rv.unlink()
+        _write_rendezvous(rv, 5000, "tok")
+        rv.chmod(0o644)  # group/world-readable → untrusted
+        assert discover_rendezvous(settings) is None
 
 
 @pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX owner check")
@@ -241,7 +242,8 @@ def test_helper_rendezvous_write_replaces_planted_file_and_symlink(
     rv.write_text("planted", encoding="utf-8")
     rv.chmod(0o666)
     helper.InkscapeMcpLive._write_rendezvous(None, 4321, "secret")
-    assert rv.stat().st_mode & 0o777 == 0o600
+    if hasattr(os, "getuid"):  # POSIX mode bits only
+        assert rv.stat().st_mode & 0o777 == 0o600
     assert json.loads(rv.read_text(encoding="utf-8"))["token"] == "secret"
 
     victim = tmp_path / "victim.txt"

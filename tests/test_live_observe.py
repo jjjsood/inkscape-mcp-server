@@ -350,5 +350,5 @@ def test_arm_launch_argv_is_a_fixed_arglist() -> None:
         "/usr/bin/inkscape",
         "--with-gui",
         f"--actions={socket_backend.HELPER_ACTION_ID}",
-        "/tmp/doc.svg",
+        str(Path("/tmp/doc.svg")),
     ]

@@ -283,8 +283,10 @@ def _read_private_file(path: Path) -> bytes:
     on POSIX it must be owned by us with no group/other bits. Windows %TEMP% is per-user, so no
     owner check there. Any violation raises OSError (caller skips the candidate).
     """
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    fd = os.open(path, flags)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow and os.path.islink(path):  # Windows: no O_NOFOLLOW, refuse a link explicitly
+        raise OSError("rendezvous is a symlink")
+    fd = os.open(path, os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0))
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):

@@ -64,6 +64,7 @@ def _installed(family: str) -> bool:
 @pytest.mark.parametrize(
     ("text", "match"),
     [("bad\x00null", "control characters"), ("x" * 100_001, "text too long")],
+    ids=["nul", "too-long"],  # a 100k-char id overflows PYTEST_CURRENT_TEST on Windows
 )
 def test_create_text_rejects_unsafe_content(tool_ws, doc, text, match) -> None:
     _rejected(tool_ws, doc, {"op": "create_text", "x": 0, "y": 0, "text": text}, match=match)

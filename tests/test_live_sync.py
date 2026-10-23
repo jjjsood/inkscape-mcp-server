@@ -286,7 +286,7 @@ def test_sync_falls_back_to_replace_without_hardlinks_or_nofollow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     mgr, settings = _connected(tmp_path, monkeypatch)
-    monkeypatch.delattr(os, "O_NOFOLLOW")
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
 
     def no_link(src: object, dst: object) -> None:
         raise PermissionError("hard links unsupported")
