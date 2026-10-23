@@ -56,6 +56,7 @@ from typing import Any
 #: adds 2 more (place_document, live_arm_socket) → 97. Adds the `apply_edits` typed batch
 #: tool → 98. Adds the `transform_objects` selector→op tool → 99. A future epic that changes
 #: the tool/prompt/resource set bumps the matching constant; the diff pinpoints what moved.
+#: These counts are the FULL surface (live + advanced mode ON); see `_run`.
 EXPECTED_TOOLS = 99
 #: 5 prior prompts (export/recolor x4 + live_canvas_assist) + 2 authoring
 #: prompts (compose_artwork, restyle_artwork) = 7. No new @mcp.tool — tool count is unchanged.
@@ -290,6 +291,14 @@ async def _run() -> int:
         import os
 
         os.environ["INKSCAPE_MCP_WORKSPACE_ROOTS"] = tmp
+        # Assert against the FULL surface (the EXPECTED_* counts above), mirroring
+        # tests/conftest.py: progressive disclosure (`tool_tags`) only NARROWS `tools/list`, hiding
+        # the live group when `live_enabled` is off and the advanced `paths`/`actions` group +
+        # `run_raw_action` (12 tools) when `raw_action_enabled` is off (the default). The smoke also
+        # calls `boolean_union` and `list_actions`, so both flags are forced ON before the server
+        # reads its settings.
+        os.environ["INKSCAPE_MCP_LIVE_ENABLED"] = "1"
+        os.environ["INKSCAPE_MCP_RAW_ACTION_ENABLED"] = "1"
         fixture = Path(tmp) / "fixture.svg"
         fixture.write_text(_FIXTURE_SVG, encoding="utf-8")
 
