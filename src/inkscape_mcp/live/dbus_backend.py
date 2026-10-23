@@ -298,7 +298,9 @@ class DBusTransport(LiveTransport):
         live process's main loop). Sets the instance's export options as a side effect (the action
         surface is stateful) but never mutates the document.
         """
-        self._activate("export-filename", _variant_string(str(out_path)))
+        # POSIX separators: a Windows path's backslashes would trip the GVariant guard, and GLib
+        # (hence Inkscape) accepts ``C:/...`` forward-slash paths on Windows.
+        self._activate("export-filename", _variant_string(out_path.as_posix()))
         self._activate("export-type", _variant_string(fmt))
         if plain_svg:
             self._activate("export-plain-svg", _variant_bool(True))
