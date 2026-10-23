@@ -14,8 +14,10 @@ agent-ready over STDIO.
   `os.O_DIRECTORY` / `os.O_NOFOLLOW` / `dir_fd`, so every tool that creates an output directory
   (`export_document`, `create_icon_set`, `save_document_as`, `live_sync_to_workspace`, ...) failed
   with `module 'os' has no attribute 'O_DIRECTORY'`. Platforms without `dir_fd` now use a path-based
-  fallback that still refuses symlinked / junctioned or escaping components; file writes add
-  `O_BINARY` and drop `O_NOFOLLOW` only where it does not exist.
+  fallback that refuses symlinked / junctioned or escaping components (it checks after each
+  `mkdir`, so a junction raced in mid-chain can leave at most one empty directory outside; files
+  are still only written inside the sandbox); file writes add `O_BINARY` and drop `O_NOFOLLOW`
+  only where it does not exist. A failing `mkdir` no longer leaks the host path in its error.
 
 ### Added
 - **Headless document lifecycle** — `open_document` / `create_document` into tracked working copies

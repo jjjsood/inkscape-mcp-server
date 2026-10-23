@@ -85,12 +85,12 @@ def export_batch(
        When to use: exporting many sizes/formats/objects in one call. For a single export use
        `export_document` / `export_object`; for a standard icon set use `create_icon_set`.
 
-       Key params: `specs` is a typed list (each: `format` png/pdf/svg, optional `width_px`, optional
-       `object_id` for a single object). Bounded: at most a fixed number of specs per call and a
-       total-output byte budget (`byte_budget`, default: the per-document artifact budget).
+       Key params: `specs` is a typed list (each: `format` png/pdf/svg, optional `width_px`,
+       optional `object_id` for a single object). Bounded: at most a fixed number of specs per call
+       and a total-output byte budget (`byte_budget`, default: the per-document artifact budget).
        `dry_run=True` (DEFAULT) validates and returns the plan + projected sizes + `within_budget`,
-       writing nothing; `dry_run=False` refuses cleanly if the projection exceeds the budget. `out_dir`
-    writes into a caller-chosen dir — relative anchors to the workspace ROOT,
+       writing nothing; `dry_run=False` refuses cleanly if the projection exceeds the budget.
+    `out_dir` writes into a caller-chosen dir — relative anchors to the workspace ROOT,
        sandbox-checked (out-of-workspace rejected "path rejected: outside workspace"); `name_prefix`
        tags each file.
 

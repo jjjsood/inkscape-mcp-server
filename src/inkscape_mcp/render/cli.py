@@ -58,6 +58,7 @@ import os
 import re
 import secrets
 import struct
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -616,13 +617,13 @@ def _resolve_out_dir(out_dir: str | None, entry: DocEntry, settings: Settings) -
         A relative `out_dir` anchors to the WORKSPACE ROOT (`entry.root`), NOT the process CWD
     . Creation is TOCTOU-safe (sec.12): the longest EXISTING prefix is resolved (symlinks
         followed) and `commonpath`-checked against the configured roots BEFORE any side-effect — an
-        escape raises `SandboxViolation("path rejected: outside workspace")` with no directory created.
-        Missing components are then created relative to a directory file descriptor opened on that
-        validated-contained ancestor, descending with `O_NOFOLLOW` so a symlink swapped into the path
-        after the check cannot redirect the `mkdir` outside the sandbox. A literal `..` component is
-        refused outright. The result is re-validated through `resolve_write_path` (the single sandbox
-        choke point with the final-component symlink guard). Returns the validated real directory, or
-        None when `out_dir` is omitted (managed-dir back-compat).
+        escape raises `SandboxViolation("path rejected: outside workspace")` with no directory
+        created. Missing components are then created relative to a directory file descriptor opened
+        on that validated-contained ancestor, descending with `O_NOFOLLOW` so a symlink swapped into
+        the path after the check cannot redirect the `mkdir` outside the sandbox. A literal `..`
+        component is refused outright. The result is re-validated through `resolve_write_path` (the
+        single sandbox choke point with the final-component symlink guard). Returns the validated
+        real directory, or None when `out_dir` is omitted (managed-dir back-compat).
     """
     if out_dir is None:
         return None
@@ -676,7 +677,9 @@ def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
     `O_RDONLY|O_DIRECTORY|O_NOFOLLOW`, so if any component is (or is raced into) a symlink the
     `open` fails with `ELOOP` and creation aborts — the side-effect can never escape the base dir.
     """
-    if not HAS_DIR_FD_MKDIR:
+    # The explicit platform test lets mypy (--platform win32) treat the fd-relative code below as
+    # unreachable there; HAS_DIR_FD_MKDIR covers any other platform lacking dir_fd support.
+    if sys.platform == "win32" or not HAS_DIR_FD_MKDIR:
         portable_mkdir_chain(base_real_dir, components, "out_dir")
         return
     dir_fd = os.open(base_real_dir, os.O_RDONLY | os.O_DIRECTORY)

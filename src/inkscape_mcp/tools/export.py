@@ -333,20 +333,21 @@ def render_preview(
 ) -> PreviewResult | ToolResult:
     """Render a PNG preview of the whole document into the artifacts dir.
 
-        When to use: a quick visual check of the whole document. For a final file use `export_document`;
-        for one object use `export_object`; for an ordered run series use `capture_frame`.
+        When to use: a quick visual check of the whole document. For a final file use
+        `export_document`; for one object use `export_object`; for an ordered run series use
+        `capture_frame`.
 
-        Key params: `width_px` scales the raster (height follows the document aspect ratio); omit for
-        intrinsic size. Oversized requests are rejected before Inkscape runs. `name` tags the file
-        (successive calls do NOT clobber, — each render gets a unique frame name). INLINE RASTER
-    : by default the PNG is also returned as an MCP image block so the agent SEES it without
+        Key params: `width_px` scales the raster (height follows the document aspect ratio); omit
+        for intrinsic size. Oversized requests are rejected before Inkscape runs. `name` tags the
+        file (successive calls do NOT clobber, — each render gets a unique frame name). INLINE
+    RASTER: by default the PNG is also returned as an MCP image block so the agent SEES it without
         a second `Read` — do NOT `Read` the returned path (it is server-side, not on your
         filesystem); gated by `max_output_bytes` (~5 MiB default) and skipped for an oversized
         render; `inline=False` returns only the structured result.
 
-        Return shape: `PreviewResult` — `artifact_path` / `workspace_relative_path` (same root-relative
-        value), `format`, `width_px`/`height_px` (TRUE on-disk size), `stale`. With an inline
-        image, a `ToolResult` carrying the same structured fields plus the image block.
+        Return shape: `PreviewResult` — `artifact_path` / `workspace_relative_path` (same
+        root-relative value), `format`, `width_px`/`height_px` (TRUE on-disk size), `stale`. With an
+        inline image, a `ToolResult` carrying the same structured fields plus the image block.
 
         Example: `render_preview(doc_id, width_px=512)`
 
@@ -397,8 +398,8 @@ def capture_frame(
         Key params: `series` (sanitized; defaults to `run`) groups frames into a folder under
         `artifacts/frames/<series>/`; the index is derived from the filesystem (highest existing
         `frame-NNN` + 1) — monotonic, survives a restart, never clobbers. `label` is folded into the
-        frame name. Renders the whole canvas exactly like `render_preview` (no UI chrome). INLINE RASTER
-    : the PNG is returned inline by default (gated by `max_output_bytes`); `inline=False`
+        frame name. Renders the whole canvas exactly like `render_preview` (no UI chrome). INLINE
+    RASTER: the PNG is returned inline by default (gated by `max_output_bytes`); `inline=False`
         returns only the structured result. Do NOT `Read` the returned path — view the inline image
         (the path is server-side, workspace-relative, not on your filesystem).
 

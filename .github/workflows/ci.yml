@@ -67,7 +67,7 @@ jobs:
       # tool/prompt counts) and a resource-read serialization break (E9-01). Headless-safe: the
       # Inkscape-gated calls skip when no binary is on PATH, so the counts + resource reads +
       # pure-DOM tools gate the build on all three OS here.
-      - name: Surface smoke — full MCP primitive surface (64/5/13)
+      - name: Surface smoke — full MCP primitive surface (99/7/16)
         run: uv run python scripts/ci_surface_smoke.py
 
   # ---------------------------------------------------------------------------
@@ -81,8 +81,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Inkscape
+      # Ubuntu's own archive ships Inkscape 1.2.x, below the server's 1.3.0 floor
+      # (runtime/probe.py MINIMUM_VERSION) and the 1.4.x the suite is verified against; install
+      # the current stable release from the official Inkscape PPA instead.
+      - name: Install Inkscape (stable PPA)
         run: |
+          sudo add-apt-repository -y ppa:inkscape.dev/stable
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends inkscape
           inkscape --version
