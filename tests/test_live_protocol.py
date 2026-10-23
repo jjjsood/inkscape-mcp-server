@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
 
 import pytest
 
@@ -140,9 +141,13 @@ def test_parse_response_requires_ok_discriminator() -> None:
 def test_recv_message_deeply_nested_json_is_a_protocol_error() -> None:
     a, b = socket.socketpair()
     try:
-        a.sendall(b"[" * 100_000 + b"\n")  # RecursionError in json must not escape the contract
+        # RecursionError in json must not escape the contract. Send from a thread: 100 kB exceeds
+        # the macOS socketpair buffer, so a same-thread sendall would block before recv runs.
+        sender = threading.Thread(target=a.sendall, args=(b"[" * 100_000 + b"\n",))
+        sender.start()
         with pytest.raises(ProtocolError):
             recv_message(b)
+        sender.join()
     finally:
         a.close()
         b.close()
