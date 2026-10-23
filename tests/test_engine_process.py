@@ -60,6 +60,27 @@ def test_multiline_output_framed_without_bleeding_into_next_command() -> None:
         p.shutdown()
 
 
+#: The same fake with Windows text-mode stdout: every ``\n`` it writes reaches the pipe as ``\r\n``
+#: (what `inkscape --shell` and the fake both emit on a Windows host).
+FAKE_CRLF = [
+    sys.executable,
+    "-c",
+    "import runpy, sys; sys.stdout.reconfigure(newline='\\r\\n'); "
+    f"runpy.run_path({FAKE[1]!r}, run_name='__main__')",
+]
+
+
+def test_crlf_output_frames_like_lf() -> None:
+    p = EngineProcess(argv=FAKE_CRLF, settings=Settings(process_timeout_s=10.0))
+    p.start()
+    try:
+        assert p.execute("select-by-id:r1").output_lines == []
+        assert p.execute("query-all").output_lines == ["svg1,10,10,70,20", "r1,10,10,30,20"]
+        assert p.execute("query-x").output_lines == ["10"]
+    finally:
+        p.shutdown()
+
+
 def test_unknown_action_surfaces_engine_action_error() -> None:
     p = _proc()
     p.start()
