@@ -154,4 +154,4 @@ agent-ready over STDIO.
   `INKSCAPE_MCP_TOOL_DESC`) are removed; visibility is controlled only by `INKSCAPE_MCP_LIVE_ENABLED`
   and `INKSCAPE_MCP_RAW_ACTION_ENABLED`. The `run_raw_action` tool is now `actions(action='raw')`.
 
-[0.1.0]: https://github.com/jjjsood/inkscape-mcp/releases/tag/v0.1.0
+[0.1.0]: https://github.com/jjjsood/inkscape-mcp-server/releases/tag/v0.1.0

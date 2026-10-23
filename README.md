@@ -3,7 +3,7 @@
 **A Model Context Protocol server that lets AI agents inspect, edit, validate, render, and export
 SVG documents — safely, reversibly, and without a GUI.**
 
-[![CI](https://github.com/jjjsood/inkscape-mcp/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
+[![CI](https://github.com/jjjsood/inkscape-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/jjjsood/inkscape-mcp-server/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-%E2%89%A53.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastMCP](https://img.shields.io/badge/MCP-FastMCP%203.x-5A45FF)](https://github.com/jlowin/fastmcp)
 [![Inkscape](https://img.shields.io/badge/Inkscape-1.4.x-000000?logo=inkscape&logoColor=white)](https://inkscape.org/)
@@ -59,10 +59,10 @@ way back.
 
 ```bash
 # Run without installing
-uvx --from "git+https://github.com/jjjsood/inkscape-mcp.git" inkscape-mcp
+uvx --from "git+https://github.com/jjjsood/inkscape-mcp-server.git" inkscape-mcp
 
 # Or install the console script persistently
-pipx install "git+https://github.com/jjjsood/inkscape-mcp.git"
+pipx install "git+https://github.com/jjjsood/inkscape-mcp-server.git"
 ```
 
 The server speaks MCP over **STDIO** and waits for a client to connect.
@@ -77,7 +77,7 @@ STDIO-capable host):
   "mcpServers": {
     "inkscape": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/jjjsood/inkscape-mcp.git", "inkscape-mcp"],
+      "args": ["--from", "git+https://github.com/jjjsood/inkscape-mcp-server.git", "inkscape-mcp"],
       "env": {
         "INKSCAPE_MCP_WORKSPACE_ROOTS": "/absolute/path/to/your/svgs"
       }
@@ -320,7 +320,7 @@ Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 ## Development
 
 ```bash
-git clone https://github.com/jjjsood/inkscape-mcp.git
+git clone https://github.com/jjjsood/inkscape-mcp-server.git
 cd inkscape-mcp
 uv sync                              # runtime + dev dependencies
 uv run inkscape-mcp                  # start the STDIO server
