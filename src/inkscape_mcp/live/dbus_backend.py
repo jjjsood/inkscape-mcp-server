@@ -325,7 +325,8 @@ class DBusTransport(LiveTransport):
         tmpdir = Path(tempfile.mkdtemp(prefix="inkscape-mcp-live-"))
         # Fail fast with a clear message if the temp root itself carries characters that cannot be
         # embedded in a GVariant literal (e.g. a quote in TMPDIR), rather than a late opaque guard.
-        if _GVARIANT_UNSAFE_RE.search(str(tmpdir)):
+        # Checked in the POSIX form `_export_to` actually sends (Windows backslashes are not sent).
+        if _GVARIANT_UNSAFE_RE.search(tmpdir.as_posix()):
             shutil.rmtree(tmpdir, ignore_errors=True)
             raise LiveError("temp directory path is not safe for a DBus export (check TMPDIR)")
         try:
