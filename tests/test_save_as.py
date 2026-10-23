@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from fastmcp.exceptions import ToolError
 
+from inkscape_mcp.document import save as save_mod
 from inkscape_mcp.document.save import SaveResult, save_document_as
 from inkscape_mcp.registry import get_registry
 from inkscape_mcp.workspace import sandbox
@@ -28,6 +29,14 @@ OUTSIDE = "path rejected: outside workspace"
 def doc(tool_ws: Path) -> tuple[str, Path]:
     """`(doc_id, workspace_root)` of an open `logo.svg`."""
     return open_doc(tool_ws, "logo.svg", SVG), tool_ws
+
+
+@pytest.fixture(params=["dir_fd", "path_based"])
+def fd_mode(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Run a test on the fd-relative branch and on the path-based (Windows) one."""
+    if request.param == "path_based":
+        monkeypatch.setattr(save_mod, "HAS_DIR_FD_MKDIR", False)
+    return str(request.param)
 
 
 def _save_records(root: Path, doc_id: str) -> list[dict]:
@@ -213,6 +222,7 @@ def test_symlink_into_the_state_dir_creates_nothing_there(doc) -> None:
 def test_save_works_without_o_nofollow(doc, monkeypatch) -> None:
     """Windows has no os.O_NOFOLLOW: no AttributeError, symlink still refused explicitly."""
     monkeypatch.delattr(os, "O_NOFOLLOW")
+    monkeypatch.setattr(save_mod, "HAS_DIR_FD_MKDIR", False)  # import-time on real Windows
     doc_id, root = doc
     save_document_as(doc_id, "plain.svg")
     assert (root / "plain.svg").read_bytes() == SVG
@@ -361,7 +371,7 @@ def test_overwrite_backs_up_old_bytes_outside_the_workspace_folder(doc) -> None:
     assert fresh.undo is None
 
 
-def test_overwrite_undo_restores_old_bytes_and_is_itself_reversible(tool_app, doc) -> None:
+def test_overwrite_undo_restores_old_bytes_and_is_itself_reversible(tool_app, doc, fd_mode) -> None:
     doc_id, root = doc
     dest = root / "taken.svg"
     dest.write_bytes(OLD)
@@ -527,7 +537,7 @@ def test_fifo_destination_is_refused(doc) -> None:
 
 
 @pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="needs O_NOFOLLOW")
-def test_symlinked_backups_dir_is_refused_on_write_and_restore(tool_app, doc) -> None:
+def test_symlinked_backups_dir_is_refused_on_write_and_restore(tool_app, doc, fd_mode) -> None:
     doc_id, root = doc
     dest = root / "existing.svg"
     dest.write_bytes(OLD)
@@ -543,6 +553,18 @@ def test_symlinked_backups_dir_is_refused_on_write_and_restore(tool_app, doc) ->
     with pytest.raises(ToolError, match="could not back up"):
         _overwrite(doc_id, dest)
     assert dest.read_bytes() == OLD and not list(outside.iterdir())
+
+
+def test_junctioned_backups_dir_is_refused_without_dir_fd(doc, monkeypatch) -> None:
+    """Windows: lstat reports a junction as a directory, so the path-based branch checks it."""
+    doc_id, root = doc
+    dest = root / "existing.svg"
+    dest.write_bytes(OLD)
+    monkeypatch.setattr(save_mod, "HAS_DIR_FD_MKDIR", False)
+    monkeypatch.setattr(Path, "is_junction", lambda self: self.name == "backups")
+    with pytest.raises(ToolError, match="could not back up"):
+        _overwrite(doc_id, dest)
+    assert dest.read_bytes() == OLD
 
 
 def test_open_creates_the_backups_dir(doc) -> None:

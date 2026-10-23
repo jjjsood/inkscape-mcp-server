@@ -135,7 +135,14 @@ def write_working_tree(entry: DocEntry, tree: etree._ElementTree) -> None:
     target = Path(entry.working_path)
     tmp = target.with_name(f".{target.name}.{secrets.token_hex(4)}.tmp")
     try:
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+        # Windows: no O_NOFOLLOW; O_BINARY keeps the bytes verbatim (no CRLF translation).
+        flags = (
+            os.O_CREAT
+            | os.O_EXCL
+            | os.O_WRONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_BINARY", 0)
+        )
         with os.fdopen(os.open(tmp, flags, 0o600), "wb") as fh:
             fh.write(data)
         os.replace(tmp, target)

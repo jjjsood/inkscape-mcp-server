@@ -40,6 +40,7 @@ import io
 import os
 import re
 import stat
+import sys
 from pathlib import Path
 
 from fastmcp.exceptions import ToolError
@@ -59,6 +60,7 @@ from inkscape_mcp.registry import DocEntry, Registry, doc_not_found_message, get
 from inkscape_mcp.validate import ValidationReport, validate_document
 from inkscape_mcp.workspace import sandbox
 from inkscape_mcp.workspace.paths import (
+    HAS_DIR_FD_MKDIR,
     SandboxViolation,
     anchor_to_root,
     ensure_parent_within_sandbox,
@@ -215,13 +217,6 @@ def _resolve_dest(dest_path: str, registry: Registry) -> Path:
 _OUTSIDE_MSG = "path rejected: outside workspace"
 
 
-def _dir_fd_ok() -> bool:
-    """True where `dir_fd` + no-follow directory opens exist (POSIX); else path-based I/O."""
-    return (
-        hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd
-    )
-
-
 _ALREADY_EXISTS_MSG = (
     "destination already exists; overwriting requires overwrite=True and an approval_token"
 )
@@ -244,7 +239,9 @@ def _open_parent(resolved_dest: Path) -> int | None:
     The dest is then opened relative to this fd, so a parent swapped to a symlink after
     `_resolve_dest` cannot redirect the write. None on platforms without `dir_fd` (path-based).
     """
-    if not _dir_fd_ok():
+    # The explicit platform test lets mypy (--platform win32) treat the fd-relative code below as
+    # unreachable there; HAS_DIR_FD_MKDIR covers any other platform lacking dir_fd support.
+    if sys.platform == "win32" or not HAS_DIR_FD_MKDIR:
         return None
     try:
         pfd = os.open(resolved_dest.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _BIN)
@@ -432,11 +429,12 @@ def _open_backup(root: Path, doc_id: str, name: str, flags: int, create: bool = 
     file relative to that fd; elsewhere the dir is `lstat`-checked. `create` makes `backups/`.
     """
     docs = sandbox.doc_dir(root, doc_id)
-    if not _dir_fd_ok():
+    if sys.platform == "win32" or not HAS_DIR_FD_MKDIR:
         folder = sandbox.backups_dir(root, doc_id)
         if create:
             folder.mkdir(exist_ok=True)
-        if not stat.S_ISDIR(os.lstat(folder).st_mode):
+        # lstat reports a Windows junction as a plain directory: refuse it explicitly.
+        if folder.is_junction() or not stat.S_ISDIR(os.lstat(folder).st_mode):
             raise OSError(errno.ENOTDIR, "backups is not a real directory")
         return os.open(folder / name, flags, 0o600)
     dfd = os.open(docs, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _BIN)
