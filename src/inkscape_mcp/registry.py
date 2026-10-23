@@ -107,7 +107,8 @@ class Registry:
         )
 
         try:
-            rel_source = str(resolved.relative_to(root))
+            # POSIX separators so registry.json is portable (`root / rel` re-joins on any OS).
+            rel_source = resolved.relative_to(root).as_posix()
         except ValueError:  # pragma: no cover - containment already guarantees this holds
             rel_source = resolved.name
 

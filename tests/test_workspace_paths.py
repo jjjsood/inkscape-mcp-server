@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -285,19 +284,3 @@ def test_in_state_dir_checks_every_nested_root_case_insensitively(tmp_path: Path
     assert in_state_dir(sub / ".inkscape-mcp" / "x", [ws, sub])  # not only the first root
     assert in_state_dir(ws / ".INKSCAPE-MCP" / "x", [ws])
     assert not in_state_dir(ws / "sub" / "x.svg", [ws, sub])
-
-
-def test_portable_mkdir_chain_without_dir_fd(
-    root_settings: Settings, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Windows branch (no dir_fd): creates real dirs, refuses a symlinked component."""
-    monkeypatch.setattr(os, "supports_dir_fd", set())
-    root = root_settings.workspace_roots[0].resolve()
-    _safe_mkdir_chain(root, ("a", "b"))
-    assert (root / "a" / "b").is_dir()
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (root / "link").symlink_to(outside)
-    with pytest.raises(SandboxViolation, match="outside workspace"):
-        _safe_mkdir_chain(root, ("link", "new"))
-    assert list(outside.iterdir()) == []

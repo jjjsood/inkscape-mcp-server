@@ -16,7 +16,7 @@ fastmcp-patterns error model); the offending raw path is kept only in the privat
 from __future__ import annotations
 
 import os
-import stat
+import sys
 from pathlib import Path
 
 from inkscape_mcp.config import Settings, get_settings
@@ -33,6 +33,60 @@ class SandboxViolation(Exception):
     def __init__(self, message: str, detail: str | None = None) -> None:
         super().__init__(message)
         self.detail = detail
+
+
+#: True where the fd-relative `_safe_mkdir_chain` works (POSIX). Windows has no `O_DIRECTORY` /
+#: `O_NOFOLLOW` and no `dir_fd` support for `os.open`/`os.mkdir`, so it takes the path-based
+#: fallback below.
+HAS_DIR_FD_MKDIR = (
+    hasattr(os, "O_DIRECTORY")
+    and hasattr(os, "O_NOFOLLOW")
+    and os.open in os.supports_dir_fd
+    and os.mkdir in os.supports_dir_fd
+)
+
+
+def portable_mkdir_chain(base_real_dir: Path, components: tuple[str, ...], label: str) -> None:
+    """Path-based fallback for `_safe_mkdir_chain` on platforms without `dir_fd` (Windows).
+
+    Creates `components` under `base_real_dir` one level at a time and, after each step, refuses a
+    component that is a symlink or junction, is not a directory, or resolves outside the base. A
+    link already in the path therefore aborts creation. Unlike the fd-relative variant the check
+    runs AFTER each `mkdir`, so a junction raced in between two steps can make at most one EMPTY
+    directory land outside before the chain aborts; files are still only ever written to paths
+    validated by `resolve_write_path`.
+    """
+    current = base_real_dir
+    for part in components:
+        if part in ("", ".", ".."):
+            raise SandboxViolation(
+                "path rejected: invalid filename",
+                detail=f"unsafe {label} component {part!r}",
+            )
+        nxt = current / part
+        try:
+            nxt.mkdir()
+        except FileExistsError:
+            pass
+        except OSError as exc:  # its message carries the full host path: keep it in detail only
+            raise SandboxViolation(
+                "path rejected: could not resolve path",
+                detail=f"{label} component {part!r} could not be created: {exc}",
+            ) from None
+        try:
+            linked = nxt.is_symlink() or nxt.is_junction()
+            real = nxt.resolve(strict=True)
+        except OSError as exc:
+            raise SandboxViolation(
+                "path rejected: could not resolve path",
+                detail=f"{label} component {part!r} could not be resolved: {exc}",
+            ) from None
+        if linked or not real.is_dir() or not is_contained(real, [base_real_dir]):
+            raise SandboxViolation(
+                "path rejected: outside workspace",
+                detail=f"{label} component {part!r} is not a real directory",
+            )
+        current = real
 
 
 def is_contained(p: Path, roots: list[Path]) -> bool:
@@ -188,11 +242,11 @@ def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
     `O_RDONLY|O_DIRECTORY|O_NOFOLLOW`, so if any component is (or is raced into) a symlink the
     descend `open` fails with `ELOOP`/`ENOTDIR` and creation aborts — the side-effect can never
     escape the base dir. Mirrors `render/cli.py::_safe_mkdir_chain`/`document/save.py`.
-
-    Platforms without `dir_fd` / `O_DIRECTORY` (Windows) take the portable path-based branch.
     """
-    if os.mkdir not in os.supports_dir_fd or not hasattr(os, "O_DIRECTORY"):
-        _portable_mkdir_chain(base_real_dir, components)
+    # The explicit platform test lets mypy (--platform win32) treat the fd-relative code below as
+    # unreachable there; HAS_DIR_FD_MKDIR covers any other platform lacking dir_fd support.
+    if sys.platform == "win32" or not HAS_DIR_FD_MKDIR:
+        portable_mkdir_chain(base_real_dir, components, "dest")
         return
     dir_fd = os.open(base_real_dir, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -218,39 +272,6 @@ def _safe_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
             os.close(old_fd)
     finally:
         os.close(dir_fd)
-
-
-def _portable_mkdir_chain(base_real_dir: Path, components: tuple[str, ...]) -> None:
-    """Path-based fallback of `_safe_mkdir_chain` for platforms without `dir_fd` (Windows).
-
-    Per component: mkdir, then `lstat` it and refuse a symlink / reparse point / non-directory
-    before descending, so a pre-planted link is never traversed.
-    """
-    # ponytail: lstat-then-descend is not atomic like the dir_fd branch; a link raced in between
-    # can still be followed. Upgrade path: Windows handle-relative creation (NtCreateFile).
-    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    cur = base_real_dir
-    for part in components:
-        if part in ("", ".", ".."):
-            raise SandboxViolation(
-                "path rejected: invalid filename",
-                detail=f"unsafe dest component {part!r}",
-            )
-        cur = cur / part
-        try:
-            os.mkdir(cur)
-        except FileExistsError:
-            pass
-        st = os.lstat(cur)
-        if (
-            stat.S_ISLNK(st.st_mode)
-            or not stat.S_ISDIR(st.st_mode)
-            or getattr(st, "st_file_attributes", 0) & reparse
-        ):
-            raise SandboxViolation(
-                "path rejected: outside workspace",
-                detail=f"dest component {part!r} is not a real directory",
-            )
 
 
 def _reject_empty_or_nul(raw: str | Path) -> str:

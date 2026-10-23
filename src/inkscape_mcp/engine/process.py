@@ -167,6 +167,10 @@ class EngineProcess:
         if self._proc is None or self._proc.stdout is None:  # pragma: no cover - set before start
             return
         fd = self._proc.stdout.fileno()
+        # On Windows the worker's text-mode stdout writes ``\r\n``; normalize to ``\n`` so the
+        # ``"\n> "`` sentinel and the line split frame identically on every OS. A ``\r`` ending a
+        # chunk is held back until the next chunk shows whether a ``\n`` follows it.
+        pending_cr = ""
         while True:
             try:
                 chunk = os.read(fd, 65536)
@@ -174,11 +178,16 @@ class EngineProcess:
                 chunk = b""
             if not chunk:
                 with self._cond:
+                    self._out += pending_cr
                     self._eof = True
                     self._cond.notify_all()
                 return
+            text = pending_cr + chunk.decode("utf-8", errors="replace")
+            pending_cr = ""
+            if text.endswith("\r"):
+                text, pending_cr = text[:-1], "\r"
             with self._cond:
-                self._out += chunk.decode("utf-8", errors="replace")
+                self._out += text.replace("\r\n", "\n")
                 self._cond.notify_all()
 
     def _read_stderr(self) -> None:

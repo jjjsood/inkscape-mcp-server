@@ -298,7 +298,9 @@ class DBusTransport(LiveTransport):
         live process's main loop). Sets the instance's export options as a side effect (the action
         surface is stateful) but never mutates the document.
         """
-        self._activate("export-filename", _variant_string(str(out_path)))
+        # POSIX separators: a Windows path's backslashes would trip the GVariant guard, and GLib
+        # (hence Inkscape) accepts ``C:/...`` forward-slash paths on Windows.
+        self._activate("export-filename", _variant_string(out_path.as_posix()))
         self._activate("export-type", _variant_string(fmt))
         if plain_svg:
             self._activate("export-plain-svg", _variant_bool(True))
@@ -323,7 +325,8 @@ class DBusTransport(LiveTransport):
         tmpdir = Path(tempfile.mkdtemp(prefix="inkscape-mcp-live-"))
         # Fail fast with a clear message if the temp root itself carries characters that cannot be
         # embedded in a GVariant literal (e.g. a quote in TMPDIR), rather than a late opaque guard.
-        if _GVARIANT_UNSAFE_RE.search(str(tmpdir)):
+        # Checked in the POSIX form `_export_to` actually sends (Windows backslashes are not sent).
+        if _GVARIANT_UNSAFE_RE.search(tmpdir.as_posix()):
             shutil.rmtree(tmpdir, ignore_errors=True)
             raise LiveError("temp directory path is not safe for a DBus export (check TMPDIR)")
         try:

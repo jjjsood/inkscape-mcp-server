@@ -9,6 +9,16 @@ All notable changes to `inkscape-mcp` are documented here. The format is based o
 First public release. A Model Context Protocol (MCP) server that makes Inkscape / SVG documents
 agent-ready over STDIO.
 
+### Fixed
+- **Windows: export / save / live sync no longer crash.** Directory creation used the POSIX-only
+  `os.O_DIRECTORY` / `os.O_NOFOLLOW` / `dir_fd`, so every tool that creates an output directory
+  (`export` incl. `save_as` and profiles, live sync to the workspace, ...) failed
+  with `module 'os' has no attribute 'O_DIRECTORY'`. Platforms without `dir_fd` now use a path-based
+  fallback that refuses symlinked / junctioned or escaping components (it checks after each
+  `mkdir`, so a junction raced in mid-chain can leave at most one empty directory outside; files
+  are still only written inside the sandbox); file writes add `O_BINARY` and drop `O_NOFOLLOW`
+  only where it does not exist. A failing `mkdir` no longer leaks the host path in its error.
+
 ### Added
 - **Ten result-oriented tools** — `open`, `inspect`, `edit`, `render`, `export`, `history`, `help`,
   `live`, `live_edit` and (advanced mode) `actions`. A drawing is `open(canvas, ops,
